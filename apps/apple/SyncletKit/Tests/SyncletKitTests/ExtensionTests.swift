@@ -86,6 +86,63 @@ final class ExtensionTests: XCTestCase {
         XCTAssertEqual(upload.body, Data("lokal geändert".utf8))
     }
 
+    /// I1: the first PUT is published but its response is lost; the system retries with the
+    /// old base version and gets 412 with our own content ⇒ no conflict copy, no problem.
+    func testLostPutResponseThenRetryWith412OfOwnContentMakesNoConflictCopy() async throws {
+        let content = "lokal geändert"
+        let file = Fixtures.tempFile(content)
+        let sha = try TransferEngine.sha256(of: file)
+        let published = Fixtures.itemJSON(id: "f_1", parentId: "d_5", name: "Angebot.pdf", version: 4,
+                                          contentEtag: "v4", etag: "v4", sha256: sha, size: Data(content.utf8).count)
+        let puts = Counter()
+        MockURLProtocol.reset { request in
+            switch (request.method, request.path) {
+            case ("PUT", "/api/sync/v1/items/f_1/content"):
+                if puts.next() == 1 { throw URLError(.networkConnectionLost) } // committed, response lost
+                return .error(412, "conflict", item: published)
+            default:
+                XCTFail("unexpected: \(request.method) \(request.path)")
+                return .empty(500)
+            }
+        }
+        let local = FileProviderItem(Fixtures.item(id: "f_1", parentId: "d_5", name: "Angebot.pdf"), layout: Fixtures.layout)
+        let base = NSFileProviderItemVersion(contentVersion: Data("v3".utf8), metadataVersion: Data("m".utf8))
+        let ext = ReportRecordingExtension.make(tempDir: tempDir, context: context)
+
+        do {
+            _ = try await ext.modify(item: local, baseVersion: base, changedFields: [.contents],
+                                     contents: file, context: context, progress: nil)
+            XCTFail("the lost response must fail the first attempt")
+        } catch {}
+        let result = try await ext.modify(item: local, baseVersion: base, changedFields: [.contents],
+                                          contents: file, context: context, progress: nil)
+
+        XCTAssertEqual(result.item.syncItem?.contentEtag, "v4")
+        XCTAssertFalse(result.shouldFetchContent)
+        XCTAssertEqual(MockURLProtocol.requests.map(\.method), ["PUT", "PUT"])
+        XCTAssertEqual(MockURLProtocol.requests.last?.header("If-Match"), "\"v3\"")
+        XCTAssertTrue(ext.problems.isEmpty)
+    }
+
+    /// Same size but other content on the server ⇒ still a real conflict.
+    func testConflictWithSameSizeButOtherShaStillMakesCopy() async throws {
+        let content = "lokal geändert"
+        let serverJSON = Fixtures.itemJSON(id: "f_1", parentId: "d_5", name: "Angebot.pdf", version: 4, contentEtag: "v4",
+                                           etag: "v4", sha256: String(repeating: "0", count: 64), size: Data(content.utf8).count)
+        MockURLProtocol.reset { request in
+            request.method == "PUT" ? .error(412, "conflict", item: serverJSON)
+                : .json(201, Fixtures.itemJSON(id: "f_copy", parentId: "d_5", name: request.query["name"] ?? ""))
+        }
+        let local = FileProviderItem(Fixtures.item(id: "f_1", parentId: "d_5", name: "Angebot.pdf"), layout: Fixtures.layout)
+        let base = NSFileProviderItemVersion(contentVersion: Data("v3".utf8), metadataVersion: Data())
+        let ext = ReportRecordingExtension.make(tempDir: tempDir, context: context)
+        let result = try await ext.modify(item: local, baseVersion: base, changedFields: [.contents],
+                                          contents: Fixtures.tempFile(content), context: context, progress: nil)
+        XCTAssertTrue(result.shouldFetchContent)
+        XCTAssertEqual(MockURLProtocol.requests.map(\.method), ["PUT", "POST"])
+        XCTAssertEqual(ext.problems.map(\.code), [.conflictCopy])
+    }
+
     func testModifyContentConflictAtTopLevelUploadsCopyIntoRoot() async throws {
         let serverJSON = Fixtures.itemJSON(id: "f_1", parentId: "root", name: "Notiz.txt", version: 5, contentEtag: "v5", etag: "v5")
         MockURLProtocol.reset { request in
@@ -588,3 +645,21 @@ final class ExtensionTests: XCTestCase {
         XCTAssertTrue(try ext.enumerator(for: .workingSet, request: NSFileProviderRequest()) is FileProviderEnumerator)
     }
 }
+
+/// Records reported problems.
+final class ReportRecordingExtension: SyncletReplicatedExtension, @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [SyncProblem] = []
+    var problems: [SyncProblem] { lock.withLock { recorded } }
+
+    override func report(_ problem: SyncProblem) {
+        lock.withLock { recorded.append(problem) }
+    }
+
+    static func make(tempDir: URL, context: Context) -> ReportRecordingExtension {
+        let domain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier("0123456789abcdef"), displayName: "Synclet – jens@test")
+        return ReportRecordingExtension(domain: domain, temporaryDirectory: tempDir,
+                                        now: { Date(timeIntervalSince1970: 1_791_031_815) }) { context }
+    }
+}
+

@@ -112,7 +112,7 @@ enum Fixtures {
 
     static func itemJSON(id: String, parentId: String? = "root", type: String = "file", kind: String? = nil,
                          name: String = "Angebot.pdf", version: Int? = 3, contentEtag: String? = "v3",
-                         etag: String = "v3", sha256: String? = nil, write: Bool = true) -> String {
+                         etag: String = "v3", sha256: String? = nil, write: Bool = true, size: Int = 1234) -> String {
         let kind = kind ?? (id == "root" ? "root" : type)
         let parent = parentId.map { "\"\($0)\"" } ?? "null"
         let isFile = type == "file"
@@ -123,7 +123,7 @@ enum Fixtures {
         let preview = isFile ? #","preview":{"kind":"pdf","thumbnail":false}"# : ""
         return """
         {"id":"\(id)","parentId":\(parent),"type":"\(type)","kind":"\(kind)","name":"\(name)",
-         "size":\(isFile ? 1234 : 0),"mime":\(isFile ? "\"application/pdf\"" : "null"),
+         "size":\(isFile ? size : 0),"mime":\(isFile ? "\"application/pdf\"" : "null"),
          "version":\(versionText),"sha256":\(shaText),"etag":"\(etag)","contentEtag":\(contentEtagText),
          "createdAt":"2026-09-01T08:00:00.000Z","modifiedAt":"2026-10-02T12:30:15.123Z",
          "documentId":\(isFile ? "\"\(id)\"" : "null"),

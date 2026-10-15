@@ -376,7 +376,9 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
     /// - Moving into the root container → ``SpaceLayoutError/readOnlyTopLevel``.
     /// - `412` (PUT, or tus replace at creation or completion): the local content is uploaded as a conflict copy
     ///   `"<base> (Konflikt <device> <date>).<ext>"` into the same folder and the server
-    ///   state is returned (`shouldFetchContent`).
+    ///   state is returned (`shouldFetchContent`). If the server state already has the local
+    ///   content (size + sha256: our own attempt whose response was lost), it is returned
+    ///   as is – no copy.
     /// - `404` on PUT (deleted remotely, changed locally): the local content is uploaded as
     ///   a new file into the parent, then `noSuchItem` lets the system drop the old item.
     /// - Unsupported fields (tags, last used, favorites, extended attributes, dates without
@@ -456,6 +458,13 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
                 } else {
                     server = try await client.item(id: id)
                 }
+                // The server already has exactly our content: our own earlier attempt was
+                // published but its response was lost, and the system retried with the old
+                // base version. That is not a conflict – no copy, no problem.
+                if try await Self.hasSameContent(server, as: newContents) {
+                    Log.fileProvider.info("412 on \(id, privacy: .public) with identical content: lost response, no conflict copy")
+                    return (FileProviderItem(server, layout: layout), false)
+                }
                 let copyName = ConflictNaming.name(original: server.name, device: context.deviceName, date: now())
                 let parentID = server.parentId ?? newParent ?? (try? layout.serverParentId(for: item.parentItemIdentifier))
                     ?? SyncItem.rootID
@@ -481,6 +490,14 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
 
         if let current { return (FileProviderItem(current, layout: layout), false) }
         return (FileProviderItem(try await client.item(id: id), layout: layout), false)
+    }
+
+    /// `server` is a file with the size and sha256 of the local file at `url`.
+    static func hasSameContent(_ server: SyncItem, as url: URL) async throws -> Bool {
+        guard !server.isFolder, let serverHash = server.sha256 else { return false }
+        let size = (try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value
+        guard size == server.size else { return false }
+        return serverHash == (try await TransferEngine.sha256Cancellable(of: url))
     }
 
     /// A locally changed file that was deleted on the server: upload the local content as
