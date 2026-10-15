@@ -45,7 +45,6 @@ const SAVE_STATUSES = new Set([2, 6]);
 const CONTENT_TOKEN_TTL = '1d';
 /** The final callback only arrives after the last editor closed, possibly much later. */
 const CALLBACK_TOKEN_TTL = '7d';
-const DOWNLOAD_TIMEOUT_MS = 120_000;
 
 export type FileTokenPurpose = 'content' | 'callback';
 interface FileToken { i: string; u: string; p: FileTokenPurpose }
@@ -77,6 +76,8 @@ export type CallbackResult = { error: 0 | 1 };
 export class OfficeService {
   private readonly log = new Logger(OfficeService.name);
   private readonly jwt = new JwtService({});
+  /** Upper bound for downloading a saved document from the Document Server (tests shorten it). */
+  static downloadTimeoutMs = 120_000;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -104,9 +105,9 @@ export class OfficeService {
   }
 
   /** Verifies an HS256 JWT signed with the shared secret; null when invalid or expired. */
-  private verify<T extends object>(token: string): T | null {
+  private verify<T extends object>(token: string, opts: { ignoreExpiration?: boolean } = {}): T | null {
     try {
-      return this.jwt.verify<T>(token, { secret: this.secret(), algorithms: ['HS256'] });
+      return this.jwt.verify<T>(token, { secret: this.secret(), algorithms: ['HS256'], ignoreExpiration: opts.ignoreExpiration === true });
     } catch {
       return null;
     }
@@ -116,14 +117,18 @@ export class OfficeService {
     return this.sign({ i: item.id, u: item.ownerId, p } satisfies FileToken, p === 'callback' ? CALLBACK_TOKEN_TTL : CONTENT_TOKEN_TTL);
   }
 
-  /** Checks a file token for item `syncId` and purpose `p`; 403 otherwise. */
-  verifyFileToken(token: string | undefined, syncId: string, p: FileTokenPurpose): FileToken {
+  /**
+   * Checks a file token for item `syncId` and purpose `p`; 403 otherwise. `allowExpired` still
+   * requires a valid signature, purpose and item binding and reports whether the token expired.
+   */
+  verifyFileToken(token: string | undefined, syncId: string, p: FileTokenPurpose, opts: { allowExpired?: boolean } = {}): FileToken & { expired: boolean } {
     this.assertEnabled();
-    const claims = token ? this.verify<FileToken>(token) : null;
+    const claims = token ? this.verify<FileToken & { exp?: number }>(token, { ignoreExpiration: opts.allowExpired }) : null;
     if (!claims || claims.p !== p || typeof claims.i !== 'string' || typeof claims.u !== 'string' || syncId !== `f_${claims.i}`) {
       throw new SyncError('forbidden', 'invalid file token');
     }
-    return claims;
+    const expired = typeof claims.exp === 'number' && claims.exp * 1000 <= Date.now();
+    return { i: claims.i, u: claims.u, p: claims.p, expired };
   }
 
   /* ------------------------------------------------------------------ editor config */
@@ -179,7 +184,11 @@ export class OfficeService {
    * unsigned / wrongly signed body) is rejected with 403 before anything is fetched or written.
    */
   async callback(syncId: string, token: string | undefined, body: unknown, authHeader: string | undefined): Promise<CallbackResult> {
-    const t = this.verifyFileToken(token, syncId, 'callback');
+    // An editor session may stay open beyond the callback token's lifetime. An expired callback
+    // token is still accepted (signature, purpose and item binding checked) because the body must
+    // additionally be signed by the Document Server and its key must belong to this file;
+    // refusing it would silently lose the final save.
+    const t = this.verifyFileToken(token, syncId, 'callback', { allowExpired: true });
     // Only trust what the Document Server signed: the body's `token`, or the Authorization header
     // (which wraps the body in `payload`).
     const bodyToken = typeof (body as { token?: unknown })?.token === 'string' ? (body as { token: string }).token : undefined;
@@ -196,6 +205,7 @@ export class OfficeService {
     const m = /^(.+)-(\d+)$/.exec(key);
     if (!m || m[1] !== t.i) throw new SyncError('forbidden', 'callback key does not belong to this file');
     const baseVersion = Number(m[2]);
+    if (t.expired) this.log.warn(`office callback for ${syncId} with an expired callback token accepted (signed by the document server)`);
 
     const owner = await this.prisma.user.findUnique({ where: { id: t.u }, select: { id: true, username: true } });
     const live = owner && (await this.prisma.item.findFirst({ where: { id: t.i, ownerId: owner.id, deletedAt: null, type: 'file' }, select: { id: true } }));
@@ -213,7 +223,7 @@ export class OfficeService {
     const users = Array.isArray(data.users) ? data.users : [];
     const editor = typeof users[0] === 'string' && UUID.test(users[0]) ? users[0] : undefined;
     try {
-      const res = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
+      const res = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(OfficeService.downloadTimeoutMs) });
       if (!res.ok || !res.body) {
         this.log.error(`office save for ${syncId}: download failed with ${res.status}`);
         return { error: 1 };
@@ -238,7 +248,8 @@ export class OfficeService {
 
   /**
    * The download URL from a callback, only on the configured Document Server (public or internal
-   * origin; no SSRF to anything else), rewritten to the internal origin. null when not allowed.
+   * origin; no SSRF to anything else), rewritten to the internal URL (keeping its path prefix).
+   * null when not allowed.
    */
   private downloadUrl(raw: unknown): string | null {
     let url: URL;
@@ -254,7 +265,19 @@ export class OfficeService {
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
     if (url.username || url.password) return null;
     if (url.origin !== pub.origin && url.origin !== internal.origin) return null;
-    return new URL(url.pathname + url.search, internal.origin).toString();
+    // A path starting with "//" (a backslash variant is normalized to it) would be scheme-relative
+    // if it were ever resolved as a reference: refuse it outright.
+    if (url.pathname.startsWith('//')) return null;
+    // Built on a copy of the internal URL, so host and port can only come from the configuration.
+    const target = new URL(internal.href);
+    const prefix = internal.pathname.replace(/\/+$/, '');
+    const rel = url.origin === internal.origin && prefix && (url.pathname === prefix || url.pathname.startsWith(`${prefix}/`))
+      ? url.pathname.slice(prefix.length) : url.pathname;
+    target.pathname = `${prefix}${rel}`;
+    target.search = url.search;
+    target.hash = '';
+    if (target.origin !== internal.origin) return null;
+    return target.toString();
   }
 
   /* ------------------------------------------------------------------ new documents */

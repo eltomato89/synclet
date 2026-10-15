@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { createTestApp, TestContext } from '../../test/context';
 import { VersionsService } from '../versions/versions.service';
-import { conflictName, TEMPLATE_DIR } from './office.service';
+import { conflictName, OfficeService, TEMPLATE_DIR } from './office.service';
 
 const SECRET = 'office-test-secret-0123456789abcdef';
 const PUBLIC = 'https://office.example.test';
@@ -15,15 +15,17 @@ const sign = (payload: object, opts: { secret?: string; expiresIn?: number } = {
 
 /** A tiny stand-in for the Document Server: serves the "edited" bytes and counts fetches. */
 async function fakeServer() {
-  const state = { body: Buffer.from('edited'), hits: [] as string[] };
+  const state = { body: Buffer.from('edited'), hits: [] as string[], redirectTo: '' };
   const server = http.createServer((req, res) => {
     state.hits.push(req.url ?? '');
+    if (req.url?.startsWith('/redirect')) { res.writeHead(302, { location: state.redirectTo }); res.end(); return; }
+    if (req.url?.startsWith('/hang')) return; // never answers
     res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': state.body.length });
     res.end(state.body);
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  return { state, origin, close: () => new Promise<void>((r) => server.close(() => r())) };
+  return { state, origin, close: () => new Promise<void>((r) => { server.closeAllConnections(); server.close(() => r()); }) };
 }
 
 describe('Office (Euro-Office) integration', () => {
@@ -171,7 +173,7 @@ describe('Office (Euro-Office) integration', () => {
     it('never fetches from a foreign origin', async () => {
       const item = await upload('Offer.docx', 'original');
       const { key, callbackPath } = await open(item.id);
-      for (const url of [`${foreign.origin}/cache/x`, 'file:///etc/passwd', 'not a url', `https://office.example.test.evil.com/x`, `http://user:pw@${new URL(ds.origin).host}/x`]) {
+      for (const url of [`${foreign.origin}/cache/x`, `${PUBLIC}//evil.example:8080/x`, `${PUBLIC}/\\evil.example/x`, `${PUBLIC}//${new URL(foreign.origin).host}/cache/x`, `${PUBLIC}/\\${new URL(foreign.origin).host}/cache/x`, `${ds.origin}//${new URL(foreign.origin).host}/x`, 'file:///etc/passwd', 'not a url', `https://office.example.test.evil.com/x`, `http://user:pw@${new URL(ds.origin).host}/x`]) {
         const r = await callback(callbackPath, saveData(key, 2, url));
         expect(r.statusCode).toBe(200);
         expect(r.json()).toEqual({ error: 1 });
@@ -179,6 +181,45 @@ describe('Office (Euro-Office) integration', () => {
       expect(foreign.state.hits).toEqual([]);
       expect(ds.state.hits).toEqual([]);
       expect(await download(item.id)).toBe('original');
+    });
+
+    it('refuses redirects and gives up on a download that does not finish', async () => {
+      const item = await upload('Offer.docx', 'original');
+      const { key, callbackPath } = await open(item.id);
+      ds.state.redirectTo = `${foreign.origin}/cache/x`;
+      expect((await callback(callbackPath, saveData(key, 2, `${PUBLIC}/redirect/x`))).json()).toEqual({ error: 1 });
+      expect(ds.state.hits).toEqual(['/redirect/x']);
+      expect(foreign.state.hits).toEqual([]);
+      const saved = OfficeService.downloadTimeoutMs;
+      OfficeService.downloadTimeoutMs = 300;
+      try {
+        expect((await callback(callbackPath, saveData(key, 2, `${PUBLIC}/hang/x`))).json()).toEqual({ error: 1 });
+      } finally {
+        OfficeService.downloadTimeoutMs = saved;
+      }
+      expect(await download(item.id)).toBe('original');
+      expect((await api('GET', `/items/${item.id}`)).json().version).toBe(1);
+    });
+
+    it('accepts an expired callback token when the Document Server signed the save', async () => {
+      const item = await upload('Offer.docx', 'original');
+      const { key, callbackPath } = await open(item.id);
+      const uuid = item.id.slice(2);
+      const iat = Math.floor(Date.now() / 1000) - 8 * 86400;
+      const old = sign({ i: uuid, u: userId, p: 'callback', iat, exp: iat + 7 * 86400 });
+      const oldPath = `/api/office/files/${item.id}/callback?t=${old}`;
+      // Still bound: wrong purpose, other item, foreign secret, unsigned body.
+      const oldContent = sign({ i: uuid, u: userId, p: 'content', iat, exp: iat + 86400 });
+      expect((await callback(`/api/office/files/${item.id}/callback?t=${oldContent}`, saveData(key, 2))).statusCode).toBe(403);
+      expect((await callback(oldPath.replace(item.id, `f_${'0'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}`), saveData(key, 2))).statusCode).toBe(403);
+      expect((await callback(`/api/office/files/${item.id}/callback?t=${sign({ i: uuid, u: userId, p: 'callback', iat, exp: iat + 1 }, { secret: 'nope' })}`, saveData(key, 2))).statusCode).toBe(403);
+      expect((await anon('POST', oldPath, saveData(key, 2))).statusCode).toBe(403);
+      expect(ds.state.hits).toEqual([]);
+      expect(callbackPath).not.toBe(oldPath);
+      expect((await callback(oldPath, saveData(key, 2))).json()).toEqual({ error: 0 });
+      expect(await download(item.id)).toBe('edited');
+      // Content tokens stay strictly time-limited.
+      expect((await anon('GET', `/api/office/files/${item.id}/content?t=${oldContent}`)).statusCode).toBe(403);
     });
 
     it('status 2 replaces the content (version + 1, officeKey, journal, version capture)', async () => {
@@ -289,6 +330,16 @@ describe('Office (Euro-Office) integration', () => {
       expect((await callback(callbackPath, saveData(key, 2))).json()).toEqual({ error: 0 });
       expect(ds.state.hits).toEqual([]);
       expect((await api('GET', '/items/root/children')).json().items).toEqual([]);
+    });
+
+    it('keeps a path prefix of the internal Document Server URL', async () => {
+      await ctx.close();
+      await start({ officeInternalUrl: `${ds.origin}/ds/` });
+      const item = await upload('Offer.docx', 'abc');
+      const { key, callbackPath } = await open(item.id);
+      expect((await callback(callbackPath, saveData(key, 6, `${PUBLIC}/cache/a?b=1`))).json()).toEqual({ error: 0 });
+      expect((await callback(callbackPath, saveData(key, 6, `${ds.origin}/ds/cache/c`))).json()).toEqual({ error: 0 });
+      expect(ds.state.hits).toEqual(['/ds/cache/a?b=1', '/ds/cache/c']);
     });
 
     it('answers {error:1} when the download fails or is too large', async () => {
