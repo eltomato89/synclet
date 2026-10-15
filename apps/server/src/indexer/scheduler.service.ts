@@ -10,6 +10,7 @@ import { FilesService } from '../files/files.service';
 import { ItemStore } from '../journal/item-store';
 import { JournalService } from '../journal/journal.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { TusService } from '../uploads/tus';
 import { IndexerService } from './indexer.service';
 import { WatcherService } from './watcher.service';
 
@@ -30,6 +31,7 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     private readonly store: ItemStore,
     private readonly watcher: WatcherService,
     private readonly files: FilesService,
+    private readonly uploads: TusService,
     events: AppEvents,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {
@@ -125,5 +127,8 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     // Expired or revoked web sessions are kept for a while (refresh-token reuse detection), then dropped.
     const sessionCutoff = new Date(Date.now() - SESSION_RETENTION_DAYS * DAY);
     await this.prisma.session.deleteMany({ where: { OR: [{ expiresAt: { lt: sessionCutoff } }, { revokedAt: { lt: sessionCutoff } }] } });
+    // Abandoned resumable uploads (tus parts in /meta/uploads older than 24 h).
+    const expired = await this.uploads.expire().catch((e) => { this.log.warn(`upload expiry failed: ${(e as Error).message}`); return 0; });
+    if (expired) this.log.log(`removed ${expired} abandoned upload(s)`);
   }
 }
