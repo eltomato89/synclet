@@ -437,7 +437,7 @@ describe('Versions', () => {
       it('office save and restore go through commitReplace with their sources', async () => {
         const commit = jest.spyOn(files as unknown as { commitReplace: (...a: unknown[]) => Promise<unknown> }, 'commitReplace');
         const f = await files.upload(user, null, 'o.docx', body('v1'), {});
-        const saved = await files.saveOfficeContent(user, f.id, body('v2 from office'), { key: 'k1', baseVersion: 1, by: user.id, conflictName: (n) => `${n} (conflict)` });
+        const saved = await files.saveOfficeContent(user, f.id, body('v2 from office'), { key: 'k1', baseVersion: 1, by: user.id, conflictName: (n) => `${n} (conflict)`, fallbackName: 'Office' });
         expect(saved.outcome).toBe('replaced');
         const [v1] = await rows(f.id);
         expect(v1).toMatchObject({ version: 1, source: 'office', createdBy: user.id });

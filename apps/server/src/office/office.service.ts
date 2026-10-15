@@ -208,10 +208,10 @@ export class OfficeService {
     if (t.expired) this.log.warn(`office callback for ${syncId} with an expired callback token accepted (signed by the document server)`);
 
     const owner = await this.prisma.user.findUnique({ where: { id: t.u }, select: { id: true, username: true } });
-    const live = owner && (await this.prisma.item.findFirst({ where: { id: t.i, ownerId: owner.id, deletedAt: null, type: 'file' }, select: { id: true } }));
-    if (!owner || !live) {
-      // Trashed or deleted: drop the save, otherwise the Document Server retries forever.
-      this.log.warn(`office save for missing file ${syncId} discarded`);
+    if (!owner) {
+      // Only a vanished owner drops the save (otherwise the Document Server retries forever). A
+      // trashed or deleted file still gets the edits, as a conflict copy (see saveOfficeContent).
+      this.log.warn(`office save for ${syncId} discarded: owner gone`);
       return { error: 0 };
     }
 
@@ -234,11 +234,16 @@ export class OfficeService {
         throw new SyncError('too_large');
       }
       const stream = Readable.fromWeb(res.body as unknown as WebReadableStream<Uint8Array>);
+      const ext = typeof data.filetype === 'string' && /^[a-z0-9]{1,8}$/i.test(data.filetype) ? `.${data.filetype.toLowerCase()}` : '';
       const result = await this.files.saveOfficeContent(owner, t.i, stream, {
-        key, baseVersion, by: editor, conflictName: (name) => conflictName(name, new Date()),
+        key, baseVersion, by: editor, conflictName: (name) => conflictName(name, new Date()), fallbackName: `Office${ext}`,
       });
+      if (result.outcome === 'retry') {
+        this.log.warn(`office save for ${syncId}: file missing on disk right now, asking the document server to retry`);
+        return { error: 1 };
+      }
       if (result.outcome === 'conflict') this.log.warn(`office conflict on ${syncId} (session v${baseVersion}): saved as copy ${result.item.id}`);
-      if (result.outcome === 'discarded') this.log.warn(`office save for ${syncId} discarded: file gone`);
+      if (result.outcome === 'orphaned') this.log.warn(`office save for ${syncId}: file was deleted while editing, saved as copy ${result.item.id}`);
       return { error: 0 };
     } catch (e) {
       this.log.error(`office save for ${syncId} failed: ${(e as Error).message}`);
