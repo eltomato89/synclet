@@ -1,5 +1,6 @@
 import FileProvider
 import Foundation
+import Synchronization
 import UniformTypeIdentifiers
 
 /// Base class of the File Provider extensions (macOS now, iOS later).
@@ -73,6 +74,22 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
         self.temporaryDirectoryOverride = nil
         self.now = { Date() }
         super.init()
+        Self.purgeSignedOutThumbnailsOnce(configuration: Self.sharedConfiguration)
+    }
+
+    private static let thumbnailsPurged = Mutex(false)
+
+    /// Once per process: drops the thumbnail caches of accounts that no longer exist (the app
+    /// cannot reach the extension's caches on sign-out).
+    private static func purgeSignedOutThumbnailsOnce(configuration: SharedConfiguration) {
+        guard let appGroup = configuration.appGroup else { return }
+        let first = thumbnailsPurged.withLock { done in
+            defer { done = true }
+            return !done
+        }
+        guard first else { return }
+        let keep = Set(AccountStore(appGroup: appGroup).all().map(\.key16))
+        ThumbnailCache.purge(base: ThumbnailCache.defaultDirectory(), keeping: keep)
     }
 
     /// For tests and custom wiring: context, temp directory and clock given.
@@ -106,6 +123,8 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
             return Context(client: client, deviceName: account.deviceName ?? "Mac",
                            layout: SpaceLayout(spaces: account.spaces),
                            cursorSink: { spaceID, cursor in
+                               // Signed out meanwhile: never recreate the removed account directory.
+                               guard accounts.account(key: key) != nil else { return }
                                try? accounts.saveSyncState(SpaceSyncState(cursor: cursor), key: key, spaceId: spaceID)
                            },
                            transferStateDirectory: accounts.accountDirectory(key: key)

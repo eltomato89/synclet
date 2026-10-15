@@ -81,6 +81,22 @@ public final class ThumbnailCache: Sendable {
 
     private static let registry = Mutex<[String: ThumbnailCache]>([:])
 
+    /// Removes the caches of signed-out accounts below `base` (every subdirectory whose name
+    /// is not in `keeping`) and loose files of the earlier, unscoped layout.
+    public static func purge(base: URL, keeping key16s: Set<String>) {
+        let fm = FileManager.default
+        let entries = (try? fm.contentsOfDirectory(at: base, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
+        for entry in entries where !key16s.contains(entry.lastPathComponent) {
+            try? fm.removeItem(at: entry)
+        }
+        registry.withLock { caches in
+            for path in caches.keys where URL(filePath: path).deletingLastPathComponent().standardizedFileURL.path
+                == base.standardizedFileURL.path && !key16s.contains(URL(filePath: path).lastPathComponent) {
+                caches[path] = nil
+            }
+        }
+    }
+
     /// `<itemId>-<size>.webp` with every character outside `[A-Za-z0-9._-]` percent-encoded
     /// (no `/` or `:` from an id reaches the file system).
     public static func fileName(itemID: String, size: Int) -> String {
@@ -299,12 +315,14 @@ extension SyncletReplicatedExtension: NSFileProviderThumbnailing {
     /// At most this many items are fetched at the same time.
     static let thumbnailConcurrency = 4
 
-    /// The thumbnail cache of this process (`Library/Caches/thumbnails`; tests: below the
-    /// injected temp directory).
+    /// The thumbnail cache of this domain (`Library/Caches/thumbnails/<key16>/`; tests: below
+    /// the injected temp directory). Per account, so a sign-out can drop exactly its previews
+    /// (``ThumbnailCache/purge(base:keeping:)``).
     var thumbnailFetcher: ThumbnailFetcher {
-        let directory = temporaryDirectoryOverride?.appending(path: "thumbnails", directoryHint: .isDirectory)
+        let base = temporaryDirectoryOverride?.appending(path: "thumbnails", directoryHint: .isDirectory)
             ?? ThumbnailCache.defaultDirectory()
-        return ThumbnailFetcher(cache: .shared(directory: directory))
+        return ThumbnailFetcher(cache: .shared(directory: base.appending(path: domain.identifier.rawValue,
+                                                                           directoryHint: .isDirectory)))
     }
 
     /// Server thumbnails for Finder (spec §2.7), one `GET /thumbnail` per item (revalidated

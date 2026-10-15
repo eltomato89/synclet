@@ -280,6 +280,33 @@ final class ParentMapTests: XCTestCase {
         XCTAssertEqual(ParentMap.shared(at: url).parent(of: "d_y"), "root")
     }
 
+    /// M2: a flush after the account directory was removed (sign-out) does not recreate it,
+    /// and a cached map does not survive the directory being created again (new sign-in).
+    func testSharedMapNeverRecreatesARemovedDirectoryAndReloadsAReplacedOne() throws {
+        let base = Fixtures.tempDirectory()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let dir = base.appending(path: "accounts/0123456789abcdef", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appending(path: "pinned-content.json")
+        let ledger = PinnedContentLedger(fileURL: url)
+        let queue = PinWorkQueue(fileURL: dir.appending(path: "pin-queue.json"))
+        ledger.update(id: "f_1", version: "v3")
+        ledger.flush()
+        XCTAssertEqual(ledger.version(of: "f_1"), "v3")
+
+        try FileManager.default.removeItem(at: dir)          // sign-out
+        ledger.update(id: "f_2", version: "v1")              // operation still in flight
+        ledger.flush()
+        _ = queue.enqueue(PinTask(kind: .walk, id: "d_1", spaceId: "personal", announce: true))
+        queue.flush()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path), "not recreated")
+
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) // new sign-in
+        XCTAssertNil(ledger.version(of: "f_1"), "stale cache dropped")
+        XCTAssertNil(ledger.version(of: "f_2"))
+        XCTAssertTrue(queue.isEmpty)
+    }
+
     func testNotePolicyReportsFlipsOnly() {
         let map = ParentMap(fileURL: nil)
         XCTAssertFalse(map.notePolicy("d_unknown", kept: true))

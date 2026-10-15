@@ -257,6 +257,23 @@ final class ThumbnailsTests: XCTestCase {
         XCTAssertTrue(ThumbnailCache.defaultDirectory().path.hasSuffix("Caches/thumbnails"))
     }
 
+    /// M10: caches are per account; the purge drops signed-out accounts and the old flat layout.
+    func testPurgeKeepsOnlyTheCachesOfExistingAccounts() throws {
+        let base = tempDir.appending(path: "purge", directoryHint: .isDirectory)
+        let kept = ThumbnailCache.shared(directory: base.appending(path: "aaaaaaaaaaaaaaaa"))
+        let gone = ThumbnailCache.shared(directory: base.appending(path: "bbbbbbbbbbbbbbbb"))
+        kept.store(Data("A".utf8), etag: nil, itemID: "f_1", size: 256)
+        gone.store(Data("B".utf8), etag: nil, itemID: "f_1", size: 256)
+        try Data("old".utf8).write(to: base.appending(path: "f_9-256.webp"))
+
+        ThumbnailCache.purge(base: base, keeping: ["aaaaaaaaaaaaaaaa"])
+
+        let left = try FileManager.default.contentsOfDirectory(atPath: base.path)
+        XCTAssertEqual(left, ["aaaaaaaaaaaaaaaa"])
+        XCTAssertEqual(kept.entry(itemID: "f_1", size: 256)?.data, Data("A".utf8))
+        XCTAssertNil(ThumbnailCache.shared(directory: base.appending(path: "bbbbbbbbbbbbbbbb")).entry(itemID: "f_1", size: 256))
+    }
+
     // MARK: Extension (NSFileProviderThumbnailing)
 
     private func makeExtension() -> SyncletReplicatedExtension {
@@ -290,7 +307,7 @@ final class ThumbnailsTests: XCTestCase {
         let paths = MockURLProtocol.requests.map(\.path)
         XCTAssertEqual(paths.count, 4)
         XCTAssertTrue(paths.allSatisfy { $0.hasSuffix("/thumbnail") }, "\(paths)")
-        XCTAssertTrue(FileManager.default.fileExists(atPath: tempDir.appending(path: "thumbnails/f_png-256.webp").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tempDir.appending(path: "thumbnails/0123456789abcdef/f_png-256.webp").path))
 
         // Second round: the png revalidates (304), the others are remembered as missing.
         MockURLProtocol.reset { request in

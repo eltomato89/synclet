@@ -164,16 +164,22 @@ public final class AccountStore: Sendable {
     }
 
     /// Inserts or replaces the account with the same key. A replaced account keeps its
-    /// `addedAt` and its state directory (spaces, pins).
+    /// `addedAt` and its state directory (spaces, pins); a new one starts with an empty
+    /// directory (leftovers of an earlier sign-in are removed).
     @discardableResult
     public func upsert(_ account: StoredAccount) throws -> StoredAccount {
         var stored = account
         // Whole seconds: the JSON stores ISO 8601 without fractions.
         stored.addedAt = Date(timeIntervalSince1970: account.addedAt.timeIntervalSince1970.rounded(.down))
+        let directory = accountDirectory(key: account.key)
         if let existing = self.account(key: account.key) {
             stored.addedAt = existing.addedAt
+        } else if FileManager.default.fileExists(atPath: directory.path) {
+            // A new account: whatever is left in its directory (an extension operation still
+            // in flight at sign-out wrote a cursor, ledger or queue) must not be inherited.
+            Log.account.info("clearing leftover state of a previous sign-in")
+            try FileManager.default.removeItem(at: directory)
         }
-        let directory = accountDirectory(key: account.key)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try Self.encoder.encode(stored).write(to: accountFile(key16: stored.key16), options: .atomic)
         return stored

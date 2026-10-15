@@ -24,6 +24,8 @@ final class SharedJSONMap<Value: Codable & Sendable & Equatable>: @unchecked Sen
     // Guarded by `lock`.
     private var storage: [String: Value]?
     private var dirty = false
+    /// Identity of the directory the storage was loaded from (``DirectoryStamp``).
+    private var stamp: DirectoryStamp?
 
     init(fileURL: URL?) {
         self.fileURL = fileURL
@@ -55,8 +57,14 @@ final class SharedJSONMap<Value: Codable & Sendable & Equatable>: @unchecked Sen
     func flush() {
         lock.withLock {
             guard dirty, let fileURL, let storage else { return }
+            // The account directory is gone (signed out while an operation was in flight):
+            // drop the state instead of recreating the directory.
+            guard FileManager.default.fileExists(atPath: fileURL.deletingLastPathComponent().path) else {
+                self.storage = nil
+                dirty = false
+                return
+            }
             do {
-                try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try JSONEncoder().encode(storage).write(to: fileURL, options: .atomic)
                 dirty = false
             } catch {
@@ -65,9 +73,14 @@ final class SharedJSONMap<Value: Codable & Sendable & Equatable>: @unchecked Sen
         }
     }
 
-    /// Must be called with `lock` held.
+    /// Must be called with `lock` held. Reloads when the directory was removed or replaced
+    /// meanwhile (sign-out and a new sign-in of the same account in a long-lived process).
     private func loaded() -> [String: Value] {
-        if let storage { return storage }
+        let current = fileURL.flatMap { DirectoryStamp($0.deletingLastPathComponent()) }
+        if let storage, current == stamp { return storage }
+        if storage != nil { Log.pinning.info("account directory replaced: reloading \(self.fileURL?.lastPathComponent ?? "", privacy: .public)") }
+        stamp = current
+        dirty = false
         var result: [String: Value] = [:]
         if let fileURL, let data = try? Data(contentsOf: fileURL),
            let decoded = try? JSONDecoder().decode([String: Value].self, from: data) {
@@ -75,6 +88,22 @@ final class SharedJSONMap<Value: Codable & Sendable & Equatable>: @unchecked Sen
         }
         storage = result
         return result
+    }
+}
+
+/// Inode and creation time of a directory: tells a directory apart from one removed and
+/// created again at the same path. `nil` when it does not exist.
+struct DirectoryStamp: Equatable, Sendable {
+    let inode: UInt64
+    let birthSeconds: Int
+    let birthNanoseconds: Int
+
+    init?(_ url: URL) {
+        var info = stat()
+        guard stat(url.path, &info) == 0 else { return nil }
+        inode = UInt64(info.st_ino)
+        birthSeconds = info.st_birthtimespec.tv_sec
+        birthNanoseconds = info.st_birthtimespec.tv_nsec
     }
 }
 

@@ -364,6 +364,7 @@ public final class PinWorkQueue: @unchecked Sendable {
     private let lock = NSLock()
     // Guarded by `lock`.
     private var storage: [PinTask]?
+    private var stamp: DirectoryStamp?
     private var dirty = false
     private var corrupted = false
     private var roundRequested = false
@@ -376,8 +377,12 @@ public final class PinWorkQueue: @unchecked Sendable {
         sharedInstance(at: url) { PinWorkQueue(fileURL: url) }
     }
 
+    /// Reloads when the account directory was removed or replaced (see ``SharedJSONMap``).
     private func loaded() -> [PinTask] {
-        if let storage { return storage }
+        let current = fileURL.flatMap { DirectoryStamp($0.deletingLastPathComponent()) }
+        if let storage, current == stamp { return storage }
+        stamp = current
+        dirty = false
         var result: [PinTask] = []
         if let fileURL, let data = try? Data(contentsOf: fileURL) {
             if let decoded = try? JSONDecoder().decode([PinTask].self, from: data) {
@@ -457,8 +462,13 @@ public final class PinWorkQueue: @unchecked Sendable {
     public func flush() {
         lock.withLock {
             guard dirty, let fileURL, let storage else { return }
+            // Signed out meanwhile: never recreate the removed account directory.
+            guard FileManager.default.fileExists(atPath: fileURL.deletingLastPathComponent().path) else {
+                self.storage = nil
+                dirty = false
+                return
+            }
             do {
-                try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try JSONEncoder().encode(storage).write(to: fileURL, options: .atomic)
                 dirty = false
             } catch {

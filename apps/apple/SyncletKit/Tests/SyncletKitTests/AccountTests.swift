@@ -74,6 +74,24 @@ final class AccountStoreTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: stateDir.appending(path: "pins.json").path))
     }
 
+    /// M2: an operation still in flight at sign-out left files behind; the next sign-in of
+    /// the same account starts clean.
+    func testUpsertOfANewAccountClearsLeftoversOfAnEarlierSignIn() throws {
+        let store = AccountStore(directory: directory)
+        try store.upsert(account())
+        try store.remove(key: "srv1:u1")
+        // Late writes of the extension after the sign-out.
+        try store.saveSyncState(SpaceSyncState(cursor: "99"), key: "srv1:u1", spaceId: "personal")
+        let ledger = store.accountDirectory(key: "srv1:u1").appending(path: "pinned-content.json")
+        try Data(#"{"f_1":"v3"}"#.utf8).write(to: ledger)
+        XCTAssertTrue(store.all().isEmpty, "no account.json, no account")
+
+        try store.upsert(account())
+        XCTAssertNil(store.syncState(key: "srv1:u1", spaceId: "personal"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: ledger.path))
+        XCTAssertEqual(store.all().count, 1)
+    }
+
     func testDifferentServersSameUsernameAreTwoAccounts() throws {
         let store = AccountStore(directory: directory)
         try store.upsert(account(key: "srvA:u1", server: "https://a.example.com"))
