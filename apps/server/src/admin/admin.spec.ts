@@ -19,7 +19,7 @@ describe('admin backend', () => {
   });
   afterEach(async () => { await ctx.close(); });
 
-  const call = (method: 'GET' | 'POST' | 'PATCH' | 'DELETE', url: string, token = adminToken, payload?: object) =>
+  const call = (method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', url: string, token = adminToken, payload?: object) =>
     ctx.app.inject({ method, url: `/api${url}`, headers: { authorization: `Bearer ${token}` }, ...(payload ? { payload } : {}) });
   async function mkUser(username: string, extra: object = {}) {
     const res = await call('POST', '/admin/users', adminToken, { username, displayName: username, password: 'another long password', ...extra });
@@ -41,6 +41,17 @@ describe('admin backend', () => {
       expect((await call(method, url, token)).statusCode).toBe(403);
       expect((await ctx.app.inject({ method, url: `/api${url}` })).statusCode).toBe(401);
     }
+  });
+
+  it('admin routes refuse device tokens, even those of an admin', async () => {
+    const { token: dtoken } = await ctx.app.get(DevicesService).register({ id: adminId, username: 'jens', role: 'admin', deviceId: null }, { name: 'Mac', platform: 'macos', appVersion: '1' });
+    const res = await call('GET', '/admin/users', dtoken);
+    expect(res.statusCode).toBe(403);
+    expect(res.json().message).toBe('device tokens cannot use admin routes');
+    expect((await call('PUT', '/admin/sso', dtoken, {})).statusCode).toBe(403);
+    // The same token still works for the sync API, and the admin's access token for admin routes.
+    expect((await call('GET', '/sync/v1/items/root/children', dtoken)).statusCode).toBe(200);
+    expect((await call('GET', '/admin/users')).statusCode).toBe(200);
   });
 
   it('lists users with usage, devices, identities, lastLoginAt', async () => {

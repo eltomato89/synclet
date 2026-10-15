@@ -19,8 +19,10 @@ export class AuthGuard implements CanActivate {
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
     const req = ctx.switchToHttp().getRequest();
     const user = await this.resolve(req, this.reflector.get<boolean>(ALLOW_DT, ctx.getHandler()) === true);
-    if (this.reflector.getAllAndOverride<boolean>(ADMIN_ONLY, [ctx.getHandler(), ctx.getClass()]) && user.role !== 'admin') {
-      throw new SyncError('forbidden');
+    if (this.reflector.getAllAndOverride<boolean>(ADMIN_ONLY, [ctx.getHandler(), ctx.getClass()])) {
+      if (user.role !== 'admin') throw new SyncError('forbidden');
+      // A sync device token of an admin only syncs files; it never administers the instance.
+      if (user.deviceId) throw new SyncError('forbidden', 'device tokens cannot use admin routes');
     }
     req.user = user;
     return true;
