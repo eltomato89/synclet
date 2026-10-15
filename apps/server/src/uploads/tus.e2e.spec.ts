@@ -32,6 +32,16 @@ describe('tus uploads', () => {
     const text = await res.text();
     return { statusCode: res.status, headers: Object.fromEntries(res.headers.entries()), body: text, json: () => JSON.parse(text) };
   };
+  /** A POST that completes the upload is cleaned up right after tus answered: wait for it. */
+  const stagingSettled = async (expected: string[]) => {
+    let names: string[] = [];
+    for (let i = 0; i < 50; i++) {
+      names = (await readdir(stagingDir())).sort();
+      if (names.length === expected.length) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(names).toEqual(expected);
+  };
   const create = (length: number, m: Record<string, string>, headers: Record<string, string> = {}) =>
     tus('POST', TUS_PATH, { 'upload-length': String(length), 'upload-metadata': metadata(m), ...headers });
   const patch = (location: string, offset: number, chunk: Buffer, headers: Record<string, string> = {}) =>
@@ -227,6 +237,7 @@ describe('tus uploads', () => {
     expect(empty.statusCode).toBe(201);
     expect(empty.json()).toMatchObject({ name: 'empty.txt', size: 0 });
     expect((await readdir(userDir())).sort()).toEqual(['empty.txt', 'inline.txt']);
+    await stagingSettled([path.basename(one.headers.location), `${path.basename(one.headers.location)}.json`]);
     expect(await readFile(path.join(userDir(), 'inline.txt'), 'utf8')).toBe('hello');
   });
 
@@ -373,6 +384,7 @@ describe('tus uploads', () => {
       expect(empty.statusCode).toBe(201);
       expect(empty.json()).toMatchObject({ id: item.id, size: 0, version: item.version + 2 });
       expect(await readFile(path.join(userDir(), 'doc.txt'), 'utf8')).toBe('');
+      await stagingSettled([]);
     });
 
     it('a stale ifMatch at creation answers 412 with the current item', async () => {

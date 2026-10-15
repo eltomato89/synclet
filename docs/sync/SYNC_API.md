@@ -561,6 +561,7 @@ covered by this contract). Authentication: `Authorization: Bearer`
    - The completing request answers like a create (step 4) with the updated `SyncItem` (same
      `id`; `X-Synclet-Item` = that id). `507` at completion keeps the upload resumable (below).
    - `Tus-Max-Size` applies as for creates.
+   - `ifMatch: *` is not supported for tus: only `v<n>` (anything else → `412`).
    → `201` with a path-only `Location: /api/sync/v1/uploads/<uploadId>`. `Upload-Length` above
    `Tus-Max-Size` (= `maxUploadBytes`) → `413`.
 2. `PATCH <Location>` with `Upload-Offset: <current offset>` and

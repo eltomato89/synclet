@@ -6,7 +6,7 @@ import type { Server as TusServer, ServerOptions, Upload } from '@tus/server';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { randomBytes } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import type { IncomingMessage } from 'node:http';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
@@ -289,6 +289,8 @@ export class TusService implements OnModuleInit {
 
   private async discard(id: string): Promise<void> {
     await this.store.remove(id).catch((e) => this.log.warn(`cannot remove staged upload ${id}: ${(e as Error).message ?? JSON.stringify(e)}`));
+    // tus may write the info file after the data file was dropped (a POST that completes the upload).
+    await rm(path.join(this.directory, `${id}.json`), { force: true });
   }
 
   /** Removes unfinished uploads older than 24 h from /meta/uploads. */
