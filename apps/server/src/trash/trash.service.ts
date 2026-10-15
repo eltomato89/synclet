@@ -10,7 +10,7 @@ import { absPath, joinRel, parentRel } from '../common/paths';
 import { SyncError } from '../common/sync-error';
 import type { IndexUser } from '../common/types';
 import { FilesService, TrashManifestEntry } from '../files/files.service';
-import { rethrowStorageError } from '../common/storage-errors';
+import { InsufficientStorageError, isStorageFull, rethrowStorageError } from '../common/storage-errors';
 import { copyTree, moveNoReplace, statEntry } from '../files/fs-ops';
 import { readDisk } from '../indexer/disk';
 import { ItemStore } from '../journal/item-store';
@@ -126,7 +126,7 @@ export class TrashService {
         }
       } catch (e) {
         if (copy) await this.dropCopy(copy);
-        throw e;
+        rethrowStorageError(e);
       }
     } finally {
       this.release([entry.id]);
@@ -139,7 +139,7 @@ export class TrashService {
    */
   private async stageCopy(user: IndexUser, entry: TrashEntry, dirRel: string): Promise<StagedCopy> {
     const tmp = path.join(this.abs(user, dirRel), tempName(randomBytes(8).toString('hex')));
-    await mkdir(tmp).catch((e) => Promise.reject(errno(e) === 'ENOENT' || errno(e) === 'ENOTDIR' ? new SyncError('conflict', 'restore target folder vanished', undefined, 409) : e));
+    await mkdir(tmp).catch((e) => Promise.reject(errno(e) === 'ENOENT' || errno(e) === 'ENOTDIR' ? new SyncError('conflict', 'restore target folder vanished', undefined, 409) : isStorageFull(e) ? new InsufficientStorageError() : e));
     const copy = { dirRel, tmp, payload: path.join(tmp, 'payload') };
     try {
       await copyTree(entry.storePath, copy.payload);

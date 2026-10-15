@@ -6,7 +6,7 @@ import path from 'node:path';
 import { createTestApp, TestContext } from '../../test/context';
 import { FilesService } from '../files/files.service';
 import { SchedulerService } from '../indexer/scheduler.service';
-import { TUS_PATH } from './tus';
+import { TUS_PATH, TusService } from './tus';
 
 // Above Fastify's default bodyLimit (1 MiB): tus bodies must be streamed, never buffered.
 const MAX = 5_000_000;
@@ -288,5 +288,32 @@ describe('tus uploads', () => {
     const retry = await patch(location, data.length, Buffer.alloc(0));
     expect(retry.statusCode).toBe(200);
     expect(await readFile(path.join(userDir(), 'full.bin'))).toEqual(data);
+  });
+
+  const fullDisk = () => Object.assign(new Error('no space left on device'), { code: 'ENOSPC' });
+  const storeOf = () => (ctx.app.get(TusService) as unknown as { store: { write: (...a: unknown[]) => Promise<number> } }).store;
+
+  it('ENOSPC while staging a PATCH chunk answers 507 and the upload stays resumable', async () => {
+    const data = randomBytes(1000);
+    const location = (await create(data.length, { name: 'chunk.bin' })).headers.location;
+    jest.spyOn(storeOf(), 'write').mockRejectedValueOnce(fullDisk());
+    const res = await patch(location, 0, data);
+    expect(res.statusCode).toBe(507);
+    expect(res.json()).toMatchObject({ code: 'insufficient_storage' });
+    expect((await tus('HEAD', location)).headers['upload-offset']).toBe('0');
+    expect((await patch(location, 0, data)).statusCode).toBe(200);
+    expect(await readFile(path.join(userDir(), 'chunk.bin'))).toEqual(data);
+  });
+
+  it('507 on a creation-with-upload POST discards the staged upload (the client got no Location)', async () => {
+    const data = randomBytes(500);
+    jest.spyOn(storeOf(), 'write').mockRejectedValueOnce(fullDisk());
+    const res = await tus('POST', TUS_PATH, {
+      'upload-length': String(data.length), 'upload-metadata': metadata({ name: 'post.bin' }),
+      'content-type': 'application/offset+octet-stream',
+    }, data);
+    expect(res.statusCode).toBe(507);
+    expect(res.json()).toMatchObject({ code: 'insufficient_storage' });
+    expect(await readdir(stagingDir())).toEqual([]);
   });
 });

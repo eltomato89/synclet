@@ -13,7 +13,7 @@ import type { Readable } from 'node:stream';
 import { AuthGuard } from '../auth/auth.guard';
 import { APP_CONFIG, AppConfig } from '../config';
 import { validateName } from '../common/names';
-import { InsufficientStorageError } from '../common/storage-errors';
+import { InsufficientStorageError, isStorageFull } from '../common/storage-errors';
 import { SyncError } from '../common/sync-error';
 import type { AuthUser } from '../common/types';
 import { FilesService, OnConflict } from '../files/files.service';
@@ -69,6 +69,8 @@ export class TusService implements OnModuleInit {
   private readonly finishing = new Set<string>();
   /** Upload published by a request; its staged part is dropped once tus has answered. */
   private readonly published = new WeakMap<IncomingMessage, string>();
+  /** Upload created by a POST request, so a failed creation can drop its staged part. */
+  private readonly created = new WeakMap<IncomingMessage, string>();
   readonly directory: string;
 
   constructor(
@@ -103,11 +105,22 @@ export class TusService implements OnModuleInit {
         if (this.finishing.has(id) && (req.method === 'PATCH' || req.method === 'DELETE')) throw tusError(423, 'Upload is being finished\n');
       },
       onUploadCreate: async (req, upload) => {
+        const raw = this.rawRequest(req);
+        if (raw) this.created.set(raw, upload.id);
         const meta = await this.validateMeta(this.caller(req), upload.metadata);
         return { metadata: { ...upload.metadata, parentId: meta.parentId, onConflict: meta.onConflict } };
       },
       onUploadFinish: (req, upload) => this.finish(req, upload),
       onResponseError: async (_req, err) => {
+        // Full disk while tus stages a chunk (POST with body, PATCH): the offset stays consistent, the client resumes later.
+        if (isStorageFull(err)) {
+          // Creation-with-upload: the client never got a Location, so nobody can resume this upload.
+          const raw = this.rawRequest(_req);
+          const id = raw && this.created.get(raw);
+          if (id && _req.method === 'POST') await this.discard(id);
+          const full = new InsufficientStorageError();
+          return { status_code: full.status, body: JSON.stringify({ statusCode: full.status, message: full.message, code: full.code }) };
+        }
         if (!(err instanceof SyncError)) return undefined;
         const body: Record<string, unknown> = { statusCode: err.status, message: err.message, code: err.code };
         if (err.itemRow) {
@@ -212,7 +225,8 @@ export class TusService implements OnModuleInit {
     } catch (e) {
       // Client errors (conflict, parent gone) cannot be fixed by retrying this upload: drop it.
       // Anything else (I/O, database, full disk = 507) keeps it; an empty PATCH at the final offset retries.
-      if (e instanceof SyncError && !(e instanceof InsufficientStorageError)) await this.discard(upload.id);
+      // A 507 on a creation-with-upload POST has no Location the client could resume: drop it too.
+      if (e instanceof SyncError && (!(e instanceof InsufficientStorageError) || req.method === 'POST')) await this.discard(upload.id);
       this.finishing.delete(upload.id);
       throw e;
     }
