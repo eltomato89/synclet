@@ -12,7 +12,10 @@
     "hidePassword": "Hide password",
     "genericError": "That didn't work. Check the connection to the server and try again.",
     "close": "Close",
-    "more": "More"
+    "more": "More",
+    "connectionErrorTitle": "Can't reach the server",
+    "connectionErrorBody": "Synclet couldn't check your session because the server isn't responding. Make sure the server is running, then try again.",
+    "retry": "Try again"
   },
   "auth": {
     "loginTitle": "Sign in to Synclet",

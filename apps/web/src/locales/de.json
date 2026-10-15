@@ -12,7 +12,10 @@
     "hidePassword": "Passwort verbergen",
     "genericError": "Das hat nicht geklappt. Prüfe die Verbindung zum Server und versuche es erneut.",
     "close": "Schließen",
-    "more": "Mehr"
+    "more": "Mehr",
+    "connectionErrorTitle": "Server nicht erreichbar",
+    "connectionErrorBody": "Synclet konnte deine Sitzung nicht prüfen, weil der Server nicht antwortet. Prüfe, ob der Server läuft, und versuche es erneut.",
+    "retry": "Erneut versuchen"
   },
   "auth": {
     "loginTitle": "Bei Synclet anmelden",

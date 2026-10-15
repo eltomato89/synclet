@@ -1,6 +1,7 @@
 import { type FormEvent, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Navigate, useNavigate, useSearchParams } from 'react-router';
+import { ConnectionError } from '@/components/ConnectionError';
 import { AuthLayout } from '@/components/auth/AuthLayout';
 import { FormError } from '@/components/auth/FormError';
 import { PasswordInput } from '@/components/auth/PasswordInput';
@@ -21,6 +22,8 @@ export function LoginPage() {
   const [pending, setPending] = useState(false);
 
   if (status === 'authenticated' && !pending) return <Navigate to={next} replace />;
+  if (status === 'needs-setup') return <Navigate to="/setup" replace />;
+  if (status === 'error') return <ConnectionError />;
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();

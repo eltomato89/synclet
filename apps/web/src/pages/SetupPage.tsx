@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { AuthLayout } from '@/components/auth/AuthLayout';
 import { FormError } from '@/components/auth/FormError';
 import { PasswordInput } from '@/components/auth/PasswordInput';
+import { ConnectionError } from '@/components/ConnectionError';
 import { FullPageSpinner } from '@/components/FullPageSpinner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,7 +20,7 @@ interface FieldErrors { username?: string; password?: string }
 
 export function SetupPage() {
   const { t } = useTranslation();
-  const { completeSetup, status } = useAuth();
+  const { completeSetup, status, retry } = useAuth();
   const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
@@ -27,6 +28,7 @@ export function SetupPage() {
   const [pending, setPending] = useState(false);
 
   if (status === 'loading') return <FullPageSpinner />;
+  if (status === 'error') return <ConnectionError />;
   if (status === 'authenticated' && !pending) return <Navigate to="/files" replace />;
   if (status === 'anonymous') return <Navigate to="/login" replace />;
 
@@ -55,6 +57,7 @@ export function SetupPage() {
       if (!(err instanceof ApiError)) { setError(t('common.genericError')); return; }
       if (err.code === 'setup_done') {
         toast.info(t('auth.setupDone'));
+        retry(); // re-probe: status leaves 'needs-setup', so /login no longer redirects back here
         navigate('/login', { replace: true });
       } else if (err.code === 'invalid_request') {
         setFieldErrors({ username: t('auth.usernameInvalid') });

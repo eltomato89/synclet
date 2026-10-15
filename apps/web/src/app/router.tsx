@@ -1,5 +1,6 @@
 import { createBrowserRouter, Navigate, Outlet, useLocation } from 'react-router';
 import { AppShell } from '@/components/app-shell/AppShell';
+import { ConnectionError } from '@/components/ConnectionError';
 import { FullPageSpinner } from '@/components/FullPageSpinner';
 import { useAuth } from '@/lib/auth';
 import { FilesPage } from '@/pages/FilesPage';
@@ -11,6 +12,7 @@ function RequireAuth() {
   const { status } = useAuth();
   const location = useLocation();
   if (status === 'loading') return <FullPageSpinner />;
+  if (status === 'error') return <ConnectionError />;
   if (status === 'needs-setup') return <Navigate to="/setup" replace />;
   if (status === 'anonymous') {
     const next = location.pathname + location.search;
