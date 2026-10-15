@@ -2,6 +2,15 @@
 
 Synclet is a self-hosted, Dropbox-like file server. Your folder stays a normal folder: Synclet indexes and serves the files you already have on disk, and never stores anything inside them besides your own content. Edit files on the host or through Synclet, and both see the same thing. Leave at any time and your folder is exactly as you want it.
 
+## Features
+
+- Browse, upload, download, move and delete files in the web app; sync clients via the sync API.
+- **Trash:** deleting through Synclet moves items to the trash; they are restorable for 30 days (`SYNCLET_TRASH_RETENTION_DAYS`), then removed for good.
+- **Shares:** public links to a file or folder, optionally with password and expiry.
+- **Previews:** thumbnails and in-browser previews for images (including HEIC), video, PDF, Office documents, text and code.
+- **Search:** file names and extracted text content.
+- **Resumable uploads:** large uploads (tus) continue after an interrupted connection.
+
 ## Quickstart
 
 ```bash
@@ -19,8 +28,18 @@ Open `http://localhost:8080` (or your `SYNCLET_PORT`) and complete the setup wiz
 | Location | Content |
 | --- | --- |
 | `SYNCLET_DATA` (`/data`) | Only your files, plus the transient entries listed below. No hidden dirs, no xattrs, no metadata files. |
-| `SYNCLET_META` (`/meta`) | Trash (`/meta/trash/<id>/`), delete intents (`/meta/staging/`); later thumbnails and versions. |
-| PostgreSQL | File index, sync journal, users, devices. |
+| `SYNCLET_META` (`/meta`) | Trash (`/meta/trash/<id>/`), delete intents (`/meta/staging/`), thumbnails and previews (`/meta/derived/`), resumable upload parts (`/meta/uploads/`). |
+| PostgreSQL | File index, sync journal, users, devices, shares, extracted text for search. |
+
+### The worker container
+
+The `worker` service runs the same image in the worker role (`SYNCLET_ROLE=worker`). It generates thumbnails, previews and extracted text in the background using `ffmpeg`, `poppler-utils` (`pdftoppm`, `pdftotext`), `heif-convert` and `unzip`. It **reads** your files (`/data` is mounted read-only), **writes** only to `/meta/derived` and the database, and never runs migrations (only `server` does). On `docker compose stop` it gets up to 150 s to finish a running job (video thumbnails can take up to two minutes).
+
+### Disk usage and privacy
+
+- `/meta/derived` holds thumbnails and previews, typically a few percent of the size of your media. It can be deleted at any time; the worker regenerates it.
+- `/meta/uploads` holds partial resumable uploads. Abandoned uploads are removed after 24 hours. Nothing appears in `SYNCLET_DATA` until an upload completes.
+- Thumbnails and extracted text (used for search) are stored in `/meta` and in the database. When a file is deleted for good (trash expiry or emptying the trash), its derivatives and extracted text are removed by garbage collection.
 
 ### What Synclet may write into your folder
 
@@ -35,11 +54,11 @@ Other names are never indexed or synced either: `.DS_Store`, `.Spotlight-V100`, 
 
 ### Deleting needs disk space in `SYNCLET_META`
 
-`SYNCLET_DATA` and `SYNCLET_META` are separate mounts, so deleting through Synclet **copies** the item into `SYNCLET_META` and then removes the original. You need free space there equal to the size of what you delete. The trash is not emptied automatically yet. The delete itself is answered at once, and the copy runs in the background (you see the `.synclet-trash-<id>` entry in the meantime).
+`SYNCLET_DATA` and `SYNCLET_META` are separate mounts, so deleting through Synclet **copies** the item into `SYNCLET_META` and then removes the original. You need free space there equal to the size of what you delete. Trashed items are removed for good after `SYNCLET_TRASH_RETENTION_DAYS` (default 30). The delete itself is answered at once, and the copy runs in the background (you see the `.synclet-trash-<id>` entry in the meantime).
 
 ## Configuration
 
-All settings go into `deploy/.env` (read by `docker compose --env-file deploy/.env`). Leave a value empty to use the default. Changes take effect after `docker compose ... up -d` (which recreates the server container).
+All settings go into `deploy/.env` (read by `docker compose --env-file deploy/.env`). Leave a value empty to use the default. Changes take effect after `docker compose ... up -d` (which recreates the server and worker containers).
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -53,6 +72,10 @@ All settings go into `deploy/.env` (read by `docker compose --env-file deploy/.e
 | `SYNCLET_PUBLIC_URL` | (empty) | Public URL, e.g. `https://files.example.com`. Currently only decides the default of `SYNCLET_SECURE_COOKIES`. |
 | `SYNCLET_SECURE_COOKIES` | on if `SYNCLET_PUBLIC_URL` starts with `https://` | Forces the `Secure` flag of the login cookie on (`on`) or off (`off`). |
 | `SYNCLET_TRUST_PROXY` | `off` (`true` in the shipped compose file) | Use `X-Forwarded-For` as the client IP (login rate limiting). Only enable behind a reverse proxy that sets X-Forwarded-For, otherwise clients can spoof their IP. |
+| `SYNCLET_TRASH_RETENTION_DAYS` | `30` | Days items stay in the trash before being removed for good (`0` = keep forever). |
+| `SYNCLET_SEARCH_LANGUAGE` | `simple` | Postgres text search configuration for search (for example `german`, `english`). `simple` does no stemming. Used by server and worker. |
+| `SYNCLET_WORKER_CONCURRENCY` | `2` | Number of preview jobs the worker runs in parallel. |
+| `SYNCLET_PREVIEW_MAX_BYTES` | `2147483648` (2 GiB) | Files larger than this get no thumbnail, preview or text extraction. |
 | `SYNCLET_WATCH` | `on` | `off` disables the file watcher and relies on periodic scans (NFS/SMB). |
 | `SYNCLET_SCAN_INTERVAL` | `900` (`120` with `SYNCLET_WATCH=off`) | Seconds between full scans of all user folders. |
 | `SYNCLET_MAX_UPLOAD_BYTES` | `53687091200` (50 GiB) | Largest accepted upload. |
@@ -77,7 +100,7 @@ All settings go into `deploy/.env` (read by `docker compose --env-file deploy/.e
 
 ## Architecture
 
-Three containers: `postgres` (index and journal), `server` (NestJS/Fastify API, indexer, file access) and `caddy` (reverse proxy for `/api/*` plus the static web app). The spec lists the web app as a separate service; it is served from the Caddy image instead, which is leaner and equivalent. For automatic Let's Encrypt certificates set `SYNCLET_SITE_ADDRESS=<your domain>`, `SYNCLET_PORT=80` and `SYNCLET_TLS_PORT=443` (all three are required, plus public DNS and reachable ports 80/443). With the defaults (`:80`, ports 8080/8443) no certificates are issued; use that behind an existing reverse proxy.
+Four containers: `postgres` (index and journal), `server` (NestJS/Fastify API, indexer, file access), `worker` (same image; thumbnails, previews, text extraction) and `caddy` (reverse proxy for `/api/*` plus the static web app). The spec lists the web app as a separate service; it is served from the Caddy image instead, which is leaner and equivalent. For automatic Let's Encrypt certificates set `SYNCLET_SITE_ADDRESS=<your domain>`, `SYNCLET_PORT=80` and `SYNCLET_TLS_PORT=443` (all three are required, plus public DNS and reachable ports 80/443). With the defaults (`:80`, ports 8080/8443) no certificates are issued; use that behind an existing reverse proxy.
 
 ## Development
 
