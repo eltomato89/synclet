@@ -100,6 +100,15 @@ export function clearUploadFingerprints(): void {
   } catch { /* storage unavailable */ }
 }
 
+/**
+ * Thrown from `onBeforeRequest` when there is no usable session, so the request is never sent.
+ * Sending it would end in a 401, and a HEAD answered 401 makes tus-js-client forget the stored
+ * upload: the task fails instead, and Retry (after a re-login) resumes from the server offset.
+ */
+export class SessionUnavailableError extends Error {
+  constructor(readonly code: 'unauthorized' | 'network') { super(`session unavailable (${code})`); }
+}
+
 const sleep = (ms: number) => new Promise<void>((r) => { setTimeout(r, ms); });
 
 /**
@@ -117,6 +126,8 @@ export class UploadQueue {
   /** Aborts the in-flight transfer of a task (tus: also terminates the server-side upload). */
   private aborts = new Map<number, () => void>();
   private maxBytes = 0;
+  /** In-flight pre-request refresh, shared by all uploads (one refresh for concurrent requests). */
+  private refreshInFlight: Promise<boolean> | null = null;
 
   constructor(
     private readonly token: () => string | null,
@@ -182,16 +193,27 @@ export class UploadQueue {
    * The access token for the next request, refreshed first when it expires within
    * {@link TOKEN_REFRESH_MARGIN_MS}. A tus HEAD answered 401 makes tus-js-client drop the stored
    * upload and start over from byte 0, so an expired token must never reach the server.
-   * `refreshSession` is single-flight; a failed refresh sends the old token (the 401 path decides).
+   * `refreshSession` is single-flight. Throws {@link SessionUnavailableError} instead of
+   * returning a token the server would reject: no token, a refresh that failed (`unauthorized`
+   * when the session is gone, `network` when the server was unreachable), or a token that is
+   * still expired afterwards.
    */
-  private async freshToken(): Promise<string | null> {
+  private async freshToken(): Promise<string> {
     const tok = this.token();
+    if (!tok) throw new SessionUnavailableError('unauthorized');
     const exp = tokenExpiry(tok);
-    if (this.refresh && exp !== null && exp - Date.now() < TOKEN_REFRESH_MARGIN_MS) {
-      await this.refresh().catch(() => false);
-      return this.token();
+    if (!this.refresh || exp === null || exp - Date.now() >= TOKEN_REFRESH_MARGIN_MS) return tok;
+    let ok: boolean;
+    try {
+      this.refreshInFlight ??= this.refresh().finally(() => { this.refreshInFlight = null; });
+      ok = await this.refreshInFlight;
+    } catch {
+      throw new SessionUnavailableError('network');
     }
-    return tok;
+    const next = this.token();
+    const nextExp = tokenExpiry(next);
+    if (!ok || !next || (nextExp !== null && nextExp <= Date.now())) throw new SessionUnavailableError('unauthorized');
+    return next;
   }
 
   /** False once the task was cancelled (removed from the queue). */
@@ -230,12 +252,15 @@ export class UploadQueue {
       fingerprint: (file: File) => Promise.resolve(['synclet', t.parentId, file.name, file.type, file.size, file.lastModified].join('|')),
       // Read the token per request, so a long upload picks up refreshed tokens.
       onBeforeRequest: async (req) => {
-        if (refreshing) await refreshing;
-        const tok = await this.freshToken();
-        if (tok) req.setHeader('Authorization', `Bearer ${tok}`);
+        // After a 401 the retry waits for that refresh; if it failed, do not send at all.
+        const after401 = refreshing ? await refreshing : 'ok';
+        if (after401 !== 'ok') throw new SessionUnavailableError(after401 === 'network' ? 'network' : 'unauthorized');
+        req.setHeader('Authorization', `Bearer ${await this.freshToken()}`);
       },
       onAfterResponse: (_req, res) => { if (res.getStatus() !== 401) refreshedSinceLast401 = false; },
       onShouldRetry: (err) => {
+        // No usable session: retrying cannot help until the user signs in again.
+        if (err.causingError instanceof SessionUnavailableError) return false;
         const res = err.originalResponse;
         const status = res?.getStatus() ?? 0;
         if (status === 401) {
@@ -261,6 +286,13 @@ export class UploadQueue {
       onError: (err) => {
         this.aborts.delete(t.id);
         if (!this.alive(t)) return;
+        const cause = (err as tus.DetailedError).causingError;
+        if (cause instanceof SessionUnavailableError) {
+          // Nothing was sent: the stored upload URL survives, so Retry resumes.
+          this.fail(t, cause.code);
+          this.pump();
+          return;
+        }
         const res = (err as tus.DetailedError).originalResponse ?? null;
         const status = res?.getStatus() ?? 0;
         const code = status === 0 ? 'network' : bodyCode(res?.getBody()) ?? statusCode(status);
@@ -307,8 +339,13 @@ export class UploadQueue {
     for (let attempt = 1; attempt <= PUBLISH_ATTEMPTS; attempt++) {
       if (!this.alive(t)) return 'cancelled';
       let res: Response;
+      let tok: string;
       try {
-        const tok = await this.freshToken();
+        tok = await this.freshToken();
+      } catch (e) {
+        return e instanceof SessionUnavailableError ? e.code : 'unauthorized';
+      }
+      try {
         res = await fetch(url, {
           method: 'PATCH',
           credentials: 'include',
@@ -316,7 +353,7 @@ export class UploadQueue {
             'Tus-Resumable': '1.0.0',
             'Upload-Offset': String(t.file.size),
             'Content-Type': 'application/offset+octet-stream',
-            ...(tok ? { Authorization: `Bearer ${tok}` } : {}),
+            Authorization: `Bearer ${tok}`,
           },
         });
       } catch {

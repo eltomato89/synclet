@@ -266,6 +266,8 @@ describe('token refresh before requests', () => {
     const other = request('HEAD');
     await Promise.all([u.options.onBeforeRequest!(head), u.options.onBeforeRequest!(other)].map((p) => Promise.resolve(p).then(() => order.push('sent'))));
     expect(order[0]).toBe('refresh');
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(other.headers.Authorization).toBe(`Bearer ${tok}`);
     expect(head.headers.Authorization).toBe(`Bearer ${tok}`);
     expect(tokenExpiry(head.headers.Authorization.slice(7))! - Date.now()).toBeGreaterThan(60_000);
     // The upload carries on from the stored URL: no new tus upload was created.
