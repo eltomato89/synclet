@@ -374,6 +374,25 @@ final class TransferEngineTests: XCTestCase {
                        ["fail", "rename", "fail"], "no second rename upload")
     }
 
+    /// A stored upload URL on another origin is dropped, never contacted.
+    func testStoredUploadOnAnotherOriginIsDiscarded() async throws {
+        let server = FakeTusServer()
+        let size = 33 * Self.mib
+        let file = patternFile(size)
+        let info = try TransferEngine.fileInfo(file)
+        let target = TusUploadMetadata(name: "Big.bin", parentId: "root", onConflict: .rename, modifiedAt: nil)
+        try UploadStateStore(directory: stateDir).save(
+            UploadState(uploadURL: URL(string: "https://evil.example.test/api/sync/v1/uploads/x")!, length: Int64(size),
+                        fileSize: info.size, fileMtime: info.mtime, target: target, createdAt: Date()),
+            key: "k")
+
+        let item = try await engine().upload(file: file, newIn: "root", name: "Big.bin", modifiedAt: nil, resumeKey: "k")
+
+        XCTAssertEqual(item.size, Int64(size))
+        XCTAssertFalse(server.allRequests.contains { $0.request.url?.host == "evil.example.test" })
+        XCTAssertEqual(server.tusRequests.first?.method, "POST", "started over")
+    }
+
     // MARK: - Hardening (M1, M2)
 
     /// Gone path: an identical suffixed copy with another `modifiedAt` is an unrelated

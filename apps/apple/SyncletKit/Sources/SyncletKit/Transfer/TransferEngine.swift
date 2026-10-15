@@ -172,7 +172,11 @@ public final class TransferEngine: Sendable {
         var resumed = false
 
         // 1. Resume a stored upload when the local file and the target are unchanged.
-        if let state = stateStore.load(key: key) {
+        if let state = stateStore.load(key: key), !tus.isSameOrigin(state.uploadURL) {
+            // Stored by another server address (or tampered with): never send the token there.
+            Log.transfer.error("stored upload URL is on another origin, discarding it")
+            stateStore.remove(key: key)
+        } else if let state = stateStore.load(key: key) {
             if state.fileSize == info.size, state.length == info.size, state.fileMtime == info.mtime,
                Self.sameTarget(state.target, requested, nameMayChange: nameMayChange) {
                 // The server publishes with the stored metadata (N2: the first attempt's name).
