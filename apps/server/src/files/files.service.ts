@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { Item } from '@prisma/client';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
@@ -53,7 +53,7 @@ async function sizeOf(abs: string): Promise<bigint> {
 const uuidFromHex = (h: string) => `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 
 @Injectable()
-export class FilesService implements OnApplicationBootstrap {
+export class FilesService {
   private readonly log = new Logger(FilesService.name);
 
   constructor(
@@ -62,11 +62,6 @@ export class FilesService implements OnApplicationBootstrap {
     private readonly store: ItemStore,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
-
-  async onApplicationBootstrap() {
-    if (!this.config.background) return;
-    await this.recoverStagedTrash().catch((e) => this.log.error(`trash recovery failed: ${(e as Error).message}`));
-  }
 
   private abs(user: IndexUser, rel: string) { return absPath(this.config.dataRoot, user.username, rel); }
 
@@ -381,14 +376,12 @@ export class FilesService implements OnApplicationBootstrap {
       // Rolled back after vacating: put the entry back where the DB still expects it.
       const st = staged as { from: string } | null;
       if (st) {
-        const occupied = await lstat(st.from).then(() => true, () => false);
-        if (occupied) this.log.error(`cannot restore ${staging}: ${st.from} was re-created; leaving it staged`);
-        else {
-          await moveAcrossFs(staging, st.from).then(
-            () => this.dropIntent(trashId),
-            (err) => this.log.error(`cannot restore ${staging} -> ${st.from}: ${String(err)}; recovery will retry at start`),
-          );
-        }
+        // No-replace: if the host re-created the path meanwhile, the entry stays staged with its
+        // intent and the next start's recovery moves it to the trash instead.
+        await moveAcrossFs(staging, st.from).then(
+          () => this.dropIntent(trashId),
+          (err) => this.log.error(`cannot restore ${staging} -> ${st.from}: ${String(err)}; recovery will retry at start`),
+        );
       }
       throw e;
     }
@@ -489,11 +482,10 @@ export class FilesService implements OnApplicationBootstrap {
       }
       const dst = this.abs(user, intent.originalRel);
       try {
-        await moveNoReplace(staged, dst);
+        await moveAcrossFs(staged, dst); // no-replace, copy fallback across mounts
       } catch (e) {
         if (isEexist(e)) return false;
-        if (errno(e) !== 'EXDEV') throw e;
-        await moveAcrossFs(staged, dst);
+        throw e;
       }
       return true;
     }, TX_OPTS);

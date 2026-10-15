@@ -347,4 +347,32 @@ describe('FilesService', () => {
     await expect(stat(intent)).rejects.toMatchObject({ code: 'ENOENT' });
     expect(await visible()).toEqual(['x.txt']);
   });
+  it('remove rolls back the staging rename when the transaction fails', async () => {
+    const f = await files.upload(user, null, 'a.txt', body('x'), {});
+    const journal = ctx.app.get(JournalService);
+    jest.spyOn(journal, 'record').mockRejectedValueOnce(new Error('db down'));
+    await expect(files.remove(user, f.id)).rejects.toThrow('db down');
+    expect(await readdir(root)).toEqual(['a.txt']);
+    expect(await readdir(path.join(ctx.config.metaRoot, 'staging'))).toEqual([]);
+    expect((await ctx.prisma.item.findUniqueOrThrow({ where: { id: f.id } })).deletedAt).toBeNull();
+  });
+
+  it('remove rollback never overwrites a path the host re-created meanwhile (m1)', async () => {
+    const f = await files.upload(user, null, 'a.txt', body('mine'), {});
+    const journal = ctx.app.get(JournalService);
+    jest.spyOn(journal, 'record').mockImplementationOnce(async () => {
+      await writeFile(path.join(root, 'a.txt'), 'host');
+      throw new Error('db down');
+    });
+    await expect(files.remove(user, f.id)).rejects.toThrow('db down');
+    expect(await readFile(path.join(root, 'a.txt'), 'utf8')).toBe('host');
+    const staged = (await readdir(root)).filter((n) => n.startsWith('.synclet-trash-'));
+    expect(staged).toHaveLength(1);
+    // Next start: the uncommitted delete cannot go back (path taken) and lands in the trash.
+    expect(await files.recoverStagedTrash()).toBe(1);
+    const entry = await ctx.prisma.trashEntry.findFirstOrThrow();
+    expect(await readFile(entry.storePath, 'utf8')).toBe('mine');
+    expect(await readFile(path.join(root, 'a.txt'), 'utf8')).toBe('host');
+    expect(await readdir(path.join(ctx.config.metaRoot, 'staging'))).toEqual([]);
+  });
 });

@@ -81,42 +81,85 @@ export async function replaceAtomic(src: string, dst: string): Promise<void> {
 }
 
 /**
- * Renames without replacing an existing target (small TOCTOU window against host processes;
- * Node has no renameat2). An existing `dst` is only accepted when it is `src` itself seen through
- * a case/normalization-insensitive file system (APFS, SMB), i.e. a case-only rename in place.
- * On case-sensitive file systems a differently-cased sibling is a real file and is never clobbered.
+ * Moves `src` to `dst` without ever replacing an existing `dst`.
+ * - Files: link(2) + unlink(2), which refuses an existing `dst` atomically; on file systems without
+ *   hard links: existence check + rename (small TOCTOU window against host processes).
+ * - Folders: existence check + rename (rename(2) can at worst replace an *empty* directory).
+ * An existing `dst` is only accepted when it is `src` itself seen through a case/normalization-
+ * insensitive file system (APFS, SMB), i.e. a case-only rename in place. On case-sensitive file
+ * systems a differently-cased sibling is a real file and is never clobbered.
+ * Throws EXDEV unchanged when `src` and `dst` are on different file systems.
  */
 export async function moveNoReplace(src: string, dst: string): Promise<void> {
+  const s = await lstat(src, { bigint: true });
   const existing = await lstatOrNull(dst);
   if (existing) {
-    const s = await lstat(src, { bigint: true });
     const sameEntry =
       s.ino === existing.ino && s.dev === existing.dev &&
       path.dirname(src) === path.dirname(dst) && nameKey(path.basename(src)) === nameKey(path.basename(dst));
     if (!sameEntry) throw eexist(dst);
+    await rename(src, dst); // case-only rename of the same entry
+    return;
+  }
+  if (s.isFile()) {
+    try {
+      await link(src, dst);
+    } catch (e) {
+      if (code(e) === 'EEXIST') throw eexist(dst);
+      if (code(e) === 'EXDEV' || !NO_HARDLINK.includes(code(e) ?? '')) throw e;
+      if (await lstatOrNull(dst)) throw eexist(dst);
+      await rename(src, dst);
+      return;
+    }
+    try {
+      await unlink(src);
+    } catch (e) {
+      await unlink(dst).catch(() => {}); // our own second link to the same inode
+      throw e;
+    }
+    return;
   }
   await rename(src, dst);
 }
 
 /**
- * Moves a file or folder, falling back to copy + delete across file systems (e.g. /data -> /meta).
- * The copy goes to `<dst>-partial-<hex>` and is renamed to `dst` only when complete, so an
- * existing `dst` always means "fully copied" (crash recovery relies on that). The source is
- * removed last.
+ * Moves a file or folder without replacing an existing `dst`, falling back to copy + delete
+ * across file systems (e.g. /data -> /meta). The copy goes to an ignored temp name
+ * (`.synclet-tmp-<hex>`) next to `dst` and is published only when complete – no-replace (link for
+ * files, checked rename for folders) – so an existing `dst` always means "fully copied" (crash
+ * recovery relies on that) and a host-created `dst` is never overwritten. The source is removed last.
  */
 export async function moveAcrossFs(src: string, dst: string): Promise<void> {
   try {
-    await rename(src, dst);
+    await moveNoReplace(src, dst);
+    return;
   } catch (e) {
     if (code(e) !== 'EXDEV') throw e;
-    const partial = `${dst}-partial-${randomBytes(6).toString('hex')}`;
-    try {
-      await cp(src, partial, { recursive: true, preserveTimestamps: true, errorOnExist: true, force: false, verbatimSymlinks: true });
-      await rename(partial, dst);
-    } catch (err) {
-      await rm(partial, { recursive: true, force: true });
-      throw err;
-    }
-    await rm(src, { recursive: true, force: true });
   }
+  await copyThenRemove(src, dst);
+}
+
+/** The cross-device half of `moveAcrossFs` (exported for tests): copy to an ignored temp, publish no-replace, remove `src`. */
+export async function copyThenRemove(src: string, dst: string): Promise<void> {
+  const partial = path.join(path.dirname(dst), tempName(randomBytes(8).toString('hex')));
+  try {
+    await cp(src, partial, { recursive: true, preserveTimestamps: true, errorOnExist: true, force: false, verbatimSymlinks: true });
+    const st = await lstat(partial);
+    if (st.isDirectory()) {
+      if (await lstatOrNull(dst)) throw eexist(dst);
+      await rename(partial, dst);
+    } else {
+      try {
+        await link(partial, dst);
+      } catch (e) {
+        if (code(e) === 'EEXIST') throw eexist(dst);
+        if (!NO_HARDLINK.includes(code(e) ?? '')) throw e;
+        if (await lstatOrNull(dst)) throw eexist(dst);
+        await rename(partial, dst);
+      }
+    }
+  } finally {
+    await rm(partial, { recursive: true, force: true });
+  }
+  await rm(src, { recursive: true, force: true });
 }
