@@ -42,8 +42,11 @@ export class DerivativesGc {
     return live;
   }
 
-  /** Removes finished job rows of dead hashes, unreferenced derivative dirs and stale temp files. */
-  async run(): Promise<{ dirs: number; jobs: number }> {
+  /**
+   * Removes finished job rows of dead hashes, extracted text (ItemText) of dead hashes,
+   * unreferenced derivative dirs and stale temp files.
+   */
+  async run(): Promise<{ dirs: number; jobs: number; texts: number }> {
     const offline = await this.offlineShas();
     // Job rows first: a finished row for a dead hash would otherwise claim `thumbnail: true`
     // (and block re-enqueueing) if the same content is uploaded again after its files are gone.
@@ -63,7 +66,20 @@ export class DerivativesGc {
         jobs += (await this.prisma.derivativeJob.deleteMany({ where: { sha: { in: dead }, status: { notIn: ['pending', 'running'] } } })).count;
       }
     }
+    // Extracted text of content nobody references any more (search joins live items only, so a
+    // stale row is never returned – this is about not keeping user content around).
+    let texts = 0;
+    after = '';
+    for (;;) {
+      const rows = await this.prisma.itemText.findMany({ where: { sha: { gt: after } }, select: { sha: true }, orderBy: { sha: 'asc' }, take: BATCH });
+      if (!rows.length) break;
+      const shas = rows.map((r) => r.sha);
+      after = shas[shas.length - 1];
+      const live = await this.liveShas(shas, offline);
+      const dead = shas.filter((s) => !live.has(s));
+      if (dead.length) texts += (await this.prisma.itemText.deleteMany({ where: { sha: { in: dead } } })).count;
+    }
     const dirs = await this.store.gc((batch) => this.liveShas(batch, offline), BATCH);
-    return { dirs, jobs };
+    return { dirs, jobs, texts };
   }
 }

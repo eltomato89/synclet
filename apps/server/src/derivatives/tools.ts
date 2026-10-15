@@ -13,9 +13,18 @@ export interface ToolOptions {
   /** Binary overrides (tests inject fakes); defaults to the tool name, resolved via PATH. */
   bin?: Partial<Record<ToolName, string>>;
   timeoutMs?: number;
+  /** Cap for stdout/stderr (default 1 MiB). */
+  maxBuffer?: number;
+  /**
+   * Output beyond `maxBuffer` is cut off instead of failing: the child is killed and the
+   * truncated stdout returned (text extraction only needs a prefix; caps decompression bombs).
+   */
+  truncateOutput?: boolean;
+  /** Non-zero exit codes that still count as success (e.g. unzip's warnings). */
+  okExitCodes?: number[];
 }
 
-export type ToolName = 'heif-convert' | 'ffmpeg' | 'ffprobe' | 'pdftoppm';
+export type ToolName = 'heif-convert' | 'ffmpeg' | 'ffprobe' | 'pdftoppm' | 'pdftotext' | 'unzip';
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const FFMPEG_TIMEOUT_MS = 120_000;
@@ -32,10 +41,18 @@ const FFMPEG_INPUT_GUARD = ['-protocol_whitelist', 'file', '-format_whitelist', 
 export function runTool(name: ToolName | string, args: string[], opts: ToolOptions = {}): Promise<{ stdout: string; stderr: string }> {
   const bin = opts.bin?.[name as ToolName] ?? name;
   const timeout = opts.timeoutMs ?? (name === 'ffmpeg' || name === 'ffprobe' ? FFMPEG_TIMEOUT_MS : DEFAULT_TIMEOUT_MS);
+  const maxBuffer = opts.maxBuffer ?? MAX_BUFFER;
   return new Promise((resolve, reject) => {
-    execFile(bin, args, { timeout, killSignal: 'SIGKILL', maxBuffer: MAX_BUFFER, windowsHide: true, env: { PATH: process.env.PATH ?? '' } }, (err, stdout, stderr) => {
+    execFile(bin, args, { timeout, killSignal: 'SIGKILL', maxBuffer, windowsHide: true, env: { PATH: process.env.PATH ?? '' } }, (err, stdout, stderr) => {
       if (!err) { resolve({ stdout, stderr }); return; }
       const e = err as NodeJS.ErrnoException & { killed?: boolean; signal?: string | null };
+      // Checked before the timeout case: exceeding maxBuffer also kills the child with SIGKILL.
+      if (e.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+        if (opts.truncateOutput) resolve({ stdout, stderr });
+        else reject(new ToolFailedError(`${name} produced more than ${maxBuffer} bytes of output`));
+        return;
+      }
+      if (typeof e.code === 'number' && !e.killed && opts.okExitCodes?.includes(e.code)) { resolve({ stdout, stderr }); return; }
       if (e.code === 'ENOENT') reject(new ToolMissingError(`${name} is not installed`));
       else if (e.killed && e.signal === 'SIGKILL') reject(new ToolTimeoutError(`${name} timed out after ${timeout} ms`));
       else reject(new ToolFailedError(`${name} failed: ${String(stderr || e.message).slice(0, 500)}`));
@@ -92,4 +109,22 @@ export async function pdfFirstPage(abs: string, outTmp: string, opts: ToolOption
   assertAbs(abs); assertAbs(outTmp);
   await runTool('pdftoppm', ['-f', '1', '-l', '1', '-r', '110', '-scale-to', '1024', '-jpeg', '-singlefile', abs, outTmp], opts);
   return assertOutput(`${outTmp}.jpg`, 'pdftoppm');
+}
+
+/** PDF text of the first 50 pages (layout preserved) on stdout, cut off after `maxBytes`. */
+export async function pdfText(abs: string, maxBytes: number, opts: ToolOptions = {}): Promise<string> {
+  assertAbs(abs);
+  const { stdout } = await runTool('pdftotext', ['-q', '-layout', '-l', '50', '-enc', 'UTF-8', abs, '-'], { maxBuffer: maxBytes, truncateOutput: true, ...opts });
+  return stdout;
+}
+
+/**
+ * Concatenated contents of the zip members matching `members` (unzip's own wildcard syntax, no
+ * shell involved), cut off after `maxBytes` – a decompression bomb only ever yields that much.
+ */
+export async function unzipMembers(abs: string, members: string[], maxBytes: number, opts: ToolOptions = {}): Promise<string> {
+  assertAbs(abs);
+  // 1 = warnings, 11 = some pattern matched no member: whatever was found is still usable.
+  const { stdout } = await runTool('unzip', ['-p', '-qq', abs, ...members], { maxBuffer: maxBytes, truncateOutput: true, okExitCodes: [1, 11], ...opts });
+  return stdout;
 }

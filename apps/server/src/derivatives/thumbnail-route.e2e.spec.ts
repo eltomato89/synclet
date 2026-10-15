@@ -7,6 +7,8 @@ import { WorkerRunner } from '../worker/worker-runner';
 import { DerivedStore } from './derived-store';
 import { HashBackfill } from './hash';
 import { JobsService } from './jobs.service';
+import { SearchLanguage } from '../search/search-language';
+import { TextIndexer } from './text-index';
 import { Thumbnailer } from './thumbnails';
 
 const FIXTURES = path.join(__dirname, '..', '..', 'test', 'fixtures');
@@ -25,7 +27,7 @@ describe('thumbnail route and preview field', () => {
     ctx = await createTestApp();
     const res = await ctx.app.inject({ method: 'POST', url: '/api/setup', payload: { username: 'jens', displayName: 'Jens', password: 'correct horse battery' } });
     token = res.json().accessToken; userId = res.json().user.id;
-    runner = new WorkerRunner(ctx.config, new HashBackfill(ctx.prisma, ctx.config), new JobsService(ctx.prisma, ctx.config), new Thumbnailer(ctx.app.get(DerivedStore), ctx.config));
+    runner = new WorkerRunner(ctx.config, new HashBackfill(ctx.prisma, ctx.config), new JobsService(ctx.prisma, ctx.config), new Thumbnailer(ctx.app.get(DerivedStore), ctx.config), new TextIndexer(ctx.prisma, new SearchLanguage(ctx.prisma, ctx.config)));
   });
   afterEach(async () => { await ctx.close(); });
 

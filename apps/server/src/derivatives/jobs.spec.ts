@@ -12,6 +12,8 @@ import { DerivativesGc } from './derivatives-gc';
 import { DerivedStore } from './derived-store';
 import { HashBackfill } from './hash';
 import { JobsService } from './jobs.service';
+import { SearchLanguage } from '../search/search-language';
+import { TextIndexer } from './text-index';
 import { Thumbnailer } from './thumbnails';
 
 const FIXTURES = path.join(__dirname, '..', '..', 'test', 'fixtures');
@@ -29,7 +31,7 @@ describe('derivative worker (DB)', () => {
     hash = new HashBackfill(ctx.prisma, ctx.config);
     store = ctx.app.get(DerivedStore);
     thumbs = new Thumbnailer(store, ctx.config);
-    runner = new WorkerRunner(ctx.config, hash, jobs, thumbs);
+    runner = new WorkerRunner(ctx.config, hash, jobs, thumbs, new TextIndexer(ctx.prisma, new SearchLanguage(ctx.prisma, ctx.config)));
   });
   afterEach(async () => { await ctx.close(); });
 
@@ -323,6 +325,7 @@ describe('derivative worker (DB)', () => {
           { sha: oldFormat, kind: 'thumb', status: 'failed' },
         ],
       });
+      await ctx.prisma.itemText.createMany({ data: [live.contentHash!, trashed, inFlight, dead, oldFormat].map((sha) => ({ sha, content: `text ${sha}` })) });
       for (const s of [live.contentHash!, trashed, inFlight, dead, oldFormat]) await store.writeAtomic(store.pathFor(s, 'thumb', 256), Buffer.from('x'));
       // Stale temp leftovers (> 1 h) go, fresh ones (a write in progress) stay.
       const old = new Date(Date.now() - 2 * 3600_000);
@@ -334,7 +337,8 @@ describe('derivative worker (DB)', () => {
       await utimes(staleTmp, old, old);
 
       const res = await ctx.app.get(DerivativesGc).run();
-      expect(res).toEqual({ dirs: 2, jobs: 3 });
+      expect(res).toEqual({ dirs: 2, jobs: 3, texts: 2 });
+      expect((await ctx.prisma.itemText.findMany()).map((t) => t.sha).sort()).toEqual([live.contentHash!, trashed, inFlight].sort());
       for (const s of [live.contentHash!, trashed, inFlight]) expect(await store.has(store.pathFor(s, 'thumb', 256))).toBe(true);
       for (const s of [dead, oldFormat]) expect(await store.has(store.pathFor(s, 'thumb', 256))).toBe(false);
       expect((await ctx.prisma.derivativeJob.findMany()).map((j) => j.sha).sort()).toEqual([live.contentHash!, trashed, inFlight].sort());

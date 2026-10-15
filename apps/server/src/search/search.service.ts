@@ -1,0 +1,118 @@
+import { Injectable } from '@nestjs/common';
+import { Item, Prisma } from '@prisma/client';
+import type { SearchHit, SearchResponse, SyncItem } from '@synclet/shared';
+import { parentRel } from '../common/paths';
+import { SyncError } from '../common/sync-error';
+import type { IndexUser } from '../common/types';
+import { PrismaService } from '../prisma/prisma.service';
+import { SerializerService } from '../sync/serializer.service';
+import { parseSyncId } from '../sync/sync-ids';
+import { SearchLanguage } from './search-language';
+
+export const MAX_QUERY_CHARS = 200;
+/**
+ * Threshold for the word-similarity operator `<%` (query vs. the best-matching part of a name).
+ * Plain `%` compares the query with the whole name, which a file extension or a second word
+ * dilutes below the default 0.3 ("Rechnnug" vs "Rechnung.pdf" = 0.29); word similarity at 0.5
+ * still finds such typos without matching unrelated names.
+ */
+const WORD_SIMILARITY = '0.5';
+const HEADLINE_OPTS = 'StartSel=«,StopSel=»,MaxFragments=1,MaxWords=18,MinWords=6';
+
+/** LIKE pattern for a literal substring (backslash is LIKE's default escape character). */
+export const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+
+interface HitRow { id: string | null; name_score: number | null; content_score: number | null; total: bigint; snippet: string | null }
+
+@Injectable()
+export class SearchService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly serializer: SerializerService,
+    private readonly lang: SearchLanguage,
+  ) {}
+
+  /**
+   * Name (trigram, accent- and case-insensitive) and content (full text over ItemText) search
+   * across the caller's live items. Every branch filters `ownerId` and `deletedAt IS NULL` on the
+   * Item row itself – ItemText is shared by content hash across users and never returned alone.
+   *
+   * The name predicates use exactly the expression of `Item_name_trgm_idx`
+   * (`synclet_unaccent(lower(name))`, partial on `"deletedAt" IS NULL`) so the index applies.
+   */
+  async search(user: IndexUser, rawQ: string, opts: { limit: number; offset: number; folderId?: string }): Promise<SearchResponse> {
+    const q = (rawQ ?? '').trim();
+    if (q.length < 1 || q.length > MAX_QUERY_CHARS) throw new SyncError('invalid_request', `q must be 1..${MAX_QUERY_CHARS} characters`);
+    const scope = await this.scope(user, opts.folderId);
+    const lang = await this.lang.get();
+    const nameExpr = Prisma.sql`synclet_unaccent(lower(i.name))`;
+    const nq = Prisma.sql`synclet_unaccent(lower(${q}))`;
+    // Substring match on the normalized name; the normalized query is escaped for LIKE afterwards.
+    const like = Prisma.sql`'%' || replace(replace(replace(${nq}, '\\', '\\\\'), '%', '\\%'), '_', '\\_') || '%'`;
+    const tsq = Prisma.sql`websearch_to_tsquery(${lang}::regconfig, synclet_unaccent(${q}))`;
+    // ts_headline matches against the original (accented) content: the query is offered both as
+    // typed and unaccented, so a word is highlighted whenever one of the two spellings occurs.
+    const headlineQ = Prisma.sql`(websearch_to_tsquery(${lang}::regconfig, ${q}) || ${tsq})`;
+
+    const rows = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT set_config('pg_trgm.word_similarity_threshold', ${WORD_SIMILARITY}, true)`;
+      return tx.$queryRaw<HitRow[]>`
+        WITH name_hits AS (
+          SELECT i.id, GREATEST(similarity(${nameExpr}, ${nq}), word_similarity(${nq}, ${nameExpr})) AS score
+          FROM "Item" i
+          WHERE i."ownerId" = ${user.id}::uuid AND i."deletedAt" IS NULL ${scope}
+            AND (${nameExpr} % ${nq} OR ${nq} <% ${nameExpr} OR ${nameExpr} LIKE ${like})
+        ),
+        content_hits AS (
+          SELECT i.id, ts_rank(t.tsv, ${tsq}) AS score
+          FROM "ItemText" t
+          JOIN "Item" i ON i."contentHash" = t.sha
+          WHERE t.tsv @@ ${tsq}
+            AND i."ownerId" = ${user.id}::uuid AND i."deletedAt" IS NULL AND i.type = 'file' ${scope}
+        ),
+        hits AS (
+          SELECT coalesce(n.id, c.id) AS id, n.score AS name_score, c.score AS content_score,
+                 coalesce(n.score, 0) * 2 + coalesce(c.score, 0) AS rank
+          FROM name_hits n FULL JOIN content_hits c ON c.id = n.id
+        ),
+        page AS (
+          SELECT h.* FROM hits h ORDER BY h.rank DESC, h.id LIMIT ${opts.limit} OFFSET ${opts.offset}
+        )
+        -- One row even for an empty page, so the total is always known.
+        SELECT p.id, p.name_score::float8 AS name_score, p.content_score::float8 AS content_score, c.total,
+          CASE WHEN p.content_score IS NULL THEN NULL
+               ELSE ts_headline(${lang}::regconfig, t.content, ${headlineQ}, ${HEADLINE_OPTS}) END AS snippet
+        FROM (SELECT count(*) AS total FROM hits) c
+        LEFT JOIN page p ON true
+        LEFT JOIN "Item" i ON i.id = p.id
+        LEFT JOIN "ItemText" t ON p.content_score IS NOT NULL AND t.sha = i."contentHash"
+        ORDER BY p.rank DESC, p.id`;
+    }, { timeout: 15_000 });
+
+    const total = Number(rows[0]?.total ?? 0);
+    const pageRows = rows.filter((r): r is HitRow & { id: string } => r.id !== null);
+    const items = await this.prisma.item.findMany({ where: { id: { in: pageRows.map((r) => r.id) }, ownerId: user.id, deletedAt: null } });
+    const byId = new Map(items.map((r) => [r.id, r]));
+    const ordered = pageRows.flatMap((r) => (byId.has(r.id) ? [{ row: byId.get(r.id)!, hit: r }] : []));
+    const serialized = await this.serializer.toSyncItems(user, ordered.map((o) => o.row));
+    const hits: SearchHit[] = ordered.map(({ row, hit }, i) => this.hit(row, serialized[i], hit));
+    return { hits, total };
+  }
+
+  private hit(row: Item, item: SyncItem, h: HitRow): SearchHit {
+    const matched = h.name_score !== null && h.content_score !== null ? 'both' : h.name_score !== null ? 'name' : 'content';
+    return { item, path: parentRel(row.path), snippet: h.snippet, matched };
+  }
+
+  /** Path-prefix restriction to a folder subtree (root or no folder = everything). */
+  private async scope(user: IndexUser, folderId: string | undefined): Promise<Prisma.Sql> {
+    if (!folderId) return Prisma.empty;
+    const parsed = parseSyncId(folderId);
+    if (!parsed) throw new SyncError('invalid_request', 'invalid folder id');
+    if (parsed.kind === 'root') return Prisma.empty;
+    if (parsed.kind !== 'folder') throw new SyncError('invalid_request', 'not a folder');
+    const folder = await this.prisma.item.findFirst({ where: { id: parsed.uuid, ownerId: user.id, deletedAt: null, type: 'folder' } });
+    if (!folder) throw new SyncError('not_found');
+    return Prisma.sql`AND i.path LIKE ${`${escapeLike(folder.path)}/%`}`;
+  }
+}

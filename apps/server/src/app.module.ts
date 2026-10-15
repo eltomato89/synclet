@@ -10,6 +10,7 @@ import { SyncModule } from './sync/sync.module';
 import { SharesModule } from './shares/shares.module';
 import { TrashModule } from './trash/trash.module';
 import { UploadsModule } from './uploads/uploads.module';
+import { SearchModule } from './search/search.module';
 import { HealthController } from './health.controller';
 
 @Module({})
@@ -17,7 +18,7 @@ export class AppModule {
   static forRoot(config: AppConfig): DynamicModule {
     return {
       module: AppModule,
-      imports: [CoreModule.forRoot(config), PrismaModule, AuthModule, JournalModule, IndexerModule, FilesModule, SyncModule, TrashModule, UploadsModule, SharesModule],
+      imports: [CoreModule.forRoot(config), PrismaModule, AuthModule, JournalModule, IndexerModule, FilesModule, SyncModule, TrashModule, UploadsModule, SharesModule, SearchModule],
       controllers: [HealthController],
     };
   }
