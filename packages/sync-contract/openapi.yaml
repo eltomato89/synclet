@@ -776,7 +776,7 @@ paths:
         - name: Upload-Metadata
           in: header
           required: true
-          description: 'tus metadata: `name` (required), `parentId` (default `root`), `onConflict` (`rename` (default) | `fail`), `modifiedAt` (ISO 8601).'
+          description: 'tus metadata. Create: `name` (required), `parentId` (default `root`), `onConflict` (`rename` (default) | `fail`), `modifiedAt` (ISO 8601). Replace an existing file: `itemId` (a file id `f_…`) and `ifMatch` (its content etag `v<n>`, required), optional `modifiedAt`; `name`/`parentId`/`onConflict` must then be absent (`400 invalid_request`). Replace re-checks `ifMatch` at publish like `PUT /items/{id}/content` (mismatch → `412`, upload dropped).'
           schema: { type: string }
       requestBody:
         required: false
@@ -800,7 +800,9 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/NameConflict' }
+        '412': { $ref: '#/components/responses/Conflict' }
         '413': { description: '`Upload-Length` above `Tus-Max-Size`.' }
+        '428': { description: '`precondition_required` – `itemId` without `ifMatch`.', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
   /sync/v1/uploads/{uploadId}:
     parameters:
       - { name: uploadId, in: path, required: true, schema: { type: string } }
