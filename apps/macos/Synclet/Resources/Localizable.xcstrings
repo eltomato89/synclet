@@ -1,0 +1,476 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "%@ cannot be reached. Check the address and your connection.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ ist nicht erreichbar. Prüfe die Adresse und deine Verbindung."
+          }
+        }
+      }
+    },
+    "%lld local changes have not been uploaded yet and will be lost.": {
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld local change has not been uploaded yet and will be lost."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld local changes have not been uploaded yet and will be lost."
+                }
+              }
+            }
+          }
+        },
+        "de": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld lokale Änderung wurde noch nicht hochgeladen und geht verloren."
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld lokale Änderungen wurden noch nicht hochgeladen und gehen verloren."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Accounts": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Konten"
+          }
+        }
+      }
+    },
+    "Add Account": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Konto hinzufügen"
+          }
+        }
+      }
+    },
+    "Add Account…": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Konto hinzufügen…"
+          }
+        }
+      }
+    },
+    "Add your Synclet server to see your files in Finder.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Füge deinen Synclet-Server hinzu, um deine Dateien im Finder zu sehen."
+          }
+        }
+      }
+    },
+    "Cancel": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Abbrechen"
+          }
+        }
+      }
+    },
+    "Changes that have not been uploaded will be lost.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nicht hochgeladene Änderungen gehen verloren."
+          }
+        }
+      }
+    },
+    "Connect Synclet": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Synclet verbinden"
+          }
+        }
+      }
+    },
+    "Connected as %@": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verbunden als %@"
+          }
+        }
+      }
+    },
+    "Done": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fertig"
+          }
+        }
+      }
+    },
+    "General": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allgemein"
+          }
+        }
+      }
+    },
+    "No Synclet server at %@": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kein Synclet-Server unter %@"
+          }
+        }
+      }
+    },
+    "No account connected": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kein Konto verbunden"
+          }
+        }
+      }
+    },
+    "OK": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OK"
+          }
+        }
+      }
+    },
+    "Offline": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Offline"
+          }
+        }
+      }
+    },
+    "Open Web": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Web öffnen"
+          }
+        }
+      }
+    },
+    "Open in Finder": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Im Finder öffnen"
+          }
+        }
+      }
+    },
+    "Please allow Synclet in System Settings under General > Login Items & Extensions.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bitte erlaube Synclet in den Systemeinstellungen unter „Allgemein > Anmeldeobjekte & Erweiterungen“."
+          }
+        }
+      }
+    },
+    "Please enter a valid server address, e.g. files.example.com.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bitte gib eine gültige Serveradresse ein, z. B. files.example.com."
+          }
+        }
+      }
+    },
+    "Quit Synclet": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beenden"
+          }
+        }
+      }
+    },
+    "Right-click a file or folder in Finder: “Download Now” loads it, “Remove Download” frees the space.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Klicke im Finder mit der rechten Maustaste auf eine Datei oder einen Ordner: „Jetzt laden“ lädt sie herunter, „Download entfernen“ gibt den Speicherplatz frei."
+          }
+        }
+      }
+    },
+    "Server": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Server"
+          }
+        }
+      }
+    },
+    "Settings…": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Einstellungen…"
+          }
+        }
+      }
+    },
+    "Sign In": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anmelden"
+          }
+        }
+      }
+    },
+    "Sign In Again…": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Erneut anmelden…"
+          }
+        }
+      }
+    },
+    "Sign Out": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Abmelden"
+          }
+        }
+      }
+    },
+    "Sign Out…": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Abmelden…"
+          }
+        }
+      }
+    },
+    "Sign in again to reconnect %@.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Melde dich erneut an, um %@ wieder zu verbinden."
+          }
+        }
+      }
+    },
+    "Sign out %@?": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ abmelden?"
+          }
+        }
+      }
+    },
+    "Sign-in required": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anmeldung erforderlich"
+          }
+        }
+      }
+    },
+    "Start at login": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bei Anmeldung starten"
+          }
+        }
+      }
+    },
+    "Synclet": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Synclet"
+          }
+        }
+      }
+    },
+    "Synclet Settings": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Synclet-Einstellungen"
+          }
+        }
+      }
+    },
+    "Synclet – needs attention": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Synclet – Hinweis"
+          }
+        }
+      }
+    },
+    "The folder appears in the Finder sidebar under “Locations”. Files are downloaded when you open them.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Ordner erscheint im Finder in der Seitenleiste unter „Orte“. Dateien werden erst beim Öffnen heruntergeladen."
+          }
+        }
+      }
+    },
+    "The folder could not be opened: %@": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Ordner konnte nicht geöffnet werden: %@"
+          }
+        }
+      }
+    },
+    "The login item could not be changed: %@": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der automatische Start konnte nicht geändert werden: %@"
+          }
+        }
+      }
+    },
+    "The login window could not be opened.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Das Anmeldefenster konnte nicht geöffnet werden."
+          }
+        }
+      }
+    },
+    "The sign-in could not be verified. Please try again.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Anmeldung konnte nicht bestätigt werden. Bitte versuche es erneut."
+          }
+        }
+      }
+    },
+    "The sign-in was refused (%@).": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Anmeldung wurde abgelehnt (%@)."
+          }
+        }
+      }
+    },
+    "You sign in in the browser window that opens next.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Anmeldung erfolgt im Browserfenster, das sich danach öffnet."
+          }
+        }
+      }
+    },
+    "Your files appear in Finder under “Locations” afterwards.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deine Dateien erscheinen danach im Finder unter „Orte“."
+          }
+        }
+      }
+    },
+    "Your files stay on the server. The folder and the copies downloaded to this Mac are removed.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deine Dateien bleiben auf dem Server erhalten. Der Ordner und die auf diesem Mac geladenen Kopien werden entfernt."
+          }
+        }
+      }
+    }
+  },
+  "version": "1.0"
+}
