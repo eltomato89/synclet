@@ -1,0 +1,8 @@
+# Lint configuration for openapi.yaml (`pnpm --filter @synclet/sync-contract lint:openapi`).
+extends:
+  - recommended
+rules:
+  # The project license is not decided yet (README: TBD).
+  info-license: off
+  # Setup status and tus OPTIONS have no client-error responses by design.
+  operation-4xx-response: off

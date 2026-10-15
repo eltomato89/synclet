@@ -1,0 +1,1367 @@
+openapi: 3.1.0
+info:
+  title: Synclet Sync API
+  version: 1.0.0
+  summary: File sync API for Synclet's native clients (compatible with Buro SYNC_API v1).
+  description: |
+    Machine-readable companion of `docs/sync/SYNC_API.md`, which is the normative prose
+    contract (semantics, ordering, client obligations). Where the two disagree, the prose
+    document wins and this file is a bug.
+
+    All paths are relative to `<origin>/api`. JSON is UTF-8, timestamps are ISO 8601 in UTC.
+    Clients must ignore unknown response fields; new optional fields may be added in v1.
+
+    Errors use one body format: `{ statusCode, message, code, item? }` (`Error`). Framework-level
+    errors outside the Sync API (unknown route, unsupported media type on non-upload routes)
+    may lack `code`.
+servers:
+  - url: '{origin}/api'
+    variables:
+      origin:
+        default: http://localhost:8080
+        description: Scheme, host and port of the Synclet instance (no trailing slash).
+security:
+  - bearer: []
+tags:
+  - name: setup
+    description: First-run setup.
+  - name: auth
+    description: Password login and native app login (OAuth 2.0 authorization code + PKCE).
+  - name: devices
+    description: Device registration and device tokens.
+  - name: account
+    description: Account and server capabilities.
+  - name: changes
+    description: Change cursor and change feed.
+  - name: items
+    description: Item metadata, listing and structure changes.
+  - name: content
+    description: File content download, replace and upload.
+  - name: uploads
+    description: Resumable uploads (tus 1.0).
+  - name: previews
+    description: Thumbnails and text previews.
+  - name: versions
+    description: File versions (only when enabled on the server).
+  - name: search
+    description: Search and recent files.
+  - name: trash
+    description: Trash (deleted items).
+
+paths:
+  /setup/status:
+    get:
+      tags: [setup]
+      operationId: getSetupStatus
+      summary: Whether the instance still needs its first administrator
+      security: []
+      responses:
+        '200':
+          description: Setup state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SetupStatus' }
+  /setup:
+    post:
+      tags: [setup]
+      operationId: runSetup
+      summary: Create the first administrator (only while no user exists)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetupRequest' }
+      responses:
+        '201':
+          description: Administrator created and signed in (also sets the web refresh cookie).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '409':
+          description: '`setup_done` (a user exists already) or `name_conflict`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: Password login (web; native apps use the app login flow)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Signed in. The refresh token is set as an httpOnly cookie (web only).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: '`password_login_disabled` – password login is disabled for non-admin users (SSO only).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /auth/me:
+    get:
+      tags: [auth]
+      operationId: getMe
+      summary: The signed-in user
+      responses:
+        '200':
+          description: The user.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublicUser' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /auth/app/client:
+    get:
+      tags: [auth]
+      operationId: getAppClient
+      summary: Validate a native app client id and redirect URI
+      security: []
+      parameters:
+        - { name: clientId, in: query, required: true, schema: { $ref: '#/components/schemas/AppClientId' } }
+        - { name: redirectUri, in: query, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Known client with an allowed redirect URI.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppClient' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /auth/app/authorize:
+    post:
+      tags: [auth]
+      operationId: appAuthorize
+      summary: Issue an authorization code after a password check (used by the /app-login page)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AppAuthorizeRequest' }
+      responses:
+        '200':
+          description: One-time authorization code (valid 60 s).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppCode' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: '`password_login_disabled`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /auth/app/authorize/session:
+    post:
+      tags: [auth]
+      operationId: appAuthorizeSession
+      summary: Issue an authorization code for the signed-in web session (after SSO)
+      description: Requires a web access token; device tokens are refused with `403 forbidden`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AppPkceParams' }
+      responses:
+        '200':
+          description: One-time authorization code (valid 60 s).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppCode' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /auth/app/token:
+    post:
+      tags: [auth]
+      operationId: appToken
+      summary: Exchange an authorization code (+ PKCE verifier) for tokens
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AppTokenRequest' }
+      responses:
+        '200':
+          description: Access token (15 min) and rotating refresh token (30 days).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppTokenResponse' }
+        '400':
+          description: '`invalid_request` – unknown, expired, used or mismatched code / verifier / client / redirect URI.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /auth/app/refresh:
+    post:
+      tags: [auth]
+      operationId: appRefresh
+      summary: Rotate a native refresh token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AppRefreshRequest' }
+      responses:
+        '200':
+          description: New access token and new refresh token; the old refresh token is spent.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppTokenResponse' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /sync/v1/devices:
+    post:
+      tags: [devices]
+      operationId: registerDevice
+      summary: Register this installation and receive a device token (shown once)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterDeviceRequest' }
+      responses:
+        '201':
+          description: Registered.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeviceRegistration' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    get:
+      tags: [devices]
+      operationId: listDevices
+      summary: The caller's active (not revoked) devices
+      responses:
+        '200':
+          description: Devices, oldest first. `current` is present on every entry and true for the calling device token.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SyncDevice' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /sync/v1/devices/current:
+    delete:
+      tags: [devices]
+      operationId: revokeCurrentDevice
+      summary: Sign out this device (requires a device token)
+      responses:
+        '204': { description: Revoked; the token now answers `401 device_revoked`. }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /sync/v1/devices/current/push:
+    put:
+      tags: [devices]
+      operationId: setPushToken
+      summary: Register an APNs push token (accepted and ignored until Phase 3)
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PushTokenRequest' }
+      responses:
+        '204': { description: Accepted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /sync/v1/devices/{deviceId}:
+    delete:
+      tags: [devices]
+      operationId: revokeDevice
+      summary: Revoke one of the caller's devices
+      parameters:
+        - { name: deviceId, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Revoked. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /sync/v1/account:
+    get:
+      tags: [account]
+      operationId: getAccount
+      summary: Account, limits and current cursor
+      responses:
+        '200':
+          description: Account.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyncAccount' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /sync/v1/capabilities:
+    get:
+      tags: [account]
+      operationId: getCapabilities
+      summary: Optional server features (Phase 1c)
+      description: A server without this route (404) has versions and office editing disabled.
+      responses:
+        '200':
+          description: Features.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServerCapabilities' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /sync/v1/cursor:
+    get:
+      tags: [changes]
+      operationId: getCursor
+      summary: Current change cursor
+      responses:
+        '200':
+          description: Cursor.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CursorResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /sync/v1/changes:
+    get:
+      tags: [changes]
+      operationId: getChanges
+      summary: Changes after a cursor, coalesced per item
+      parameters:
+        - { name: cursor, in: query, required: true, schema: { $ref: '#/components/schemas/Cursor' } }
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of changes. Call again with `cursor` while `hasMore` is true.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChangesPage' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '410':
+          description: '`cursor_expired` – re-enumerate from scratch.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /sync/v1/items:
+    post:
+      tags: [items]
+      operationId: createFolder
+      summary: Create a folder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateFolderRequest' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyncItem' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NameConflict' }
+  /sync/v1/items/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ItemId'
+    get:
+      tags: [items]
+      operationId: getItem
+      summary: One item
+      responses:
+        '200':
+          description: The item.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyncItem' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [items]
+      operationId: updateItem
+      summary: Rename and/or move
+      parameters:
+        - name: If-Match
+          in: header
+          required: false
+          description: The item's `etag` (quoted or bare) or `*`. Mismatch → `412 conflict`.
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PatchItemRequest' }
+      responses:
+        '200':
+          description: The updated (or unchanged) item.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyncItem' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NameConflict' }
+        '412': { $ref: '#/components/responses/Conflict' }
+    delete:
+      tags: [items]
+      operationId: deleteItem
+      summary: Move a file or folder (with its subtree) to the trash
+      responses:
+        '204': { description: Deleted. }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /sync/v1/items/{id}/children:
+    parameters:
+      - $ref: '#/components/parameters/ItemId'
+    get:
+      tags: [items]
+      operationId: listChildren
+      summary: Children of a folder (folders first, keyset paging)
+      parameters:
+        - { name: pageToken, in: query, required: false, schema: { type: string }, description: '`nextPageToken` of the previous page.' }
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: One page.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ChildrenPage' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /sync/v1/items/upload:
+    post:
+      tags: [content]
+      operationId: uploadFile
+      summary: Upload a new file (raw body)
+      parameters:
+        - { name: parentId, in: query, required: false, schema: { type: string, default: root } }
+        - { name: name, in: query, required: true, schema: { type: string } }
+        - { name: onConflict, in: query, required: false, schema: { $ref: '#/components/schemas/OnConflict' } }
+        - $ref: '#/components/parameters/ModifiedAt'
+        - $ref: '#/components/parameters/BuroModifiedAt'
+      requestBody:
+        required: false
+        content:
+          application/octet-stream:
+            schema: { type: string, contentMediaType: application/octet-stream }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyncItem' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NameConflict' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+  /sync/v1/items/{id}/content:
+    parameters:
+      - $ref: '#/components/parameters/ItemId'
+    get:
+      tags: [content]
+      operationId: getContent
+      summary: Download file content (Range, ETag, If-None-Match, If-Range)
+      security:
+        - bearer: []
+        - downloadToken: []
+      parameters:
+        - { name: Range, in: header, required: false, schema: { type: string }, description: 'One range: `bytes=a-b`, `bytes=a-`, `bytes=-n`. Anything else is ignored (full content).' }
+        - { name: If-None-Match, in: header, required: false, schema: { type: string } }
+        - { name: If-Range, in: header, required: false, schema: { type: string } }
+        - { name: download, in: query, required: false, schema: { type: string, enum: ['1'] }, description: 'Adds `Content-Disposition: attachment`.' }
+      responses:
+        '200':
+          description: Full content.
+          headers:
+            ETag: { $ref: '#/components/headers/ContentETag' }
+            Accept-Ranges: { schema: { type: string, const: bytes } }
+            Last-Modified: { schema: { type: string } }
+            Content-Length: { schema: { type: integer } }
+          content:
+            '*/*':
+              schema: { type: string, contentMediaType: application/octet-stream }
+        '206':
+          description: Partial content.
+          headers:
+            ETag: { $ref: '#/components/headers/ContentETag' }
+            Content-Range: { schema: { type: string }, description: '`bytes a-b/size`' }
+          content:
+            '*/*':
+              schema: { type: string, contentMediaType: application/octet-stream }
+        '304': { description: '`If-None-Match` matched (`"v<version>"` or `*`).' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '416':
+          description: '`range_not_satisfiable`, with `Content-Range: bytes */<size>`.'
+          headers:
+            Content-Range: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    put:
+      tags: [content]
+      operationId: replaceContent
+      summary: Replace file content (raw body, If-Match required)
+      parameters:
+        - name: If-Match
+          in: header
+          required: true
+          description: '`"v<version>"` (the `contentEtag`) or `*`. Missing → 428, mismatch → 412.'
+          schema: { type: string }
+        - $ref: '#/components/parameters/ModifiedAt'
+        - $ref: '#/components/parameters/BuroModifiedAt'
+      requestBody:
+        required: false
+        content:
+          application/octet-stream:
+            schema: { type: string, contentMediaType: application/octet-stream }
+      responses:
+        '200':
+          description: Replaced; `version` + 1.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyncItem' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '412': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '428':
+          description: '`precondition_required` – `If-Match` missing.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /sync/v1/items/{id}/download-token:
+    parameters:
+      - $ref: '#/components/parameters/ItemId'
+    post:
+      tags: [content]
+      operationId: createDownloadToken
+      summary: Short-lived, item-bound URL for a browser or system downloader
+      parameters:
+        - { name: purpose, in: query, required: false, schema: { type: string, enum: [download, preview], default: download } }
+      responses:
+        '201':
+          description: Token and ready-to-use relative URL.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DownloadToken' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /sync/v1/items/{id}/thumbnail:
+    parameters:
+      - $ref: '#/components/parameters/ItemId'
+    get:
+      tags: [previews]
+      operationId: getThumbnail
+      summary: WebP thumbnail (404 until the worker produced it)
+      security:
+        - bearer: []
+        - downloadToken: []
+      parameters:
+        - { name: size, in: query, required: false, schema: { type: string, enum: ['256', '1024'], default: '256' } }
+        - { name: If-None-Match, in: header, required: false, schema: { type: string } }
+      responses:
+        '200':
+          description: Thumbnail.
+          headers:
+            ETag: { schema: { type: string }, description: '`"<sha256>-<size>"`' }
+            Cache-Control: { schema: { type: string } }
+          content:
+            image/webp:
+              schema: { type: string, contentMediaType: image/webp }
+        '304': { description: Not modified. }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /sync/v1/items/{id}/preview-text:
+    parameters:
+      - $ref: '#/components/parameters/ItemId'
+    get:
+      tags: [previews]
+      operationId: getPreviewText
+      summary: First 256 KiB of a text, Markdown or code file, decoded
+      responses:
+        '200':
+          description: Text.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreviewText' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '415':
+          description: '`invalid_request` (status 415) – the file type has no text preview.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /sync/v1/items/{id}/versions:
+    parameters:
+      - $ref: '#/components/parameters/ItemId'
+    get:
+      tags: [versions]
+      operationId: listVersions
+      summary: Previous versions of a file, newest first
+      responses:
+        '200':
+          description: Versions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Version' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: '`not_found` – unknown file, or versions disabled (`message: "versions disabled"`).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /sync/v1/items/{id}/versions/{versionId}/content:
+    parameters:
+      - $ref: '#/components/parameters/ItemId'
+      - $ref: '#/components/parameters/VersionId'
+    get:
+      tags: [versions]
+      operationId: getVersionContent
+      summary: Download a version (always an attachment named `<base> (v<n>).<ext>`)
+      security:
+        - bearer: []
+        - downloadToken: []
+      responses:
+        '200':
+          description: Version content.
+          headers:
+            ETag: { $ref: '#/components/headers/ContentETag' }
+            Content-Disposition: { schema: { type: string } }
+          content:
+            '*/*':
+              schema: { type: string, contentMediaType: application/octet-stream }
+        '206': { description: Partial content (same Range rules as file content). }
+        '304': { description: Not modified. }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '416': { $ref: '#/components/responses/RangeNotSatisfiable' }
+  /sync/v1/items/{id}/versions/{versionId}/restore:
+    parameters:
+      - $ref: '#/components/parameters/ItemId'
+      - $ref: '#/components/parameters/VersionId'
+    post:
+      tags: [versions]
+      operationId: restoreVersion
+      summary: Make a version current again (the current content becomes a version first)
+      responses:
+        '200':
+          description: The file after the restore (`version` + 1, same `id`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyncItem' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /sync/v1/search:
+    get:
+      tags: [search]
+      operationId: search
+      summary: Search names and extracted text
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 1, maxLength: 200 } }
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
+        - { name: offset, in: query, required: false, schema: { type: integer, minimum: 0, maximum: 10000, default: 0 } }
+        - { name: folder, in: query, required: false, schema: { type: string }, description: Restrict to the subtree of this folder id. }
+      responses:
+        '200':
+          description: Hits, best first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SearchResponse' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /sync/v1/recent:
+    get:
+      tags: [search]
+      operationId: recent
+      summary: Most recently modified files
+      parameters:
+        - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+      responses:
+        '200':
+          description: Files, newest `modifiedAt` first.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SyncItem' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /sync/v1/uploads:
+    options:
+      tags: [uploads]
+      operationId: tusOptions
+      summary: tus capability discovery
+      security: []
+      responses:
+        '204':
+          description: Supported tus version, extensions and limits.
+          headers:
+            Tus-Version: { schema: { type: string } }
+            Tus-Extension: { schema: { type: string } }
+            Tus-Max-Size: { schema: { type: integer } }
+    post:
+      tags: [uploads]
+      operationId: tusCreate
+      summary: Create a resumable upload (optionally with the first bytes)
+      parameters:
+        - $ref: '#/components/parameters/TusResumable'
+        - { name: Upload-Length, in: header, required: true, schema: { type: integer, minimum: 0 } }
+        - name: Upload-Metadata
+          in: header
+          required: true
+          description: 'tus metadata: `name` (required), `parentId` (default `root`), `onConflict` (`rename` (default) | `fail`), `modifiedAt` (ISO 8601).'
+          schema: { type: string }
+      requestBody:
+        required: false
+        content:
+          application/offset+octet-stream:
+            schema: { type: string, contentMediaType: application/octet-stream }
+      responses:
+        '201':
+          description: |
+            Created; `Location` is a path-only URL `/api/sync/v1/uploads/<uploadId>`.
+            If the upload completed in this request (empty file, or creation-with-upload of
+            all bytes), the body is the new `SyncItem` and `X-Synclet-Item` carries its id.
+          headers:
+            Location: { schema: { type: string } }
+            Upload-Offset: { schema: { type: integer } }
+            X-Synclet-Item: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyncItem' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/NameConflict' }
+        '413': { description: '`Upload-Length` above `Tus-Max-Size`.' }
+  /sync/v1/uploads/{uploadId}:
+    parameters:
+      - { name: uploadId, in: path, required: true, schema: { type: string } }
+    head:
+      tags: [uploads]
+      operationId: tusHead
+      summary: Current offset of an upload
+      parameters:
+        - $ref: '#/components/parameters/TusResumable'
+      responses:
+        '200':
+          description: Upload state.
+          headers:
+            Upload-Offset: { schema: { type: integer } }
+            Upload-Length: { schema: { type: integer } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: 'Unknown, finished, terminated or foreign upload.' }
+        '410': { description: Expired (unfinished for more than 24 h). }
+    patch:
+      tags: [uploads]
+      operationId: tusPatch
+      summary: Append bytes at `Upload-Offset`
+      parameters:
+        - $ref: '#/components/parameters/TusResumable'
+        - { name: Upload-Offset, in: header, required: true, schema: { type: integer, minimum: 0 } }
+      requestBody:
+        required: true
+        content:
+          application/offset+octet-stream:
+            schema: { type: string, contentMediaType: application/octet-stream }
+      responses:
+        '200':
+          description: Upload complete; the file is published. Body = new `SyncItem`, `X-Synclet-Item` = its id.
+          headers:
+            Upload-Offset: { schema: { type: integer } }
+            X-Synclet-Item: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyncItem' }
+        '204':
+          description: Bytes stored, upload not complete yet.
+          headers:
+            Upload-Offset: { schema: { type: integer } }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: '`Upload-Offset` does not match the server offset (plain-text tus body), or `name_conflict` at completion with `onConflict=fail` (JSON `Error`; the upload is dropped).'
+        '410': { description: Expired. }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '423': { description: The upload is being published right now; retry HEAD shortly. }
+    delete:
+      tags: [uploads]
+      operationId: tusTerminate
+      summary: Abort an unfinished upload
+      parameters:
+        - $ref: '#/components/parameters/TusResumable'
+      responses:
+        '204': { description: Terminated. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { description: Unknown or foreign upload. }
+        '423': { description: The upload is being published right now. }
+
+  /trash:
+    get:
+      tags: [trash]
+      operationId: listTrash
+      summary: Trash entries, most recently deleted first
+      responses:
+        '200':
+          description: Entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TrashEntry' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    delete:
+      tags: [trash]
+      operationId: emptyTrash
+      summary: Empty the whole trash
+      responses:
+        '200':
+          description: Number of removed entries.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EmptyTrashResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /trash/{trashId}:
+    parameters:
+      - { name: trashId, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags: [trash]
+      operationId: deleteTrashEntry
+      summary: Delete one trash entry forever
+      responses:
+        '204': { description: Deleted forever. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/TrashBusy' }
+  /trash/{trashId}/restore:
+    parameters:
+      - { name: trashId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [trash]
+      operationId: restoreTrashEntry
+      summary: Restore to the original folder (or the root), with the original ids
+      responses:
+        '200':
+          description: Restored.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RestoreResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/TrashBusy' }
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: |
+        Either a device token (`syd_` + 43 base64url characters, from `POST /sync/v1/devices`,
+        never expires, revocable) or a web/app access token (JWT, 15 minutes).
+    downloadToken:
+      type: apiKey
+      in: query
+      name: dt
+      description: Item-bound token from `POST /sync/v1/items/{id}/download-token` (60 s, or 6 h with `purpose=preview`).
+
+  parameters:
+    ItemId:
+      name: id
+      in: path
+      required: true
+      description: '`root`, `d_<uuid>` (folder) or `f_<uuid>` (file).'
+      schema: { $ref: '#/components/schemas/ItemId' }
+    VersionId:
+      name: versionId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Clamped to 1..1000 (default 500).
+      schema: { type: integer, minimum: 1, maximum: 1000, default: 500 }
+    ModifiedAt:
+      name: X-Synclet-Modified-At
+      in: header
+      required: false
+      description: ISO 8601 modification time to set on the stored file (invalid values are ignored).
+      schema: { type: string, format: date-time }
+    BuroModifiedAt:
+      name: X-Buro-Modified-At
+      in: header
+      required: false
+      description: Alias of `X-Synclet-Modified-At` (Buro clients); `X-Synclet-Modified-At` wins.
+      schema: { type: string, format: date-time }
+    TusResumable:
+      name: Tus-Resumable
+      in: header
+      required: true
+      schema: { type: string, const: 1.0.0 }
+
+  headers:
+    ContentETag:
+      description: '`"v<version>"` – equals the item''s `contentEtag`.'
+      schema: { type: string }
+
+  responses:
+    InvalidRequest:
+      description: '`invalid_request`, `invalid_name` or `invalid_move`.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: '`unauthorized` (token missing/invalid/expired) or `device_revoked` (sign out).'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: '`forbidden`.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: '`not_found`.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NameConflict:
+      description: '`name_conflict`; `item` = the existing sibling (when it is indexed).'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: '`conflict`; `item` = the current server state.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TooLarge:
+      description: '`too_large` – above `maxUploadBytes`.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RangeNotSatisfiable:
+      description: '`range_not_satisfiable`.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: '`rate_limited`; `Retry-After` gives the seconds to wait.'
+      headers:
+        Retry-After: { schema: { type: integer } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TrashBusy:
+      description: '`conflict` with status 409 – the entry is being processed or its content is not available.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    ItemId:
+      type: string
+      pattern: '^(root|[df]_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$'
+    Cursor:
+      type: string
+      description: Opaque; compare only for equality, never parse or do arithmetic on it.
+      pattern: '^[0-9]{1,19}$'
+    OnConflict:
+      type: string
+      enum: [fail, rename]
+    ErrorCode:
+      type: string
+      enum:
+        - unauthorized
+        - device_revoked
+        - forbidden
+        - not_found
+        - name_conflict
+        - invalid_move
+        - invalid_name
+        - invalid_request
+        - cursor_expired
+        - conflict
+        - precondition_required
+        - too_large
+        - range_not_satisfiable
+        - setup_done
+        - share_password_required
+        - share_expired
+        - rate_limited
+        - upload_not_allowed
+        - office_disabled
+        - sso_not_allowed
+        - password_login_disabled
+    Error:
+      type: object
+      required: [statusCode, message, code]
+      properties:
+        statusCode: { type: integer }
+        message: { type: string }
+        code: { $ref: '#/components/schemas/ErrorCode' }
+        item: { $ref: '#/components/schemas/SyncItem' }
+
+    Capabilities:
+      type: object
+      required: [read, write, rename, move, delete, addChildren]
+      properties:
+        read: { type: boolean, const: true }
+        write: { type: boolean }
+        rename: { type: boolean }
+        move: { type: boolean }
+        delete: { type: boolean }
+        addChildren: { type: boolean }
+    PreviewInfo:
+      type: object
+      required: [kind, thumbnail]
+      properties:
+        kind: { type: string, enum: [image, pdf, text, markdown, code, video, audio, none] }
+        thumbnail:
+          type: boolean
+          description: A thumbnail exists at serialization time (not journaled when it appears later).
+        language: { type: string, description: 'highlight.js language, only for `kind = code`.' }
+    SyncItem:
+      type: object
+      required: [id, parentId, type, kind, name, size, mime, version, sha256, etag, contentEtag, createdAt, modifiedAt, documentId, capabilities]
+      properties:
+        id: { $ref: '#/components/schemas/ItemId' }
+        parentId:
+          description: '`null` only for `root`; top-level items have `root`.'
+          oneOf:
+            - { $ref: '#/components/schemas/ItemId' }
+            - { type: 'null' }
+        type: { type: string, enum: [folder, file] }
+        kind: { type: string, enum: [root, folder, file] }
+        name: { type: string, description: 'Display name, unique per parent (case-insensitive, NFC).' }
+        size: { type: integer, minimum: 0, description: Bytes; 0 for folders. }
+        mime: { type: [string, 'null'], description: From the file extension; null for folders. }
+        version: { type: [integer, 'null'], minimum: 1, description: Content version (files); null for folders. }
+        sha256: { type: [string, 'null'], pattern: '^[0-9a-f]{64}$', description: Null for folders and for files not hashed yet. }
+        etag: { type: string, description: 'Opaque. Files: `v<version>`; folders: `t…`.' }
+        contentEtag: { type: [string, 'null'], pattern: '^v[0-9]+$', description: '`v<version>` for files; null for folders.' }
+        createdAt: { type: string, format: date-time }
+        modifiedAt: { type: string, format: date-time }
+        documentId: { type: [string, 'null'], description: Files - equals `id` (Buro compatibility); null for folders. }
+        capabilities: { $ref: '#/components/schemas/Capabilities' }
+        preview: { $ref: '#/components/schemas/PreviewInfo' }
+    SyncAccount:
+      type: object
+      required: [userId, email, displayName, organizationId, organizationName, slug, canWrite, areas, quotaBytes, usedBytes, maxUploadBytes, cursor]
+      properties:
+        userId: { type: string, format: uuid }
+        email: { type: [string, 'null'] }
+        displayName: { type: string }
+        organizationId: { type: string, description: '`<serverId>:<userId>` – stable sync-root / domain identifier.' }
+        organizationName: { type: string, const: Synclet }
+        slug: { type: string, description: The username (= folder name on the server). }
+        canWrite: { type: boolean }
+        areas:
+          type: object
+          required: [personal, shared, customers, projects]
+          properties:
+            personal: { type: boolean, const: true }
+            shared: { type: boolean }
+            customers: { type: boolean }
+            projects: { type: boolean }
+        quotaBytes: { type: integer, minimum: 0, description: 0 = no quota. }
+        usedBytes: { type: integer, minimum: 0 }
+        maxUploadBytes: { type: integer, minimum: 0 }
+        cursor: { $ref: '#/components/schemas/Cursor' }
+    ServerCapabilities:
+      type: object
+      required: [versions, office]
+      properties:
+        versions: { type: boolean }
+        office:
+          type: object
+          required: [enabled, url]
+          properties:
+            enabled: { type: boolean }
+            url: { type: [string, 'null'] }
+
+    SyncDevice:
+      type: object
+      required: [id, name, platform, appVersion, createdAt, lastSeenAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        platform: { $ref: '#/components/schemas/Platform' }
+        appVersion: { type: string }
+        createdAt: { type: string, format: date-time }
+        lastSeenAt: { type: [string, 'null'], format: date-time }
+        current: { type: boolean }
+    Platform:
+      type: string
+      enum: [ios, android, macos, windows, linux, web]
+    RegisterDeviceRequest:
+      type: object
+      required: [name, platform, appVersion]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        platform: { $ref: '#/components/schemas/Platform' }
+        appVersion: { type: string, minLength: 1, maxLength: 40 }
+        installationId: { type: string, maxLength: 128, description: Stable hashed installation id; re-registration revokes older devices with the same id. }
+    DeviceRegistration:
+      type: object
+      required: [device, token, account]
+      properties:
+        device: { $ref: '#/components/schemas/SyncDevice' }
+        token: { type: string, pattern: '^syd_[A-Za-z0-9_-]{43}$' }
+        account: { $ref: '#/components/schemas/SyncAccount' }
+    PushTokenRequest:
+      type: object
+      properties:
+        token: { type: string }
+        environment: { type: string, enum: [sandbox, production] }
+
+    CursorResponse:
+      type: object
+      required: [cursor]
+      properties:
+        cursor: { $ref: '#/components/schemas/Cursor' }
+    SyncChange:
+      oneOf:
+        - type: object
+          required: [op, item]
+          properties:
+            op: { type: string, const: upsert }
+            item: { $ref: '#/components/schemas/SyncItem' }
+        - type: object
+          required: [op, id]
+          properties:
+            op: { type: string, const: delete }
+            id: { $ref: '#/components/schemas/ItemId' }
+    ChangesPage:
+      type: object
+      required: [changes, cursor, hasMore]
+      properties:
+        changes:
+          type: array
+          items: { $ref: '#/components/schemas/SyncChange' }
+        cursor: { $ref: '#/components/schemas/Cursor' }
+        hasMore: { type: boolean }
+    ChildrenPage:
+      type: object
+      required: [items, nextPageToken, cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/SyncItem' }
+        nextPageToken: { type: [string, 'null'], description: Opaque keyset marker. }
+        cursor: { $ref: '#/components/schemas/Cursor' }
+
+    CreateFolderRequest:
+      type: object
+      required: [parentId, type, name]
+      properties:
+        parentId: { $ref: '#/components/schemas/ItemId' }
+        type: { type: string, const: folder }
+        name: { type: string }
+        onConflict: { $ref: '#/components/schemas/OnConflict' }
+    PatchItemRequest:
+      type: object
+      properties:
+        name: { type: string }
+        parentId: { $ref: '#/components/schemas/ItemId' }
+    DownloadToken:
+      type: object
+      required: [url, token, expiresAt]
+      properties:
+        url: { type: string, description: 'Path-only: `/api/sync/v1/items/<id>/content?[download=1&]dt=<token>`.' }
+        token: { type: string }
+        expiresAt: { type: string, format: date-time }
+    PreviewText:
+      type: object
+      required: [text, truncated, encoding]
+      properties:
+        text: { type: string }
+        truncated: { type: boolean }
+        encoding: { type: string, enum: [utf-8, latin1] }
+
+    Version:
+      type: object
+      required: [id, version, size, sha256, modifiedAt, createdAt, source, createdBy]
+      properties:
+        id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1, description: The item `version` this content had while current. }
+        size: { type: integer, minimum: 0 }
+        sha256: { type: string }
+        modifiedAt: { type: string, format: date-time, description: Content mtime while current. }
+        createdAt: { type: string, format: date-time, description: When it was superseded. }
+        source: { type: string, enum: [api, office, restore] }
+        createdBy:
+          oneOf:
+            - type: object
+              required: [id, displayName]
+              properties:
+                id: { type: string, format: uuid }
+                displayName: { type: string }
+            - { type: 'null' }
+
+    SearchHit:
+      type: object
+      required: [item, path, snippet, matched]
+      properties:
+        item: { $ref: '#/components/schemas/SyncItem' }
+        path: { type: string, description: Parent folder path relative to the user root ('' = top level). }
+        snippet: { type: [string, 'null'], description: 'Content excerpt, matches wrapped in « ».' }
+        matched: { type: string, enum: [name, content, both] }
+    SearchResponse:
+      type: object
+      required: [hits, total]
+      properties:
+        hits:
+          type: array
+          items: { $ref: '#/components/schemas/SearchHit' }
+        total: { type: integer, minimum: 0 }
+
+    TrashEntry:
+      type: object
+      required: [id, itemId, type, name, originalPath, size, deletedAt, expiresAt, itemCount]
+      properties:
+        id: { type: string, format: uuid }
+        itemId: { $ref: '#/components/schemas/ItemId' }
+        type: { type: string, enum: [folder, file] }
+        name: { type: string }
+        originalPath: { type: string }
+        size: { type: integer, minimum: 0 }
+        deletedAt: { type: string, format: date-time }
+        expiresAt: { type: [string, 'null'], format: date-time }
+        itemCount: { type: integer, minimum: 1 }
+    RestoreResult:
+      type: object
+      required: [item, restoredTo, renamed]
+      properties:
+        item: { $ref: '#/components/schemas/SyncItem' }
+        restoredTo: { type: string }
+        renamed: { type: boolean }
+    EmptyTrashResponse:
+      type: object
+      required: [removed]
+      properties:
+        removed: { type: integer, minimum: 0 }
+
+    SetupStatus:
+      type: object
+      required: [needsSetup]
+      properties:
+        needsSetup: { type: boolean }
+    SetupRequest:
+      type: object
+      required: [username, displayName, password]
+      properties:
+        username: { type: string, description: Becomes the user's folder name. }
+        displayName: { type: string, minLength: 1, maxLength: 100 }
+        email: { type: [string, 'null'], format: email }
+        password: { type: string, minLength: 10, maxLength: 200 }
+    LoginRequest:
+      type: object
+      required: [login, password]
+      properties:
+        login: { type: string, minLength: 1, description: Username or email. }
+        password: { type: string, minLength: 1 }
+    PublicUser:
+      type: object
+      required: [id, username, displayName, email, role]
+      properties:
+        id: { type: string, format: uuid }
+        username: { type: string }
+        displayName: { type: string }
+        email: { type: [string, 'null'] }
+        role: { type: string, enum: [admin, user] }
+    AuthResponse:
+      type: object
+      required: [accessToken, user]
+      properties:
+        accessToken: { type: string }
+        user: { $ref: '#/components/schemas/PublicUser' }
+
+    AppClientId:
+      type: string
+      enum: [ios, android, macos, windows, linux]
+    AppClient:
+      type: object
+      required: [id, name]
+      properties:
+        id: { $ref: '#/components/schemas/AppClientId' }
+        name: { type: string }
+    AppPkceParams:
+      type: object
+      required: [clientId, redirectUri, codeChallenge, codeChallengeMethod]
+      properties:
+        clientId: { type: string, minLength: 1, maxLength: 40 }
+        redirectUri: { type: string, minLength: 1, maxLength: 200 }
+        codeChallenge: { type: string, pattern: '^[A-Za-z0-9_-]{43}$', description: BASE64URL(SHA256(code_verifier)) without padding. }
+        codeChallengeMethod: { type: string, const: S256 }
+    AppAuthorizeRequest:
+      type: object
+      required: [login, password, clientId, redirectUri, codeChallenge, codeChallengeMethod]
+      properties:
+        login: { type: string, minLength: 1, maxLength: 320 }
+        password: { type: string, minLength: 1, maxLength: 1024 }
+        clientId: { type: string, minLength: 1, maxLength: 40 }
+        redirectUri: { type: string, minLength: 1, maxLength: 200 }
+        codeChallenge: { type: string, pattern: '^[A-Za-z0-9_-]{43}$' }
+        codeChallengeMethod: { type: string, const: S256 }
+    AppCode:
+      type: object
+      required: [code]
+      properties:
+        code: { type: string }
+    AppTokenRequest:
+      type: object
+      required: [code, codeVerifier, clientId, redirectUri]
+      properties:
+        code: { type: string, minLength: 1, maxLength: 200 }
+        codeVerifier: { type: string, pattern: '^[A-Za-z0-9._~-]{43,128}$' }
+        clientId: { type: string, minLength: 1, maxLength: 40 }
+        redirectUri: { type: string, minLength: 1, maxLength: 200 }
+    AppRefreshRequest:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken: { type: string, minLength: 1, maxLength: 200 }
+    AppTokenResponse:
+      type: object
+      required: [accessToken, refreshToken, user]
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string, pattern: '^syr_[A-Za-z0-9_-]{43}$' }
+        user: { $ref: '#/components/schemas/PublicUser' }
