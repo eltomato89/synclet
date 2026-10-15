@@ -104,6 +104,43 @@ describe('tus resumable uploads', () => {
     expect((await create(1, { name: 'x.txt', parentId: box.id, modifiedAt: 'yesterday' })).status).toBe(400);
   });
 
+  it('replaces an existing file via itemId + ifMatch (success, stale etag, folder, name+itemId)', async () => {
+    const file = await uploadFile(api, box.id, 'replace-me.txt', 'original');
+    const data = randomBytes(200_000);
+    const created = await create(data.length, { itemId: file.id, ifMatch: file.etag, modifiedAt: '2024-05-06T07:08:09.000Z' });
+    expect(created.status).toBe(201);
+    const location = created.headers.get('location')!;
+    expect((await patch(location, 0, data.subarray(0, 80_000))).status).toBe(204);
+    const done = await patch(location, 80_000, data.subarray(80_000));
+    expect(done.status).toBe(200);
+    const item = done.json<SyncItem>();
+    expect(schemaErrors('SyncItem', item)).toBe('');
+    expect(done.headers.get('x-synclet-item')).toBe(file.id);
+    expect(item).toMatchObject({ id: file.id, name: 'replace-me.txt', version: (file.version ?? 1) + 1, size: data.length, modifiedAt: '2024-05-06T07:08:09.000Z' });
+    expect((await api.get(`/sync/v1/items/${file.id}/content`)).body.equals(data)).toBe(true);
+
+    // The old etag is stale now: 412 at creation with the current item.
+    const stale = await create(1, { itemId: file.id, ifMatch: file.etag });
+    expect(stale.status).toBe(412);
+    expect(stale.json()).toMatchObject({ code: 'conflict', item: { id: file.id, version: (file.version ?? 1) + 1 } });
+    // ifMatch is required with itemId.
+    const missing = await create(1, { itemId: file.id });
+    expect(missing.status).toBe(428);
+    expect(missing.json().code).toBe('precondition_required');
+    // A folder is not replaceable; name/parentId/onConflict cannot be combined with itemId.
+    expect((await create(1, { itemId: box.id, ifMatch: box.etag })).status).toBe(400);
+    const mixed = await create(1, { itemId: file.id, ifMatch: item.etag, name: 'x.txt' });
+    expect(mixed.status).toBe(400);
+    expect(mixed.json().code).toBe('invalid_request');
+    // Etag changes between creation and publish: 412 at completion, the upload is dropped.
+    const loc = (await create(3, { itemId: file.id, ifMatch: item.etag })).headers.get('location')!;
+    expect((await api.replace(file.id, 'web edit', item.etag)).status).toBe(200);
+    const late = await patch(loc, 0, Buffer.from('new'));
+    expect(late.status).toBe(412);
+    expect(late.json()).toMatchObject({ code: 'conflict' });
+    expect((await head(loc)).status).toBe(404);
+  });
+
   it('DELETE terminates an unfinished upload; uploads need authentication', async () => {
     const loc = (await create(10, { name: 'aborted.bin', parentId: box.id })).headers.get('location')!;
     expect((await patch(loc, 0, Buffer.from('12345'))).status).toBe(204);

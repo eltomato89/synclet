@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createTestApp, TestContext } from '../../test/context';
 import { FilesService } from '../files/files.service';
 import { SchedulerService } from '../indexer/scheduler.service';
+import { VersionsService } from '../versions/versions.service';
 import { TUS_PATH, TusService } from './tus';
 
 // Above Fastify's default bodyLimit (1 MiB): tus bodies must be streamed, never buffered.
@@ -315,5 +316,141 @@ describe('tus uploads', () => {
     expect(res.statusCode).toBe(507);
     expect(res.json()).toMatchObject({ code: 'insufficient_storage' });
     expect(await readdir(stagingDir())).toEqual([]);
+  });
+
+  describe('replace of an existing file (itemId + ifMatch)', () => {
+    const api = (method: string, url: string, body?: string, headers: Record<string, string> = {}) => ctx.app.inject({
+      method: method as 'GET', url: `/api/sync/v1${url}`,
+      headers: { authorization: `Bearer ${token}`, ...(body !== undefined ? { 'content-type': 'application/octet-stream' } : {}), ...headers },
+      ...(body !== undefined ? { body } : {}),
+    });
+    const seed = async (name = 'doc.txt', content = 'original') => (await api('POST', `/items/upload?parentId=root&name=${name}`, content)).json();
+    const code = (r: RawResponse) => JSON.parse(r.body).code;
+
+    it('replaces the content: same id, version + 1, journal upsert, nothing else in /data', async () => {
+      const item = await seed();
+      const cursor = (await api('GET', '/cursor')).json().cursor;
+      const data = randomBytes(2_000_000);
+      const created = await create(data.length, { itemId: item.id, ifMatch: item.etag, modifiedAt: '2024-05-06T07:08:09.000Z' });
+      expect(created.statusCode).toBe(201);
+      const location = created.headers.location;
+      expect((await patch(location, 0, data.subarray(0, 1_000_000))).statusCode).toBe(204);
+      // Interrupted: the user's file is untouched.
+      expect(await readFile(path.join(userDir(), 'doc.txt'), 'utf8')).toBe('original');
+      const done = await patch(location, 1_000_000, data.subarray(1_000_000));
+      expect(done.statusCode).toBe(200);
+      expect(done.headers['x-synclet-item']).toBe(item.id);
+      expect(done.json()).toMatchObject({
+        id: item.id, name: 'doc.txt', version: item.version + 1, size: data.length,
+        sha256: createHash('sha256').update(data).digest('hex'), modifiedAt: '2024-05-06T07:08:09.000Z',
+      });
+      expect(await readFile(path.join(userDir(), 'doc.txt'))).toEqual(data);
+      expect(await readdir(userDir())).toEqual(['doc.txt']);
+      expect(await readdir(stagingDir())).toEqual([]);
+      const changes = (await api('GET', `/changes?cursor=${cursor}`)).json().changes;
+      expect(changes).toEqual([expect.objectContaining({ op: 'upsert', item: expect.objectContaining({ id: item.id, version: item.version + 1 }) })]);
+      expect(done.json().etag).not.toBe(item.etag);
+    });
+
+    it('captures the previous content as a version', async () => {
+      const capture = jest.spyOn(ctx.app.get(VersionsService), 'capture');
+      const item = await seed();
+      const loc = (await create(3, { itemId: item.id, ifMatch: item.etag })).headers.location;
+      expect((await patch(loc, 0, Buffer.from('new'))).statusCode).toBe(200);
+      expect(capture).toHaveBeenCalledTimes(1);
+      expect(capture.mock.calls[0][2]).toMatchObject({ id: item.id.slice(2), version: item.version });
+    });
+
+    it('completes in the creation request and for empty files', async () => {
+      const item = await seed();
+      const res = await tus('POST', TUS_PATH, {
+        'upload-length': '3', 'upload-metadata': metadata({ itemId: item.id, ifMatch: item.etag }),
+        'content-type': 'application/offset+octet-stream',
+      }, Buffer.from('abc'));
+      expect(res.statusCode).toBe(201);
+      expect(res.json()).toMatchObject({ id: item.id, version: item.version + 1, size: 3 });
+      const empty = await create(0, { itemId: item.id, ifMatch: res.json().etag });
+      expect(empty.statusCode).toBe(201);
+      expect(empty.json()).toMatchObject({ id: item.id, size: 0, version: item.version + 2 });
+      expect(await readFile(path.join(userDir(), 'doc.txt'), 'utf8')).toBe('');
+    });
+
+    it('a stale ifMatch at creation answers 412 with the current item', async () => {
+      const item = await seed();
+      await api('PUT', `/items/${item.id}/content`, 'changed', { 'if-match': item.etag });
+      const res = await create(1, { itemId: item.id, ifMatch: item.etag });
+      expect(res.statusCode).toBe(412);
+      expect(res.json()).toMatchObject({ code: 'conflict', item: { id: item.id, version: item.version + 1 } });
+      expect((await create(1, { itemId: item.id, ifMatch: 'bogus' })).statusCode).toBe(412);
+      expect(await readdir(stagingDir())).toEqual([]);
+    });
+
+    it('the etag changing between creation and publish answers 412 and drops the staged upload', async () => {
+      const item = await seed();
+      const loc = (await create(3, { itemId: item.id, ifMatch: item.etag })).headers.location;
+      await api('PUT', `/items/${item.id}/content`, 'web edit', { 'if-match': item.etag });
+      const res = await patch(loc, 0, Buffer.from('new'));
+      expect(res.statusCode).toBe(412);
+      expect(res.json()).toMatchObject({ code: 'conflict', item: { id: item.id, version: item.version + 1 } });
+      expect(await readFile(path.join(userDir(), 'doc.txt'), 'utf8')).toBe('web edit');
+      expect(await readdir(stagingDir())).toEqual([]);
+      expect((await tus('HEAD', loc)).statusCode).toBe(404);
+    });
+
+    it('validates the metadata at creation', async () => {
+      const item = await seed();
+      const noMatch = await create(1, { itemId: item.id });
+      expect(noMatch.statusCode).toBe(428);
+      expect(code(noMatch)).toBe('precondition_required');
+      for (const extra of [{ name: 'x.txt' }, { parentId: 'root' }, { onConflict: 'fail' }] as Record<string, string>[]) {
+        const res = await create(1, { itemId: item.id, ifMatch: item.etag, ...extra });
+        expect(res.statusCode).toBe(400);
+        expect(code(res)).toBe('invalid_request');
+      }
+      expect((await create(1, { ifMatch: 'v1', name: 'x.txt' })).statusCode).toBe(400);
+      expect((await create(1, { itemId: 'bogus', ifMatch: 'v1' })).statusCode).toBe(400);
+      expect((await create(1, { itemId: item.id, ifMatch: item.etag, modifiedAt: 'yesterday' })).statusCode).toBe(400);
+      expect(await readdir(stagingDir())).toEqual([]);
+    });
+
+    it('answers 400 for a folder, 404 for unknown, trashed and foreign items', async () => {
+      const folder = (await ctx.app.inject({
+        method: 'POST', url: '/api/sync/v1/items', headers: { authorization: `Bearer ${token}` },
+        payload: { parentId: 'root', type: 'folder', name: 'Docs' },
+      })).json();
+      expect((await create(1, { itemId: folder.id, ifMatch: 't1' })).statusCode).toBe(400);
+      expect((await create(1, { itemId: 'root', ifMatch: 'v1' })).statusCode).toBe(400);
+      const missing = await create(1, { itemId: 'f_3f2b8c1e-1d2a-4c3b-9a8b-0123456789ab', ifMatch: 'v1' });
+      expect(missing.statusCode).toBe(404);
+      expect(code(missing)).toBe('not_found');
+
+      const item = await seed();
+      await ctx.prisma.item.update({ where: { id: item.id.slice(2) }, data: { deletedAt: new Date() } });
+      expect((await create(1, { itemId: item.id, ifMatch: item.etag })).statusCode).toBe(404);
+
+      const mine = await seed('mine.txt');
+      await ctx.app.inject({
+        method: 'POST', url: '/api/admin/users', headers: { authorization: `Bearer ${token}` },
+        payload: { username: 'bob', displayName: 'Bob', password: 'bob password 123' },
+      });
+      const bobToken = (await ctx.app.inject({ method: 'POST', url: '/api/auth/login', payload: { login: 'bob', password: 'bob password 123' } })).json().accessToken;
+      const foreign = await create(1, { itemId: mine.id, ifMatch: mine.etag }, { authorization: `Bearer ${bobToken}` });
+      expect(foreign.statusCode).toBe(404);
+      expect(await readdir(stagingDir())).toEqual([]);
+    });
+
+    it('ENOSPC at publish answers 507 and the upload stays resumable', async () => {
+      const item = await seed();
+      const loc = (await create(3, { itemId: item.id, ifMatch: item.etag })).headers.location;
+      jest.spyOn(fsp, 'rename').mockRejectedValueOnce(Object.assign(new Error('no space left on device'), { code: 'ENOSPC' }));
+      const res = await patch(loc, 0, Buffer.from('new'));
+      expect(res.statusCode).toBe(507);
+      expect(res.json()).toMatchObject({ code: 'insufficient_storage' });
+      expect(await readFile(path.join(userDir(), 'doc.txt'), 'utf8')).toBe('original');
+      expect((await tus('HEAD', loc)).headers['upload-offset']).toBe('3');
+      const retry = await patch(loc, 3, Buffer.alloc(0));
+      expect(retry.statusCode).toBe(200);
+      expect(await readFile(path.join(userDir(), 'doc.txt'), 'utf8')).toBe('new');
+    });
   });
 });

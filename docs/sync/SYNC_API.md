@@ -543,6 +543,24 @@ covered by this contract). Authentication: `Authorization: Bearer`
    - `parentId` (default `root`; unknown → `404 not_found`, malformed or a file → `400`),
    - `onConflict`: `rename` (**default for tus**) or `fail`,
    - `modifiedAt`: ISO 8601 (invalid → `400`).
+
+   **Replace an existing file** (resumable `PUT /items/:id/content`, for large files): send
+   `itemId` (a file id `f_…`) and `ifMatch` (the file's content etag `v<n>`) instead of
+   `name`/`parentId`/`onConflict`; `modifiedAt` is optional.
+   - `name`, `parentId` or `onConflict` together with `itemId` → `400 invalid_request`; `ifMatch`
+     without `itemId` → `400 invalid_request`; a malformed or non-file `itemId` (folder, `root`) → `400`.
+   - `itemId` without `ifMatch` → `428 precondition_required`.
+   - Unknown, trashed or foreign item → `404 not_found`. No upload is created for any of these errors.
+   - `ifMatch` not matching the current version (also an unknown etag format) already at creation →
+     `412 { code: "conflict", item }`.
+   - At completion the server checks `ifMatch` again under the same rules as §6.3 (including the
+     unindexed host edit rule). Mismatch → `412 { code: "conflict", item }`, the staged upload is
+     dropped (`HEAD` → `404`) and the file is untouched: the client takes the conflict path of §6.3.
+     Match → the content replaces the file atomically (`version + 1`, new `contentEtag`, journal
+     upsert, previous content becomes a version when enabled, §10).
+   - The completing request answers like a create (step 4) with the updated `SyncItem` (same
+     `id`; `X-Synclet-Item` = that id). `507` at completion keeps the upload resumable (below).
+   - `Tus-Max-Size` applies as for creates.
    → `201` with a path-only `Location: /api/sync/v1/uploads/<uploadId>`. `Upload-Length` above
    `Tus-Max-Size` (= `maxUploadBytes`) → `413`.
 2. `PATCH <Location>` with `Upload-Offset: <current offset>` and
