@@ -362,5 +362,91 @@
       "title": "Link kopieren",
       "body": "Dein Browser erlaubt hier kein Kopieren. Der Link ist markiert: Drück Strg+C (⌘C am Mac)."
     }
+  },
+  "publicShare": {
+    "region": "Geteilter Inhalt",
+    "sharedFolder": "<owner/> hat einen Ordner mit dir geteilt",
+    "sharedFile": "<owner/> hat eine Datei mit dir geteilt",
+    "expires": "Verfügbar bis {{date}}",
+    "viewOnly": "Nur ansehen",
+    "download": "Herunterladen",
+    "downloadNamed": "{{name}} herunterladen",
+    "downloadAll": "Alles als ZIP herunterladen",
+    "downloadFolder": "Ordner herunterladen",
+    "folder": "Ordner",
+    "contents": "Inhalt",
+    "breadcrumb": "Ort in dieser Freigabe",
+    "view": "Ansicht",
+    "viewList": "Liste",
+    "viewGrid": "Raster",
+    "empty": "Dieser Ordner ist leer",
+    "emptyUpload": "Über den Upload-Bereich unten kannst du Dateien hinzufügen.",
+    "folderGone": "Dieser Ordner ist nicht mehr Teil der Freigabe.",
+    "footer": "Geteilt mit Synclet. Die Dateien liegen auf dem eigenen Server des Besitzers, und diese Seite ist für Suchmaschinen gesperrt.",
+    "gate": {
+      "title": "Dieser Link ist passwortgeschützt",
+      "body": "Gib das Passwort ein, das du zusammen mit dem Link bekommen hast.",
+      "relock": "Dein Zugang ist abgelaufen. Gib das Passwort erneut ein, um weiterzumachen.",
+      "password": "Passwort",
+      "open": "Öffnen",
+      "opening": "Wird geöffnet …"
+    },
+    "gone": {
+      "notFoundTitle": "Dieser Link funktioniert nicht",
+      "notFoundBody": "Der Besitzer hat ihn vielleicht entfernt, oder die Adresse ist unvollständig. Bitte die Person, die ihn geschickt hat, um einen neuen Link.",
+      "expiredTitle": "Dieser Link ist abgelaufen",
+      "expiredBody": "Der Besitzer hat festgelegt, dass dieser Link nur bis zu einem bestimmten Datum gilt. Bitte ihn um einen neuen Link."
+    },
+    "failed": {
+      "title": "Link kann nicht geöffnet werden",
+      "rateLimitedTitle": "Zu viele Anfragen"
+    },
+    "errors": {
+      "wrong_password": "Das Passwort stimmt nicht.",
+      "rateLimited": "Zu viele Versuche. Warte kurz und versuch es dann erneut.",
+      "rateLimitedWait_one": "Zu viele Versuche. Versuch es in {{count}} Sekunde erneut.",
+      "rateLimitedWait_other": "Zu viele Versuche. Versuch es in {{count}} Sekunden erneut.",
+      "network": "Keine Verbindung zum Server. Prüfe deine Internetverbindung und versuch es erneut.",
+      "unknown": "Auf dem Server ist etwas schiefgegangen. Versuch es gleich noch einmal.",
+      "listing": "Dieser Ordner konnte nicht geladen werden."
+    },
+    "preview": {
+      "imageAlt": "Vorschau von {{name}}",
+      "none": "Für diese Datei gibt es keine Vorschau. Lade sie herunter, um sie auf deinem Gerät zu öffnen.",
+      "noneNoDownload": "Für diese Datei gibt es keine Vorschau, und der Besitzer hat Downloads für diesen Link deaktiviert."
+    },
+    "quickLook": {
+      "position": "{{index}} von {{count}}, {{size}}",
+      "previous": "Vorherige Datei",
+      "next": "Nächste Datei"
+    },
+    "upload": {
+      "title": "Dateien zu „{{folder}}“ hinzufügen",
+      "hint": "Zieh Dateien irgendwo auf diese Seite oder wähle sie auf deinem Gerät aus. Ist ein Name schon vergeben, wird die Datei unter einem neuen Namen gespeichert.",
+      "choose": "Dateien auswählen",
+      "listLabel": "Deine Uploads",
+      "queued": "Wartet",
+      "progress": "{{loaded}} von {{total}}",
+      "done": "Hochgeladen",
+      "renamed": "Als „{{name}}“ hochgeladen, der ursprüngliche Name war vergeben",
+      "cancel": "Upload abbrechen",
+      "clear": "Liste leeren",
+      "errors": {
+        "too_large": "Die Datei ist zu groß, oder das heutige Upload-Limit dieses Links ist erreicht.",
+        "rate_limited": "Zu viele Uploads von deiner Verbindung. Versuch es später erneut.",
+        "not_allowed": "Dieser Link nimmt keine Uploads mehr an.",
+        "invalid_name": "Dieser Dateiname ist nicht erlaubt. Benenne die Datei um und versuch es erneut.",
+        "network": "Die Verbindung ist während des Uploads abgebrochen.",
+        "unknown": "Der Upload hat nicht geklappt. Versuch es erneut."
+      }
+    },
+    "zipHint": "Falls der Download nicht startet, bitte später erneut versuchen.",
+    "downloadErrors": {
+      "forbidden": "Der Besitzer hat Downloads für diesen Link deaktiviert.",
+      "notFound": "Diese Datei ist nicht mehr verfügbar.",
+      "rateLimited": "Gerade laufen zu viele Downloads. Versuch es gleich noch einmal.",
+      "network": "Keine Verbindung zum Server. Prüfe deine Internetverbindung und versuch es erneut.",
+      "unknown": "Der Download hat nicht geklappt. Versuch es erneut."
+    }
   }
 }
