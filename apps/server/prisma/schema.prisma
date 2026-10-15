@@ -1,3 +1,13 @@
+// Raw-SQL objects that are NOT modeled here (Prisma ignores them today, but check
+// every generated migration for DROP statements touching them before applying it):
+//   - extensions pg_trgm, unaccent
+//   - function synclet_unaccent(text)            (20261015150737_phase_1b_core)
+//   - index "Item_name_trgm_idx"   (GIN trigram, partial: live items)
+//   - index "Item_owner_mtime_idx" (partial: live files)
+//   - index "Item_contentHash_idx" (partial: live items)
+//   - unique index "Item_owner_path_live_key"     (20261015131742_init, partial: live items)
+// test/schema-drift.spec.ts asserts that migrations and this schema stay in sync.
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -144,9 +154,9 @@ model FileChange {
 }
 
 model TrashEntry {
-  id           String   @id @default(uuid()) @db.Uuid
-  ownerId      String   @db.Uuid
-  itemId       String   @db.Uuid
+  id           String    @id @default(uuid()) @db.Uuid
+  ownerId      String    @db.Uuid
+  itemId       String    @db.Uuid
   type         ItemType
   name         String
   originalPath String
@@ -155,7 +165,7 @@ model TrashEntry {
   storePath    String
   /// [{ id, type, path, name, mtime, size, contentHash }] of the subtree, for restore with original IDs.
   manifest     Json
-  deletedAt    DateTime @default(now())
+  deletedAt    DateTime  @default(now())
   expiresAt    DateTime?
 
   @@index([ownerId, deletedAt])
@@ -179,14 +189,14 @@ enum JobStatus {
 model DerivativeJob {
   sha       String
   kind      DerivativeKind
-  status    JobStatus @default(pending)
-  attempts  Int       @default(0)
+  status    JobStatus      @default(pending)
+  attempts  Int            @default(0)
   lastError String?
   /// e.g. { "sizes": [256, 1024], "poster": true, "width": 4032, "height": 3024 }
   meta      Json?
   lockedAt  DateTime?
-  updatedAt DateTime  @updatedAt
-  createdAt DateTime  @default(now())
+  updatedAt DateTime       @updatedAt
+  createdAt DateTime       @default(now())
 
   @@id([sha, kind])
   @@index([status, kind])
@@ -194,10 +204,15 @@ model DerivativeJob {
 
 /// Extracted plain text per content hash for full-text search (tsv maintained via raw SQL).
 model ItemText {
-  sha       String   @id
-  /// First 1 MiB of extracted text (snippets); tsv column added in raw SQL migration.
+  sha       String                   @id
+  /// First 1 MiB of extracted text (snippets).
   content   String
-  createdAt DateTime @default(now())
+  createdAt DateTime                 @default(now())
+  /// Full-text vector, written only via raw SQL (TextIndexer.updateTsv). Modeled here so
+  /// `prisma migrate dev` does not try to drop the column and its GIN index.
+  tsv       Unsupported("tsvector")?
+
+  @@index([tsv], type: Gin, map: "ItemText_tsv_idx")
 }
 
 model ShareLink {
