@@ -57,5 +57,124 @@
     "notFoundBack": "Zu meinen Dateien",
     "skipToContent": "Zum Inhalt springen"
   },
-  "files": {}
+  "files": {
+    "newMenu": "Neu",
+    "newFolder": "Ordner",
+    "upload": "Hochladen",
+    "uploadFiles": "Dateien hochladen",
+    "view": "Ansicht",
+    "viewList": "Liste",
+    "viewGrid": "Raster",
+    "breadcrumb": "Ordnerpfad",
+    "showPath": "Übergeordnete Ordner anzeigen",
+    "columns": {
+      "name": "Name",
+      "modified": "Geändert",
+      "size": "Größe"
+    },
+    "sortBy": "Nach {{column}} sortieren",
+    "itemActions": "Aktionen für {{name}}",
+    "listLabel": "Inhalt von {{name}}",
+    "folderCount_one": "{{count}} Ordner",
+    "folderCount_other": "{{count}} Ordner",
+    "fileCount_one": "{{count}} Datei",
+    "fileCount_other": "{{count}} Dateien",
+    "open": "Öffnen",
+    "shortcutDelete": "Entf",
+    "empty": {
+      "title": "Dieser Ordner ist leer",
+      "rootTitle": "Noch keine Dateien",
+      "body": "Zieh Dateien hierher oder lade sie hoch. Alles, was du ablegst, liegt als normale Datei auf deinem Server."
+    },
+    "loadError": {
+      "title": "Der Ordner konnte nicht geladen werden",
+      "retry": "Erneut versuchen"
+    },
+    "notFound": {
+      "title": "Diesen Ordner gibt es nicht",
+      "body": "Er wurde vielleicht verschoben oder gelöscht.",
+      "back": "Zu meinen Dateien"
+    },
+    "drop": {
+      "title": "Zum Hochladen ablegen",
+      "target": "Die Dateien landen in „{{folder}}“.",
+      "foldersUnsupported": "Ordner lassen sich noch nicht per Drag & Drop hochladen. Zieh die Dateien darin einzeln hierher."
+    },
+    "newFolderDialog": {
+      "title": "Neuer Ordner",
+      "description": "Der Ordner wird in „{{folder}}“ angelegt.",
+      "label": "Name",
+      "placeholder": "Unbenannter Ordner",
+      "submit": "Ordner erstellen",
+      "submitting": "Wird erstellt …"
+    },
+    "renameDialog": {
+      "title": "Umbenennen",
+      "label": "Neuer Name",
+      "submit": "Umbenennen",
+      "submitting": "Wird umbenannt …"
+    },
+    "moveDialog": {
+      "title": "„{{name}}“ verschieben",
+      "description": "Wähle den Ordner, in den du verschieben möchtest.",
+      "submit": "Hierher verschieben",
+      "submitTo": "Nach „{{name}}“ verschieben",
+      "submitting": "Wird verschoben …",
+      "currentLocation": "Aktueller Ort",
+      "expand": "{{name}} aufklappen",
+      "collapse": "{{name}} zuklappen",
+      "noSubfolders": "Keine Unterordner",
+      "tree": "Zielordner"
+    },
+    "deleteDialog": {
+      "title": "„{{name}}“ löschen?",
+      "fileBody": "Die Datei wird in den Papierkorb verschoben und verschwindet von allen verbundenen Geräten.",
+      "folderBody": "Der Ordner und alles darin werden in den Papierkorb verschoben und verschwinden von allen verbundenen Geräten.",
+      "submit": "In den Papierkorb",
+      "submitting": "Wird gelöscht …"
+    },
+    "toast": {
+      "deleted": "„{{name}}“ liegt jetzt im Papierkorb",
+      "moved": "„{{name}}“ nach „{{target}}“ verschoben",
+      "downloadFailed": "Der Download konnte nicht gestartet werden."
+    },
+    "nameErrors": {
+      "empty": "Gib einen Namen ein.",
+      "forbidden_char": "Namen dürfen keines dieser Zeichen enthalten: < > : \" / \\ | ? *",
+      "trailing": "Namen dürfen nicht mit einem Punkt oder Leerzeichen enden.",
+      "reserved": "Dieser Name ist unter Windows reserviert.",
+      "too_long": "Der Name ist zu lang.",
+      "ignored": "Dieser Name ist für Systemdateien reserviert und würde nicht synchronisiert."
+    },
+    "errors": {
+      "name_conflict": "Hier gibt es schon etwas mit diesem Namen.",
+      "invalid_name": "Dieser Name ist nicht erlaubt.",
+      "invalid_move": "Ein Ordner kann nicht in sich selbst oder einen seiner Unterordner verschoben werden.",
+      "not_found": "Das Element gibt es nicht mehr. Die Ansicht wurde aktualisiert.",
+      "conflict": "Das Element wurde inzwischen geändert. Versuch es noch einmal.",
+      "too_large": "Die Datei ist größer, als der Server erlaubt.",
+      "forbidden": "Dafür fehlt dir die Berechtigung.",
+      "unauthorized": "Deine Sitzung ist abgelaufen. Melde dich erneut an.",
+      "network": "Keine Verbindung zum Server.",
+      "unknown": "Das hat nicht geklappt. Versuch es noch einmal."
+    },
+    "uploads": {
+      "region": "Uploads",
+      "uploading": "{{done}} von {{total}} hochgeladen",
+      "done_one": "{{count}} Datei hochgeladen",
+      "done_other": "{{count}} Dateien hochgeladen",
+      "failed_one": "{{count}} Upload fehlgeschlagen",
+      "failed_other": "{{count}} Uploads fehlgeschlagen",
+      "finished": "Fertig",
+      "queued": "Wartet",
+      "progress": "{{loaded}} von {{total}}",
+      "renamed": "Gespeichert als „{{name}}“",
+      "retry": "Erneut versuchen",
+      "cancel": "Upload abbrechen",
+      "collapse": "Uploads einklappen",
+      "expand": "Uploads ausklappen",
+      "close": "Uploads schließen",
+      "dismiss": "Aus der Liste entfernen"
+    }
+  }
 }
