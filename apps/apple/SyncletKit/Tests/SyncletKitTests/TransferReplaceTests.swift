@@ -190,6 +190,188 @@ final class TransferReplaceTests: XCTestCase {
         XCTAssertEqual(server.file("f_1")?.data, Data("old".utf8))
     }
 
+    // MARK: - "Upload gone" safety (review I1)
+
+    /// Replace interrupted after the first chunk (network), state kept.
+    private func interruptedReplace(_ server: FakeTusServer, file: URL) async throws {
+        server.onPatch = { number, _ in number == 2 ? .dropBefore : .proceed }
+        do {
+            _ = try await engine().replace(file: file, itemId: "f_1", baseEtag: "v3", modifiedAt: nil)
+            XCTFail("network error expected")
+        } catch SyncAPIError.transport {
+        }
+        server.onPatch = nil
+        XCTAssertEqual(storedStates.count, 1)
+    }
+
+    /// (a) A foreign edit of the **same size** with other bytes is not our upload: conflict,
+    /// never returned as the replace result.
+    func testGoneWithSameSizeForeignEditIsConflict() async throws {
+        let server = FakeTusServer()
+        server.addFile(id: "f_1", name: "Video.mov", version: 3)
+        let size = 40 * Self.mib
+        let file = patternFile(size)
+        try await interruptedReplace(server, file: file)
+        let foreign = Data(repeating: 7, count: size)
+        server.foreignEdit("f_1", data: foreign)
+        server.expireAll()
+
+        do {
+            let item = try await engine().replace(file: file, itemId: "f_1", baseEtag: "v3", modifiedAt: nil)
+            XCTFail("conflict expected, got \(item.id) \(item.contentEtag ?? "")")
+        } catch SyncAPIError.conflict(let current) {
+            XCTAssertEqual(current?.contentEtag, "v4")
+        }
+        XCTAssertEqual(server.file("f_1")?.data, foreign, "the foreign edit stays")
+        XCTAssertEqual(server.file("f_1")?.version, 4)
+    }
+
+    /// (b) Upload gone, item still at the base version ⇒ restart from 0 with a new POST
+    /// (`itemId` + `ifMatch v3`) ⇒ v4 with our bytes.
+    func testGoneStillAtBaseRestartsFromZero() async throws {
+        let server = FakeTusServer()
+        server.addFile(id: "f_1", name: "Video.mov", version: 3)
+        let file = patternFile(40 * Self.mib)
+        try await interruptedReplace(server, file: file)
+        server.expireAll()
+
+        let item = try await engine().replace(file: file, itemId: "f_1", baseEtag: "v3", modifiedAt: nil)
+
+        XCTAssertEqual(item.version, 4)
+        let tus = server.tusRequests
+        XCTAssertEqual(tus.map(\.method), ["POST", "PATCH", "PATCH", "HEAD", "POST", "PATCH", "PATCH", "PATCH"])
+        XCTAssertEqual(FakeTusServer.decodeMetadata(tus[4].header("Upload-Metadata") ?? ""), ["itemId": "f_1", "ifMatch": "v3"])
+        XCTAssertEqual(tus[5].header("Upload-Offset"), "0")
+        XCTAssertEqual(server.file("f_1")?.data, try Data(contentsOf: file))
+    }
+
+    /// (c) Upload gone after a foreign edit: the client's own etag check reports the
+    /// conflict – no second POST (the server's POST check is disabled to observe it).
+    func testGoneAfterForeignEditIsConflictWithoutSecondPost() async throws {
+        let server = FakeTusServer()
+        server.addFile(id: "f_1", name: "Video.mov", version: 3)
+        let file = patternFile(40 * Self.mib)
+        try await interruptedReplace(server, file: file)
+        server.skipPostIfMatchCheck = true
+        server.foreignEdit("f_1", data: Data("web edit".utf8))
+        server.expireAll()
+
+        do {
+            _ = try await engine().replace(file: file, itemId: "f_1", baseEtag: "v3", modifiedAt: nil)
+            XCTFail("conflict expected")
+        } catch SyncAPIError.conflict(let current) {
+            XCTAssertEqual(current?.contentEtag, "v4")
+        }
+        XCTAssertEqual(server.tusRequests.filter { $0.method == "POST" }.count, 1, "no second replace")
+        XCTAssertEqual(server.file("f_1")?.data, Data("web edit".utf8))
+    }
+
+    /// (d) The local file changed between attempts ⇒ the stored upload is terminated and a
+    /// fresh replace starts; never HEAD/resume.
+    func testLocalFileChangedBetweenReplaceAttemptsRestarts() async throws {
+        let server = FakeTusServer()
+        server.addFile(id: "f_1", name: "Video.mov", version: 3)
+        let file = patternFile(40 * Self.mib)
+        try await interruptedReplace(server, file: file)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(60)], ofItemAtPath: file.path)
+
+        let item = try await engine().replace(file: file, itemId: "f_1", baseEtag: "v3", modifiedAt: nil)
+
+        XCTAssertEqual(item.version, 4)
+        let methods = server.tusRequests.map(\.method)
+        XCTAssertEqual(methods, ["POST", "PATCH", "PATCH", "DELETE", "POST", "PATCH", "PATCH", "PATCH"])
+        XCTAssertFalse(methods.contains("HEAD"))
+        XCTAssertEqual(server.tusRequests[3].path, "/api/sync/v1/uploads/u1")
+    }
+
+    // MARK: - Upload lost twice (review I2)
+
+    func testUploadLostTwiceIsTransientNeverNotFound() async throws {
+        let server = FakeTusServer()
+        server.addFile(id: "f_1", name: "Video.mov", version: 3)
+        // The server loses the staged upload in both attempts of this call.
+        server.onPatch = { number, _ in (number == 2 || number == 3) ? .dropUpload : .proceed }
+        do {
+            _ = try await engine().replace(file: patternFile(40 * Self.mib), itemId: "f_1", baseEtag: "v3", modifiedAt: nil)
+            XCTFail("error expected")
+        } catch let error as SyncAPIError {
+            XCTAssertNotEqual(error, .notFound, "would fork the file through the re-create path")
+            XCTAssertEqual(error, TransferEngine.uploadLostError)
+            XCTAssertTrue(error.isTransient)
+        }
+        XCTAssertEqual(server.tusRequests.filter { $0.method == "POST" }.count, 2, "one restart, then give up")
+        XCTAssertEqual(server.file("f_1")?.version, 3, "item untouched")
+    }
+
+    func testExtensionReplaceLostTwiceIsRetriedNotRecreated() async throws {
+        let server = FakeTusServer()
+        server.addFile(id: "f_1", name: "Bericht.pdf", version: 3)
+        server.onPatch = { _, _ in .dropUpload }
+        let domain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier("0123456789abcdef"), displayName: "x")
+        let context = SyncletReplicatedExtension.Context(client: FakeServerProtocol.client(), deviceName: "Mac",
+                                                         layout: Fixtures.layout, transferStateDirectory: stateDir,
+                                                         uploadThreshold: 4)
+        let ext = SyncletReplicatedExtension(domain: domain, temporaryDirectory: stateDir) { context }
+        let local = FileProviderItem(Fixtures.item(id: "f_1", parentId: "root", name: "Bericht.pdf"), layout: Fixtures.layout)
+        let base = NSFileProviderItemVersion(contentVersion: Data("v3".utf8), metadataVersion: Data())
+        do {
+            _ = try await ext.modify(item: local, baseVersion: base, changedFields: [.contents],
+                                     contents: Fixtures.tempFile("lokal geändert"), context: context, progress: nil)
+            XCTFail("error expected")
+        } catch {
+            let mapped = ErrorMapping.fileProviderError(error) as NSError
+            XCTAssertEqual(mapped.code, NSFileProviderError.Code.serverUnreachable.rawValue)
+        }
+        XCTAssertFalse(server.allRequests.contains { $0.path == "/api/sync/v1/items/upload" }, "no re-create")
+        XCTAssertTrue(server.tusRequests.filter { $0.method == "POST" }
+            .allSatisfy { FakeTusServer.decodeMetadata($0.header("Upload-Metadata") ?? "")["itemId"] == "f_1" },
+                      "only replaces, no new file")
+        XCTAssertEqual(server.file("f_1")?.version, 3)
+    }
+
+    /// tus `404` at POST of a replace is confirmed with GET /items/:id: only that may report
+    /// the item as deleted.
+    func testReplacePost404IsConfirmedWithItemLookup() async throws {
+        let server = FakeTusServer()
+        server.fallback = { _ in .response(.error(404, "not_found")) }
+        await assertThrows(.notFound) {
+            _ = try await self.engine().replace(file: self.patternFile(33 * Self.mib), itemId: "f_gone", baseEtag: "v3",
+                                                modifiedAt: nil)
+        }
+        XCTAssertEqual(server.allRequests.map(\.method), ["POST", "GET"])
+        XCTAssertEqual(server.allRequests.last?.path, "/api/sync/v1/items/f_gone")
+    }
+
+    /// m2: our version may be published but not hashed yet (sha256 null, version = base + 1):
+    /// unknown ⇒ transient, not a conflict copy.
+    func testGoneWithUnhashedNextVersionIsTransient() async throws {
+        let server = FakeTusServer()
+        server.addFile(id: "f_1", name: "Video.mov", version: 3)
+        let file = patternFile(33 * Self.mib)
+        server.onPatch = { number, _ in number == 3 ? .dropAfter : .proceed }
+        do {
+            _ = try await engine().replace(file: file, itemId: "f_1", baseEtag: "v3", modifiedAt: nil)
+            XCTFail("network error expected")
+        } catch SyncAPIError.transport {
+        }
+        server.onPatch = nil
+        server.unhashed = ["f_1"]
+        await assertThrows(TransferEngine.uploadLostError) {
+            _ = try await self.engine().replace(file: file, itemId: "f_1", baseEtag: "v3", modifiedAt: nil)
+        }
+        server.unhashed = []
+        let item = try await engine().replace(file: file, itemId: "f_1", baseEtag: "v3", modifiedAt: nil)
+        XCTAssertEqual(item.version, 4, "found once hashed")
+    }
+
+    func testVersionEtagFormat() {
+        XCTAssertTrue(TransferEngine.isVersionEtag("v3"))
+        XCTAssertTrue(TransferEngine.isVersionEtag("v120"))
+        for bad in ["v", "v+1", "v-1", "*", "W/\"v3\"", "3", "v3a", "v٣"] {
+            XCTAssertFalse(TransferEngine.isVersionEtag(bad), bad)
+        }
+    }
+
     // MARK: - N1: no rewrite without a trusted etag
 
     func testSplicedResumeWithoutCompletionBodyIsNotRewritten() async throws {

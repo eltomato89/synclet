@@ -426,17 +426,18 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
                     server = try await client.item(id: id)
                 }
                 let copyName = ConflictNaming.name(original: server.name, device: context.deviceName, date: now())
-                Log.fileProvider.info("conflict on \(id, privacy: .public): uploading copy \(copyName, privacy: .private)")
                 let parentID = server.parentId ?? newParent ?? (try? layout.serverParentId(for: item.parentItemIdentifier))
                     ?? SyncItem.rootID
                 // Keyed by the item, not the name, and `nameMayChange`: the copy's name contains
                 // the minute, so a retry after the minute boundary resumes the same upload and
-                // keeps the name of its first attempt.
-                _ = try await transfers.upload(file: newContents, newIn: parentID, name: copyName,
+                // keeps the name of its first attempt (also when the original was renamed on the
+                // server meanwhile – the copy then keeps the old base name).
+                let copy = try await transfers.upload(file: newContents, newIn: parentID, name: copyName,
                                                modifiedAt: modifiedAt, progress: nil,
                                                resumeKey: Self.resumeKey(NSFileProviderItemIdentifier("conflict:" + item.itemIdentifier.rawValue),
                                                                          contentVersion: baseVersion.contentVersion),
                                                reuseIdentical: false, nameMayChange: true)
+                Log.fileProvider.info("conflict on \(id, privacy: .public): uploaded copy \(copy.name, privacy: .private)")
                 signalWorkingSet()
                 return (FileProviderItem(server, layout: layout), true)
             } catch SyncAPIError.notFound {

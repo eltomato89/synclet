@@ -90,6 +90,9 @@ final class FakeTusServer: @unchecked Sendable {
         /// Store the bytes but do not publish; answer with this status in the Sync error
         /// format (a publish failure such as 507: the upload stays resumable, §7.5).
         case storeThenError(Int, code: String)
+        /// The server loses the staged upload (non-persistent storage, expiry): `404`, and the
+        /// upload is gone for later requests too.
+        case dropUpload
     }
 
     struct Upload {
@@ -142,13 +145,28 @@ final class FakeTusServer: @unchecked Sendable {
     /// A concurrent edit elsewhere (web, other device): the version goes up.
     func bumpVersion(_ id: String) { lock.withLock { files[id]?.version += 1 } }
 
+    /// A concurrent edit with new content (version + 1).
+    func foreignEdit(_ id: String, data: Data) {
+        lock.withLock {
+            files[id]?.version += 1
+            files[id]?.data = data
+        }
+    }
+
+    /// Skip the `ifMatch` check at POST (to observe the client's own conflict check).
+    var skipPostIfMatchCheck = false
+    /// Items whose `sha256` is reported as `null` (not hashed yet).
+    var unhashed: Set<String> = []
+
     func file(_ id: String) -> File? { lock.withLock { files[id] } }
 
     /// Caller holds the lock.
     private func fileJSON(_ id: String) -> String {
         let file = files[id]!
-        return Self.itemJSON(id: id, parentId: "root", name: file.name, data: file.data, modifiedAt: file.modifiedAt,
-                             version: file.version)
+        let json = Self.itemJSON(id: id, parentId: "root", name: file.name, data: file.data, modifiedAt: file.modifiedAt,
+                                 version: file.version)
+        guard unhashed.contains(id) else { return json }
+        return json.replacingOccurrences(of: #"("sha256":)"[0-9a-f]{64}""#, with: "$1null", options: .regularExpression)
     }
 
     /// Adds an existing item to the children listing.
@@ -217,7 +235,9 @@ final class FakeTusServer: @unchecked Sendable {
                 }
                 guard files[itemId] != nil else { return .response(.error(404, "not_found")) }
                 guard let ifMatch = metadata["ifMatch"] else { return .response(.error(428, "precondition_required")) }
-                if ifMatch != "v\(files[itemId]!.version)" { return .response(.error(412, "conflict", item: fileJSON(itemId))) }
+                if !skipPostIfMatchCheck, ifMatch != "v\(files[itemId]!.version)" {
+                    return .response(.error(412, "conflict", item: fileJSON(itemId)))
+                }
             }
             nextID += 1
             let id = "u\(nextID)"
@@ -255,6 +275,9 @@ final class FakeTusServer: @unchecked Sendable {
                 defer { lock.unlock() }
                 switch action {
                 case .dropBefore: return .failure(.networkConnectionLost)
+                case .dropUpload:
+                    uploads[id] = nil
+                    return text(404, "The file for this url was not found\n")
                 case .status(let status): return text(status, "busy\n")
                 case .proceed, .dropAfter, .storeThenError: break
                 }
