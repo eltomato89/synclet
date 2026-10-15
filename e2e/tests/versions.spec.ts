@@ -51,7 +51,15 @@ test('replacing a text file keeps versions; an older one is restored from the ve
   await panel.getByRole('button', { name: `Restore version ${oldest.version}` }).click();
   const confirm = page.getByRole('alertdialog', { name: `Restore version ${oldest.version}?` });
   await confirm.getByRole('button', { name: 'Restore', exact: true }).click();
-  await expect(page.getByText(`Version ${oldest.version} restored`)).toBeVisible();
+  const restored = page.getByText(`Version ${oldest.version} restored`);
+  const changed = confirm.getByRole('alert').filter({ hasText: 'The item changed in the meantime' });
+  await expect(restored.or(changed)).toBeVisible();
+  if (process.platform === 'darwin' && await changed.isVisible()) {
+    // Same Docker Desktop inode drift as in `replace` above: the 412 re-indexed the file; once more.
+    console.warn('412 on restore (Docker Desktop inode drift), retrying once');
+    await confirm.getByRole('button', { name: 'Restore', exact: true }).click();
+  }
+  await expect(restored).toBeVisible();
   await expect(confirm).toBeHidden();
   // The replaced current content became a version itself: nothing is lost.
   await expect(panel.getByRole('listitem')).toHaveCount(3);

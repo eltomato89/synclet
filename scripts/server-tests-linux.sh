@@ -37,7 +37,7 @@ fi
 if grep -q 'skipped (missing' "$LOG"; then
   echo "FAIL: tool-dependent tests were skipped:" >&2; grep 'skipped (missing' "$LOG" >&2; exit 1
 fi
-if grep -Eq '^Tests:.* skipped' "$LOG"; then
-  echo "FAIL: tests were skipped:" >&2; grep -E '^Tests:' "$LOG" >&2; exit 1
+if grep -Eq '^(Tests|Test Suites):.* skipped' "$LOG"; then
+  echo "FAIL: tests were skipped:" >&2; grep -E '^(Tests|Test Suites):' "$LOG" >&2; exit 1
 fi
 echo "PASS: server suite on Linux (as a non-root user), no skipped tests"

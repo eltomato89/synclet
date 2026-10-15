@@ -79,7 +79,7 @@ describe('AppLoginPage password sign-in', () => {
   it('names the app, authorizes with the PKCE parameters and redirects with code and state', async () => {
     const f = routeFetch({ ...anonymous, 'GET /api/auth/app/client': IOS, 'POST /api/auth/app/authorize': json(200, { code: 'co/de+1' }) });
     renderAt(query({ login_hint: 'anna@example.com' }));
-    expect(await screen.findByRole('heading', { name: 'Sign in to Synclet for Synclet for iPhone and iPad' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Sign in to Synclet for iPhone and iPad' })).toBeInTheDocument();
     expect(screen.getByLabelText('Username or email')).toHaveValue('anna@example.com');
     await submitPassword();
     await waitFor(() => expect(go).toHaveBeenCalledTimes(1));

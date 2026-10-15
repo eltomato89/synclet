@@ -1,7 +1,7 @@
 import { type Browser, expect, type Page, request, test } from '@playwright/test';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { apiAs, BASE_URL, E2E, signInAdmin } from './helpers';
+import { apiAs, BASE_URL, E2E, retryRateLimited, signInAdmin, waitOutRateLimits } from './helpers';
 
 test.use({ locale: 'en-US' });
 // Sign-in settings are server-wide; the steps build on each other.
@@ -35,6 +35,7 @@ const folderExists = (name: string) => expect.poll(() => existsSync(path.join(E2
 
 async function freshPage(browser: Browser, options: Parameters<Browser['newContext']>[0] = {}) {
   const context = await browser.newContext({ locale: 'en-US', baseURL: BASE_URL, ...options });
+  await waitOutRateLimits(context); // the forward-auth bootstrap shares the per-IP budget
   return { context, page: await context.newPage() };
 }
 
@@ -131,7 +132,7 @@ test('forward-auth: identity headers sent by the browser itself are ignored', as
   await context.close();
 
   const api = await request.newContext({ baseURL: BASE_URL, extraHTTPHeaders: spoof });
-  const res = await api.post('/api/auth/forward');
+  const res = await retryRateLimited(() => api.post('/api/auth/forward'));
   expect(res.status()).toBe(401);
   expect((await api.post('/api/auth/refresh')).status()).toBe(401);
   await api.dispose();

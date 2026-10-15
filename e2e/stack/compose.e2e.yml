@@ -6,6 +6,7 @@ services:
     image: synclet-e2e/server:${E2E_TAG:?}
   worker:
     image: synclet-e2e/server:${E2E_TAG:?}
+    pull_policy: never # built by the server service; never look it up in a registry
   caddy:
     image: synclet-e2e/caddy:${E2E_TAG:?}
   # Mock OpenID provider (interactive login form: any subject, optional claims JSON). It listens on
@@ -27,6 +28,7 @@ services:
   # trusts it via SYNCLET_TRUSTED_PROXIES (its address only), so only this path logs in by header.
   authproxy:
     image: synclet-e2e/caddy:${E2E_TAG:?}
+    pull_policy: never # built by the caddy service
     command: ["caddy", "run", "--config", "/etc/caddy/authproxy.caddy", "--adapter", "caddyfile"]
     volumes:
       - ../e2e/stack/authproxy.caddy:/etc/caddy/authproxy.caddy:ro

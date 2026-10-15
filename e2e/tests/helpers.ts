@@ -57,7 +57,7 @@ export async function login(ctx: APIRequestContext, username: string, password: 
  * failing on a limit that only exists because the whole suite signs in from one address.
  */
 export async function waitOutRateLimits(ctx: BrowserContext): Promise<void> {
-  await ctx.route(/\/api\/auth\/(login|app\/)/, async (route) => {
+  await ctx.route(/\/api\/auth\/(login|forward|app\/)/, async (route) => {
     for (let attempt = 0; ; attempt++) {
       const res = await route.fetch({ maxRedirects: 0 });
       if (res.status() !== 429 || attempt >= 8) return route.fulfill({ response: res });

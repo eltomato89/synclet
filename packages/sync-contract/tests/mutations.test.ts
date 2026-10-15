@@ -9,7 +9,9 @@ import { schemaErrors } from '../src/schema.js';
 const { ctx, api } = contract();
 
 /** Sends only headers with a (too large) declared Content-Length and reads the early answer. */
-function declaredLengthRequest(method: string, path: string, length: string, headers: Record<string, string>): Promise<{ status: number; body: string }> {
+/** Sends the headers and one byte of a body declared as `length` bytes; the rest never comes. */
+function declaredLengthRequest(method: string, path: string, length: string, headers: Record<string, string>): Promise<{ status: number; body: string; contentType: string; ms: number }> {
+  const started = Date.now();
   const url = new URL(path, ctx.baseUrl);
   const lib = url.protocol === 'https:' ? https : http;
   return new Promise((resolve, reject) => {
@@ -20,9 +22,14 @@ function declaredLengthRequest(method: string, path: string, length: string, hea
       let body = '';
       res.setEncoding('utf8');
       res.on('data', (c: string) => { body += c; });
-      res.on('end', () => { resolve({ status: res.statusCode ?? 0, body }); req.destroy(); });
+      res.on('end', () => {
+        resolve({ status: res.statusCode ?? 0, body, contentType: String(res.headers['content-type'] ?? ''), ms: Date.now() - started });
+        req.destroy();
+      });
     });
     req.on('error', reject);
+    // Without an early answer the request would wait for a body that never comes.
+    req.setTimeout(15_000, () => req.destroy(new Error(`no response to ${method} ${path} within 15 s`)));
     req.write('x'); // a first byte, so the server starts processing; the rest never comes
   });
 }
@@ -103,7 +110,9 @@ describe('PUT content (replace)', () => {
     const { maxUploadBytes } = (await api.get('/sync/v1/account')).json();
     const box = await scratchFolder(api, ctx, 'put');
     const f = await uploadFile(api, box.id, 'a.txt', 'one');
-    // The limit is checked against the declared length before any byte is read.
+    // The limit is checked against the declared length before the body is read – by the server,
+    // or by a reverse proxy in front of it with the same limit (the bundled Caddy), whose 413 may
+    // not be JSON.
     const declared = String(maxUploadBytes + 1);
     for (const [method, path, extra] of [
       ['POST', `/api/sync/v1/items/upload?parentId=${box.id}&name=big.bin`, {}],
@@ -111,7 +120,8 @@ describe('PUT content (replace)', () => {
     ] as const) {
       const res = await declaredLengthRequest(method, path, declared, extra);
       expect(res.status, method).toBe(413);
-      expect(JSON.parse(res.body).code).toBe('too_large');
+      expect(res.ms, `${method}: 413 only after ${res.ms} ms`).toBeLessThan(5_000);
+      if (res.contentType.includes('application/json')) expect(JSON.parse(res.body).code).toBe('too_large');
     }
   });
 });

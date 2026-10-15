@@ -37,7 +37,7 @@ test('a desktop app signs in through the browser (code + PKCE), exchanges the co
 
     // Not signed in in this browser: the page shows the app and asks for the password.
     await page.goto(`/app-login?${q}`);
-    await expect(page.getByRole('heading', { name: 'Sign in to Synclet for Synclet for Linux' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Sign in to Synclet for Linux' })).toBeVisible();
     await page.getByLabel('Username or email').fill('e2e-applogin');
     await page.getByLabel('Password', { exact: true }).fill(USER_PASSWORD);
     await page.getByRole('button', { name: 'Sign in' }).click();

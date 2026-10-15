@@ -124,7 +124,7 @@ test('admin area: users, adopted folder, disable, last admin, sessions, status, 
     await table.getByRole('button', { name: 'Revoke link to angebot.txt by e2e-owner' }).click();
     await page.getByRole('alertdialog').getByRole('button', { name: 'Revoke link' }).click();
     await expect(page.getByText('Link revoked')).toBeVisible();
-    expect((await anon.get(`/api/public/shares/${token}`)).status()).toBeGreaterThanOrEqual(400);
+    expect((await anon.get(`/api/public/shares/${token}`)).status()).toBe(404); // revoked = not_found
     await Promise.all([again.dispose(), anon.dispose()]);
   });
   await Promise.all([owner.dispose(), ownerApi.dispose(), adminApi.dispose()]);
