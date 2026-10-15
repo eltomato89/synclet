@@ -30,6 +30,7 @@ SYNCLET_PORT=$PORT
 SYNCLET_TLS_PORT=$TLS_PORT
 SYNCLET_SITE_ADDRESS=:80
 SYNCLET_SCAN_INTERVAL=${SYNCLET_THROWAWAY_SCAN_INTERVAL:-10}
+SYNCLET_VERSIONS=on
 EOF
 DC=(docker compose -p "$PROJECT" -f "$ROOT/deploy/compose.yml" --env-file "$ENV")
 STARTED=0
@@ -190,6 +191,42 @@ api "${TUS_HDR[@]}" -XPATCH "http://localhost:$PORT$LOC" -H 'Upload-Offset: 6' -
 [ "$(cat "$FILES/jens/Dokumente/tus.txt" 2>/dev/null)" = "hallo welt!" ] || fail "tus upload not on disk"
 [ -n "$(child_id "$DOCS" tus.txt)" ] || fail "tus upload not listed"
 
+# 3e) Versions (SYNCLET_VERSIONS=on): replacing a file keeps the superseded contents under
+#     /meta/versions, never in /data; restoring brings an old content back (the current one becomes
+#     a version first, so nothing is lost).
+version_files() { find "$META/versions" -type f ! -name '.tmp-*' 2>/dev/null | wc -l | tr -d ' '; }
+data_tree() { (cd "$FILES" && find . -mindepth 1 | LC_ALL=C sort); }
+VF=$(upload "$DOCS" versioniert.txt 'eins')
+[ "$(version_files)" = 0 ] || fail "versions stored before any replace"
+TREE_BEFORE=$(data_tree)
+# Docker Desktop on macOS: with versions on, the inode the server recorded for its own replace can
+# change shortly afterwards (synthetic per-path inodes of the VM file sharing), so the next write
+# sees "file changed on disk" (412) once and re-indexes. Linux keeps the inode; there a 412 fails.
+retry_412() {
+  local code
+  code=$(curl -sS -o /dev/null -w '%{http_code}' "${H[@]}" "$@")
+  if [ "$code" = 412 ] && [ "$(uname -s)" = Darwin ]; then
+    echo "WARN: 412 on macOS (Docker Desktop inode drift), retrying once: $*" >&2
+    code=$(curl -sS -o /dev/null -w '%{http_code}' "${H[@]}" "$@")
+  fi
+  [ "$code" = 200 ] || fail "HTTP $code from $*"
+}
+replace() { retry_412 -XPUT "$B/sync/v1/items/$1/content" -H 'If-Match: *' -H 'content-type: application/octet-stream' --data-binary "$2"; }
+replace "$VF" 'zwei'
+replace "$VF" 'drei'
+[ "$(version_files)" = 2 ] || fail "expected 2 files in /meta/versions after two replaces, got $(version_files)"
+[ "$(data_tree)" = "$TREE_BEFORE" ] || { diff <(echo "$TREE_BEFORE") <(data_tree); fail "replacing a versioned file changed the data folder tree"; }
+[ "$(cat "$FILES/jens/Dokumente/versioniert.txt")" = drei ] || fail "current content after replace"
+VERSIONS=$(api "$B/sync/v1/items/$VF/versions")
+[ "$(jq length <<<"$VERSIONS")" = 2 ] || fail "unexpected versions: $VERSIONS"
+V1=$(jq -r 'min_by(.version) | .id' <<<"$VERSIONS")
+[ "$(api "$B/sync/v1/items/$VF/versions/$V1/content")" = eins ] || fail "oldest version content"
+retry_412 -XPOST "$B/sync/v1/items/$VF/versions/$V1/restore"
+[ "$(child_id "$DOCS" versioniert.txt)" = "$VF" ] || fail "restore changed the item id"
+[ "$(cat "$FILES/jens/Dokumente/versioniert.txt")" = eins ] || fail "restored content not on disk"
+[ "$(version_files)" = 3 ] || fail "restore did not keep the replaced current content as a version ($(version_files) files)"
+[ "$(data_tree)" = "$TREE_BEFORE" ] || { diff <(echo "$TREE_BEFORE") <(data_tree); fail "restoring a version changed the data folder tree"; }
+
 # 4) Nothing but user content in the data folder: trash staging (.synclet-trash-*) is moved to
 #    /meta after commit, temp files (.synclet-tmp-*) never outlive a request.
 leftovers() { (cd "$FILES" && find . -name '.synclet-*'); }
@@ -202,7 +239,7 @@ STARTED=0
 [ -z "$(leftovers)" ] || fail "synclet entries left in the data folder after teardown: $(leftovers)"
 ACTUAL=$(cd "$FILES" && find . -mindepth 1 | LC_ALL=C sort)
 EXPECTED=$(printf '%s\n' ./jens ./jens/Bestand "./jens/Bestand/$NFD_NAME" ./jens/Bestand/Unterordner \
-  ./jens/Dokumente "./jens/Dokumente/Angebot final.txt" ./jens/Dokumente/alt-verschoben.txt ./jens/Dokumente/tus.txt \
+  ./jens/Dokumente "./jens/Dokumente/Angebot final.txt" ./jens/Dokumente/alt-verschoben.txt ./jens/Dokumente/tus.txt ./jens/Dokumente/versioniert.txt \
   ./jens/Archiv ./jens/Archiv/Alt ./jens/Archiv/Alt/tief.txt ./jens/Archiv/liste.txt ./jens/Archiv/extern.txt \
   ./jens/Medien ./jens/Medien/foto.jpg ./jens/Medien/foto.heic ./jens/Medien/clip.mp4 ./jens/Medien/rechnung.pdf | LC_ALL=C sort)
 if [ "$ACTUAL" != "$EXPECTED" ]; then
@@ -210,8 +247,10 @@ if [ "$ACTUAL" != "$EXPECTED" ]; then
 fi
 [ "$(cat "$FILES/jens/Dokumente/Angebot final.txt")" = "hallo" ] || fail "content"
 [ "$(cat "$FILES/jens/Dokumente/alt-verschoben.txt")" = "alt" ] || fail "moved file content"
+[ "$(cat "$FILES/jens/Dokumente/versioniert.txt")" = "eins" ] || fail "restored version content after teardown"
+[ "$(find "$META/versions" -type f ! -name '.tmp-*' | wc -l | tr -d ' ')" = 3 ] || fail "/meta/versions lost files"
 ls "$META/trash"/*/weg.txt >/dev/null || fail "deleted file not in /meta/trash"
 cmp -s "$FILES/jens/Medien/foto.heic" "$FX/sample.heic" || fail "uploaded heic differs"
 [ -n "$(find "$META/derived" -type f | head -1)" ] || fail "/meta/derived is empty"
 [ -z "$(ls -A "$META/uploads")" ] || fail "/meta/uploads not empty: $(ls -A "$META/uploads")"
-echo "PASS: folder is a plain 1:1 copy of what Synclet showed, metadata stayed outside"
+echo "PASS: folder is a plain 1:1 copy of what Synclet showed, metadata (incl. versions) stayed outside"

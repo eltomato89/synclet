@@ -50,7 +50,7 @@ DocumentsProvider, Linux). All clients build on this document; change it only by
 | `cursor_expired` | 410 | Cursor older than the journal retention or ahead of the server → full re-enumeration |
 | `conflict` | 412 | `If-Match` does not match (`item` = current server state). Status 409 on trash routes (§8.4) |
 | `precondition_required` | 428 | `If-Match` missing on `PUT /items/:id/content` |
-| `too_large` | 413 | Body above `maxUploadBytes` |
+| `too_large` | 413 | Body above `maxUploadBytes` (a 413 from a reverse proxy with the same limit may have no JSON body; treat any 413 as too large) |
 | `range_not_satisfiable` | 416 | `Range` outside the file (`Content-Range: bytes */<size>`) |
 | `rate_limited` | 429 | Too many attempts on a public auth route; wait `Retry-After` seconds |
 | `password_login_disabled` | 403 | Password login is disabled for non-admin users (SSO only) → use the browser login (§2.1) |

@@ -613,7 +613,7 @@
     }
   },
   "appLogin": {
-    "title": "Anmelden bei Synclet für {{name}}",
+    "title": "Bei {{name}} anmelden",
     "explain": "{{app}} erhält Zugriff auf deine Dateien auf {{host}}. Danach geht es automatisch zurück zur App.",
     "continueAs": "Als {{name}} fortfahren",
     "otherAccount": "Anderes Konto verwenden",

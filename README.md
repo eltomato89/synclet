@@ -83,7 +83,7 @@ All settings go into `deploy/.env` (read by `docker compose --env-file deploy/.e
 | `SYNCLET_PREVIEW_MAX_BYTES` | `2147483648` (2 GiB) | Files larger than this get no thumbnail, preview or text extraction. |
 | `SYNCLET_WATCH` | `on` | `off` disables the file watcher and relies on periodic scans (NFS/SMB). |
 | `SYNCLET_SCAN_INTERVAL` | `900` (`120` with `SYNCLET_WATCH=off`) | Seconds between full scans of all user folders. |
-| `SYNCLET_MAX_UPLOAD_BYTES` | `53687091200` (50 GiB) | Largest accepted upload. |
+| `SYNCLET_MAX_UPLOAD_BYTES` | `53687091200` (50 GiB) | Largest accepted upload. Also the request body limit of the bundled Caddy for `/api/*` (larger requests get `413` from the proxy); raise the limit of an outer reverse proxy accordingly. |
 | `SYNCLET_MASS_DELETE_THRESHOLD` | `25` | Safety guard: if a user folder suddenly looks empty while more than this many top-level items are indexed, Synclet refuses to delete them from the index (and from every client) and logs an error. `0` turns the guard off. If you really emptied the folder, set it to `0`, restart the server, then set it back. An unmounted data volume is always refused. |
 | `SYNCLET_TOMBSTONE_WINDOW` | `3600` | Seconds within which an item that vanished and reappears elsewhere is still recognised as a move (keeps its ID). |
 | `SYNCLET_JOURNAL_RETENTION_DAYS` | `30` | Days of change history kept for sync clients. A client offline for longer does a full resync. |

@@ -18,13 +18,26 @@
 	}
 
 	handle /api/* {
+		# A request that declares a body above the server's upload limit (SYNCLET_MAX_UPLOAD_BYTES;
+		# compose passes it to both, default 50 GiB like the server's) is answered 413 right here.
+		# The server rejects it before reading the body too, but the proxy would only relay that
+		# early answer after forwarding the whole body. No API request body is legitimately larger
+		# (a tus PATCH carries at most one upload). Chunked bodies are limited by the server.
+		@too_large expression `{http.request.header.Content-Length} != "" && int({http.request.header.Content-Length}) > {$SYNCLET_MAX_UPLOAD_BYTES:53687091200}`
+		handle @too_large {
+			header Content-Type "application/json; charset=utf-8"
+			respond `{"statusCode":413,"message":"too_large","code":"too_large"}` 413 {
+				close
+			}
+		}
 		# Forward-auth identity headers are only honored from the direct peers in
 		# SYNCLET_TRUSTED_PROXIES (an authenticating outer proxy); from anyone else they are removed
 		# before reaching the server, which trusts Caddy as its forward-auth proxy.
-		# remote_ip = the direct connection, never X-Forwarded-For. While SYNCLET_TRUSTED_PROXIES is
-		# unset or empty (compose always passes the variable, empty by default) Caddy falls back to the
-		# default after the colon: 192.0.2.255 is a documentation address that never connects, so
-		# nothing is trusted and the headers are always removed.
+		# remote_ip = the direct connection, never X-Forwarded-For. Unset, SYNCLET_TRUSTED_PROXIES
+		# falls back to the default after the colon (192.0.2.255, a documentation address that never
+		# connects); set but empty (compose passes it empty by default) it gives a remote_ip matcher
+		# without ranges, which matches nobody. Either way nothing is trusted and the headers are
+		# always removed (checked against the e2e stack).
 		# Custom header names configured in the admin UI (SSO > forward-auth) must be added here too.
 		@untrusted_auth_headers not remote_ip {$SYNCLET_TRUSTED_PROXIES:192.0.2.255/32}
 		request_header @untrusted_auth_headers -Remote-User
@@ -64,11 +77,12 @@
 	# HSTS only when served over HTTPS (a domain as SYNCLET_SITE_ADDRESS gets automatic HTTPS).
 	@https expression `{scheme} == "https"`
 
-	header {
-		X-Content-Type-Options nosniff
-		Referrer-Policy strict-origin-when-cross-origin
-		X-Frame-Options SAMEORIGIN
-	}
+	# Defaults only ("?": set when the response has none), so the server's own stricter values on
+	# content responses (Referrer-Policy: no-referrer) are kept and no header is sent twice. One
+	# directive each: a "?" condition applies to all fields of its header block.
+	header ?X-Content-Type-Options nosniff
+	header ?Referrer-Policy strict-origin-when-cross-origin
+	header ?X-Frame-Options SAMEORIGIN
 	header @https Strict-Transport-Security "max-age=31536000"
 }
 

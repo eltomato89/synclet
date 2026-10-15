@@ -613,7 +613,7 @@
     }
   },
   "appLogin": {
-    "title": "Sign in to Synclet for {{name}}",
+    "title": "Sign in to {{name}}",
     "explain": "{{app}} gets access to your files on {{host}}. Afterwards you'll go back to the app automatically.",
     "continueAs": "Continue as {{name}}",
     "otherAccount": "Use a different account",
