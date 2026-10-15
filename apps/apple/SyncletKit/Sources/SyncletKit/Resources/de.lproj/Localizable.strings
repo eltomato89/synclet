@@ -22,3 +22,10 @@
 "error.http" = "Der Server ist gerade nicht erreichbar (Fehler %d). Bitte versuche es später erneut.";
 "error.invalidResponse" = "Unerwartete Antwort vom Server. Bitte versuche es später erneut.";
 "error.httpClient" = "Der Server konnte die Anfrage nicht ausführen (Fehler %d).";
+
+/* Menüleiste „Letzte Probleme“ (SyncProblem). */
+"problem.tooLarge" = "Zu groß für den Server – nicht hochgeladen.";
+"problem.insufficientStorage" = "Der Speicher des Servers ist voll – neuer Versuch folgt.";
+"problem.invalidName" = "Der Name ist auf dem Server nicht erlaubt.";
+"problem.permission" = "Hier nicht erlaubt – die Änderung wurde nicht übertragen.";
+"problem.conflictCopy" = "Anderswo geändert – deine Fassung wurde als „%@“ gespeichert.";

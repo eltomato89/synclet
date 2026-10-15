@@ -111,12 +111,32 @@
         }
       }
     },
+    "Clear List": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Liste leeren"
+          }
+        }
+      }
+    },
     "Connect Synclet": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
             "value": "Synclet verbinden"
+          }
+        }
+      }
+    },
+    "Connected": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verbunden"
           }
         }
       }
@@ -131,12 +151,42 @@
         }
       }
     },
+    "Connected · Synced %@": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verbunden · Synchronisiert %@"
+          }
+        }
+      }
+    },
+    "Connecting…": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verbinde…"
+          }
+        }
+      }
+    },
     "Done": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
             "value": "Fertig"
+          }
+        }
+      }
+    },
+    "Error": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fehler"
           }
         }
       }
@@ -237,6 +287,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Beenden"
+          }
+        }
+      }
+    },
+    "Recent Problems": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Letzte Probleme"
           }
         }
       }
@@ -347,6 +407,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Bei Anmeldung starten"
+          }
+        }
+      }
+    },
+    "Status unknown": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Status unbekannt"
           }
         }
       }

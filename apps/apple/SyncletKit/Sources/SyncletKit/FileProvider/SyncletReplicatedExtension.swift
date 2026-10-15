@@ -47,7 +47,7 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
 
     public let domain: NSFileProviderDomain
     private let contextProvider: @Sendable () -> Context?
-    private let temporaryDirectoryOverride: URL?
+    let temporaryDirectoryOverride: URL?
     /// Clock for conflict names (injected by tests).
     let now: @Sendable () -> Date
 
@@ -98,6 +98,10 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
     }
 
     open func invalidate() {}
+
+    /// A user-visible problem of a create/modify (``ErrorMapping/problem(for:fileName:itemIdentifier:)``)
+    /// or a conflict copy. The platform subclass records it for the app (default: nothing).
+    open func report(_ problem: SyncProblem) {}
 
     // MARK: - Helpers
 
@@ -259,6 +263,10 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
                                                                          contentVersion: template.value.itemVersion?.contentVersion))
                 done.value(FileProviderItem(created, layout: context.layout), [], false, nil)
             } catch {
+                if let problem = ErrorMapping.problem(for: error, fileName: template.value.filename,
+                                                      itemIdentifier: template.value.itemIdentifier.rawValue) {
+                    report(problem)
+                }
                 done.value(nil, [], false, ErrorMapping.fileProviderError(error))
             }
         }
@@ -332,6 +340,10 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
                                               contents: newContents, context: context(), progress: progressBox.value)
                 done.value(result.item, [], result.shouldFetchContent, nil)
             } catch {
+                if let problem = ErrorMapping.problem(for: error, fileName: itemBox.value.filename,
+                                                      itemIdentifier: itemBox.value.itemIdentifier.rawValue) {
+                    report(problem)
+                }
                 done.value(nil, [], false, ErrorMapping.fileProviderError(error))
             }
         }
@@ -438,6 +450,8 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
                                                                          contentVersion: baseVersion.contentVersion),
                                                reuseIdentical: false, nameMayChange: true)
                 Log.fileProvider.info("conflict on \(id, privacy: .public): uploaded copy \(copy.name, privacy: .private)")
+                report(SyncProblem(code: .conflictCopy, fileName: server.name,
+                                   itemIdentifier: layout.providerIdentifier(forServerID: copy.id).rawValue, detail: copy.name))
                 signalWorkingSet()
                 return (FileProviderItem(server, layout: layout), true)
             } catch SyncAPIError.notFound {

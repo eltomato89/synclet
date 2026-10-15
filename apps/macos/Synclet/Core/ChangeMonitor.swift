@@ -384,3 +384,15 @@ enum SystemWakeUps {
         init(_ token: NSObjectProtocol) { self.token = token }
     }
 }
+
+extension ChangeMonitor: AccountStatusProviding {
+    /// The menu's view of the monitor's connection state.
+    var connectionState: SyncConnectionState {
+        switch state {
+        case .connecting: .connecting
+        case .connected: .connected
+        case .offline: .offline
+        case .authFailed: .authFailed
+        }
+    }
+}

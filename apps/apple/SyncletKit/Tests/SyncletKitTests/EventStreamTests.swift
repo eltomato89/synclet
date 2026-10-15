@@ -94,7 +94,7 @@ final class SSEStubProtocol: URLProtocol, @unchecked Sendable {
 }
 
 /// Records the backoff delays and returns at once.
-final class SleepRecorder: @unchecked Sendable {
+final class EventSleepRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var values: [Double] = []
 
@@ -123,11 +123,11 @@ final class FakeUptime: @unchecked Sendable {
 
 final class EventStreamTests: XCTestCase {
     private let url = EventStream.url(origin: URL(string: "https://synclet.example.test/ignored")!)
-    private var sleeper = SleepRecorder()
+    private var sleeper = EventSleepRecorder()
     private var uptime = FakeUptime()
 
     override func setUp() {
-        sleeper = SleepRecorder()
+        sleeper = EventSleepRecorder()
         uptime = FakeUptime()
     }
 
@@ -203,7 +203,7 @@ final class EventStreamTests: XCTestCase {
         _ = try await collect(low, count: 7)
         XCTAssertEqual(Array(sleeper.delays.prefix(7)), [0.8, 1.6, 3.2, 6.4, 12.8, 25.6, 48])
 
-        sleeper = SleepRecorder()
+        sleeper = EventSleepRecorder()
         SSEStubProtocol.reset { _ in .status(500) }
         let high = stream(random: { $0.upperBound })
         _ = try await collect(high, count: 7)

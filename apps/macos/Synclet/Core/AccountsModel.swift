@@ -55,6 +55,8 @@ final class AccountsModel {
     @ObservationIgnored var openURL: (URL) -> Void = { NSWorkspace.shared.open($0) }
     /// Called once an account was added and the list was empty before (login item default).
     @ObservationIgnored var onFirstAccountAdded: () -> Void = {}
+    /// Connection state for accounts without a running ``ChangeMonitor`` (which takes precedence).
+    @ObservationIgnored var statusProvider: (AccountEntry) -> any AccountStatusProviding = { FallbackAccountStatus(entry: $0) }
 
     init(manager: AccountManager, finder: FinderIntegrating = SystemFinderIntegration()) {
         self.manager = manager
@@ -71,6 +73,13 @@ final class AccountsModel {
 
     /// The live-change monitor of an account (`nil` before ``startMonitoring(factory:)``).
     func monitor(key: String) -> ChangeMonitor? { monitors[key] }
+
+    /// The menu's status line of an account.
+    func menuState(for entry: AccountEntry, problems: [ErrorLogEntry], now: Date = Date()) -> AccountMenuState {
+        let provider: any AccountStatusProviding = monitors[entry.id] ?? statusProvider(entry)
+        return AccountMenuState.derive(status: entry.status, connection: provider.connectionState, lastSync: provider.lastSync,
+                                       problems: problems, accountKey: entry.id, now: now)
+    }
 
     // MARK: - List
 
@@ -166,6 +175,7 @@ final class AccountsModel {
         monitors[key]?.stop()
         await manager.remove(key: key)
         AuthFailureSignal.clear(container: container, key16: key16)
+        ErrorLog(container: container).remove(accountKey: key)
         reload()
     }
 
