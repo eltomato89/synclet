@@ -1,6 +1,7 @@
 import { Body, Controller, Get, HttpCode, Post, Req, Res, UseGuards } from '@nestjs/common';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { ipKey } from '../common/ip-key';
 import { SyncError } from '../common/sync-error';
 import type { AuthUser } from '../common/types';
 import { ZodPipe } from '../common/zod.pipe';
@@ -24,9 +25,10 @@ export class AuthController {
   @Post('login')
   @HttpCode(200)
   async login(@Body(new ZodPipe(LoginBody)) body: z.infer<typeof LoginBody>, @Req() req: FastifyRequest, @Res({ passthrough: true }) reply: FastifyReply) {
-    this.limits.takeIp(req.ip, reply);
+    const client = ipKey(req.ip); // IPv6 by /64: rotating addresses within one network gains nothing
+    this.limits.takeIp(client, reply);
     // Keyed by IP too, so one attacker cannot lock a victim's login name out for everybody else.
-    const key = `${req.ip}|${body.login.trim().toLowerCase()}`;
+    const key = `${client}|${body.login.trim().toLowerCase()}`;
     if (this.limits.login.retryAfterSec(key) > 0) throw this.limits.limited(this.limits.login, key, reply); // before argon2
     let result;
     try {

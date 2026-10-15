@@ -1,6 +1,7 @@
 import { Body, Controller, Get, HttpCode, Post, Req, Res } from '@nestjs/common';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { ipKey } from '../common/ip-key';
 import { SyncError } from '../common/sync-error';
 import { ZodPipe } from '../common/zod.pipe';
 import { PrismaService } from '../prisma/prisma.service';
@@ -28,7 +29,7 @@ export class SetupController {
   @Post()
   @HttpCode(201)
   async setup(@Body(new ZodPipe(SetupBody)) body: z.infer<typeof SetupBody>, @Req() req: FastifyRequest, @Res({ passthrough: true }) reply: FastifyReply) {
-    this.limits.takeIp(req.ip, reply);
+    this.limits.takeIp(ipKey(req.ip), reply);
     if ((await this.prisma.user.count()) > 0) throw new SyncError('setup_done', 'setup already completed');
     const user = await this.users.create({ ...body, role: 'admin' });
     const { access, refreshToken } = await this.auth.issue(user, req.headers['user-agent']);
