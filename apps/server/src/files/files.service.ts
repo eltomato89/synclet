@@ -310,6 +310,9 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
         if (prepared) prepared.committed = true;
         return out;
       } catch (e) {
+        // Renamed over the file but not committed (or the commit's outcome is unknown): the
+        // version file must survive and be recorded.
+        if (prepared?.replaced) await this.versions.recoverRow(prepared);
         if (!(e instanceof StaleVersionError)) throw e;
         if (i >= 1) {
           const row = await this.prisma.item.findFirst({ where: { id: itemId, ownerId: user.id, deletedAt: null } });
@@ -350,7 +353,14 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
         data: { size: st.size, mtime: st.mtime, ino: st.ino, dev: st.dev, contentHash: sha256, version: { increment: 1 }, officeKey: opts.officeKey },
       });
       await this.journal.record(tx, user.id, [updated], 'upsert');
-      await replaceAtomic(src, target);
+      // From here the published version may be the only copy of the previous content.
+      if (opts.prepared) opts.prepared.replaced = true;
+      try {
+        await replaceAtomic(src, target);
+      } catch (e) {
+        if (opts.prepared) opts.prepared.replaced = false; // rename(2) failed: nothing was replaced
+        throw e;
+      }
       return updated;
     } finally {
       if (src !== tmp) await rm(src, { force: true });

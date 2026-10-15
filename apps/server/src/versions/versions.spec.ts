@@ -326,6 +326,45 @@ describe('Versions', () => {
         expect(await storedFiles()).toEqual([]); // the published copy was withdrawn, no temp left
       });
 
+      /** Makes the next replace transaction fail at COMMIT (after its callback ran), optionally after really committing. */
+      const failCommitOnce = (reallyCommit: boolean) => {
+        const orig = ctx.prisma.$transaction.bind(ctx.prisma) as (fn: (tx: unknown) => Promise<unknown>, o?: unknown) => Promise<unknown>;
+        return jest.spyOn(ctx.prisma, '$transaction').mockImplementationOnce(((fn: (tx: unknown) => Promise<unknown>, o?: unknown) =>
+          reallyCommit
+            ? orig(fn, o).then(() => { throw new Error('connection lost after COMMIT'); })
+            : orig(async (tx) => { await fn(tx); throw new Error('COMMIT failed'); }, o)) as never);
+      };
+
+      it('a COMMIT failing after the final rename keeps the version file and records its row again', async () => {
+        const f = await files.upload(user, null, 'c.txt', body('previous'), {});
+        const spy = failCommitOnce(false);
+        try {
+          await expect(files.replaceContent(user, f.id, body('new'), { ifMatchVersion: 1 })).rejects.toThrow('COMMIT failed');
+        } finally {
+          spy.mockRestore();
+        }
+        expect(await readFile(path.join(root, 'c.txt'), 'utf8')).toBe('new'); // renamed before the failed commit
+        const [v, ...more] = await rows(f.id);
+        expect(more).toEqual([]);
+        expect(v).toMatchObject({ version: 1, sha: f.contentHash, source: 'api' });
+        expect(await readFile(v.storePath, 'utf8')).toBe('previous');
+        expect(await storedFiles()).toEqual([`${user.id}/${f.id}/${path.basename(v.storePath)}`]);
+      });
+
+      it('an ambiguous COMMIT (committed, error reported) keeps the version file and adds no second row', async () => {
+        const f = await files.upload(user, null, 'c.txt', body('previous'), {});
+        const spy = failCommitOnce(true);
+        try {
+          await expect(files.replaceContent(user, f.id, body('new'), { ifMatchVersion: 1 })).rejects.toThrow('connection lost');
+        } finally {
+          spy.mockRestore();
+        }
+        const all = await rows(f.id);
+        expect(all).toHaveLength(1);
+        expect(await readFile(all[0].storePath, 'utf8')).toBe('previous');
+        expect((await ctx.prisma.item.findUniqueOrThrow({ where: { id: f.id } })).version).toBe(2);
+      });
+
       /** Simulates a host edit that the indexer picked up right after `prepare` (row matches disk again). */
       const hostEdit = async (itemId: string, abs: string, content: string) => {
         await writeFile(abs, content);

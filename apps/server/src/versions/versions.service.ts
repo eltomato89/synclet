@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { FileVersion, Item, VersionSource } from '@prisma/client';
+import type { FileVersion, Item, Prisma, VersionSource } from '@prisma/client';
 import type { VersionWire } from '@synclet/shared';
 import { createHash, randomBytes } from 'node:crypto';
 import { createReadStream } from 'node:fs';
@@ -44,6 +44,13 @@ export interface PreparedVersion {
   published: string | null;
   /** Set by the caller after its transaction committed (then `discard` keeps the published file). */
   committed: boolean;
+  /**
+   * Set by the caller right before the new content is renamed over the file: from then on the
+   * published file may be the only copy of the previous content and is never removed.
+   */
+  replaced: boolean;
+  /** The FileVersion row `capture` inserted (for `recoverRow` after an uncertain commit). */
+  row: Prisma.FileVersionUncheckedCreateInput | null;
 }
 
 /** The file changed between `prepare` and `capture`: discard, prepare again, retry. */
@@ -151,7 +158,7 @@ export class VersionsService {
         else if (!knownHash) sha = await sha256File(tmp);
         const after = await lstat(abs, { bigint: true }).catch(() => null);
         if (after && sameFile(before, after)) {
-          return { tmp, ino: before.ino, dev: before.dev, size: before.size, mtimeMs: before.mtimeMs, sha: sha ?? knownHash, published: null, committed: false };
+          return { tmp, ino: before.ino, dev: before.dev, size: before.size, mtimeMs: before.mtimeMs, sha: sha ?? knownHash, published: null, committed: false, replaced: false, row: null };
         }
       } catch (e) {
         await rm(tmp, { force: true });
@@ -162,14 +169,30 @@ export class VersionsService {
     return null;
   }
 
-  /** Removes what a preparation left behind (its temp; its published file unless committed). */
+  /** Removes what a preparation left behind: its temp, and its published file unless committed or replaced. */
   async discard(prepared: PreparedVersion | null | undefined): Promise<void> {
     if (!prepared) return;
     await rm(prepared.tmp, { force: true }).catch(() => {});
-    if (prepared.published && !prepared.committed) {
+    if (prepared.published && !prepared.committed && !prepared.replaced) {
       await rm(prepared.published, { force: true }).catch((e) => this.log.error(`cannot remove uncommitted version ${prepared.published}: ${String(e)}`));
       prepared.published = null;
     }
+  }
+
+  /**
+   * After the new content was renamed over the file but the transaction did not (provably) commit:
+   * the published version is the only copy of the previous content, so its row is inserted again
+   * in a fresh transaction unless one already references it (the commit may have succeeded).
+   */
+  async recoverRow(prepared: PreparedVersion): Promise<void> {
+    const row = prepared.row;
+    if (!prepared.replaced || !prepared.published || !row) return;
+    this.log.warn(`replace of item ${row.itemId} committed on disk but not in the database: keeping version ${prepared.published}`);
+    await this.prisma.$transaction(async (tx) => {
+      await this.journal.lockUser(tx, row.ownerId);
+      if (await tx.fileVersion.findFirst({ where: { itemId: row.itemId, storePath: row.storePath }, select: { id: true } })) return;
+      await tx.fileVersion.create({ data: row });
+    }, TX_OPTS).catch((e) => this.log.error(`cannot record version ${prepared.published}: ${(e as Error).message}; the file stays until the stray sweep`));
   }
 
   /**
@@ -200,9 +223,9 @@ export class VersionsService {
       const sha = prep.sha ?? item.contentHash ?? (await sha256File(dst));
       // `by` may come from outside (the office callback's editor id): unknown or malformed -> null.
       const createdBy = by && UUID.test(by) && (await tx.user.findUnique({ where: { id: by }, select: { id: true } })) ? by : null;
-      await tx.fileVersion.create({
-        data: { itemId: item.id, ownerId: item.ownerId, version: item.version, sha, size: prep.size, mtime: item.mtime, createdBy, source, storePath: dst },
-      });
+      const row = { itemId: item.id, ownerId: item.ownerId, version: item.version, sha, size: prep.size, mtime: item.mtime, createdBy, source, storePath: dst };
+      await tx.fileVersion.create({ data: row });
+      prep.row = row;
     } catch (e) {
       if (legacy) await this.discard(prep);
       throw e;
