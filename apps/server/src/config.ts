@@ -9,6 +9,8 @@ export interface AppConfig {
   scanIntervalSec: number;
   tombstoneWindowSec: number;
   journalRetentionDays: number;
+  /** Refuse to empty a user root holding more live root items than this (0 = no limit). */
+  massDeleteThreshold: number;
   maxUploadBytes: number;
   publicUrl: string | null;
   secureCookies: boolean;
@@ -28,6 +30,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     scanIntervalSec: int(env.SYNCLET_SCAN_INTERVAL, bool(env.SYNCLET_WATCH, true) ? 900 : 120),
     tombstoneWindowSec: int(env.SYNCLET_TOMBSTONE_WINDOW, 3600),
     journalRetentionDays: int(env.SYNCLET_JOURNAL_RETENTION_DAYS, 30),
+    massDeleteThreshold: int(env.SYNCLET_MASS_DELETE_THRESHOLD, 25),
     maxUploadBytes: int(env.SYNCLET_MAX_UPLOAD_BYTES, 50 * 1024 ** 3),
     publicUrl,
     secureCookies: bool(env.SYNCLET_SECURE_COOKIES, publicUrl?.startsWith('https://') ?? false),

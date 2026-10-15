@@ -1,0 +1,26 @@
+FROM node:24-bookworm-slim AS build
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates && rm -rf /var/lib/apt/lists/* && corepack enable
+WORKDIR /src
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
+# packages/shared has a `prepare` script (tsc) that runs during install, so its sources must be present
+COPY packages/shared packages/shared
+COPY apps/server/package.json apps/server/
+RUN pnpm install --frozen-lockfile --filter @synclet/server...
+COPY apps/server apps/server
+RUN pnpm --filter @synclet/shared build && pnpm --filter @synclet/server build
+RUN pnpm --filter @synclet/server deploy --legacy --prod /out && cp -r apps/server/dist apps/server/prisma /out/ \
+ && node -p "require('/src/apps/server/node_modules/prisma/package.json').version" > /out/.prisma-version \
+ && cd /out && /src/apps/server/node_modules/.bin/prisma generate
+
+FROM node:24-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates tini && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY --from=build /out /app
+# `prisma` is only a devDependency of the server (so absent from the pruned prod tree), but the entrypoint needs
+# the CLI for `migrate deploy`: install it separately at exactly the version the lockfile resolved.
+RUN npm install --prefix /opt/prisma-cli --no-audit --no-fund "prisma@$(cat /app/.prisma-version)" && npm cache clean --force
+COPY deploy/server-entrypoint.sh /usr/local/bin/synclet-entrypoint
+RUN chmod +x /usr/local/bin/synclet-entrypoint
+ENV PATH=/opt/prisma-cli/node_modules/.bin:$PATH NODE_ENV=production PORT=3000 SYNCLET_DATA_ROOT=/data SYNCLET_META_ROOT=/meta
+EXPOSE 3000
+ENTRYPOINT ["/usr/bin/tini", "--", "synclet-entrypoint"]
