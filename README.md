@@ -73,7 +73,7 @@ All settings go into `deploy/.env` (read by `docker compose --env-file deploy/.e
 | `SYNCLET_SECURE_COOKIES` | on if `SYNCLET_PUBLIC_URL` starts with `https://` | Forces the `Secure` flag of the login cookie on (`on`) or off (`off`). |
 | `SYNCLET_TRUST_PROXY` | `off` (`true` in the shipped compose file) | Use `X-Forwarded-For` as the client IP (login rate limiting). Only enable behind a reverse proxy that sets X-Forwarded-For, otherwise clients can spoof their IP. |
 | `SYNCLET_TRASH_RETENTION_DAYS` | `30` | Days items stay in the trash before being removed for good (`0` = keep forever). |
-| `SYNCLET_SEARCH_LANGUAGE` | `simple` | Postgres text search configuration for search (for example `german`, `english`). `simple` does no stemming. Used by server and worker. |
+| `SYNCLET_SEARCH_LANGUAGE` | `simple` | Postgres text search configuration for search: `simple`, `german`, `english`, ... (invalid values fall back to `simple` with a warning). `simple` does no stemming. Used by server and worker. Changing it later does **not** re-index already extracted text: existing documents keep their old stemming until their content changes. |
 | `SYNCLET_WORKER_CONCURRENCY` | `2` | Number of preview jobs the worker runs in parallel. |
 | `SYNCLET_PREVIEW_MAX_BYTES` | `2147483648` (2 GiB) | Files larger than this get no thumbnail, preview or text extraction. |
 | `SYNCLET_WATCH` | `on` | `off` disables the file watcher and relies on periodic scans (NFS/SMB). |
