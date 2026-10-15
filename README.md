@@ -225,7 +225,7 @@ Claims are read from the ID token and, if the IdP has a userinfo endpoint, suppl
   token_endpoint_auth_method: client_secret_basic
 ```
 
-Issuer: the Authelia root URL, e.g. `https://auth.example.com`. Put `groups` into the scopes in Synclet as well (`openid profile email groups`).
+Issuer: the Authelia root URL, e.g. `https://auth.example.com`. Put `groups` into the scopes in Synclet as well (`openid profile email groups`). Synclet reads the ID token and also the userinfo endpoint (ID-token claims win, userinfo fills what is missing), so groups released only via userinfo work too. Authelia 4.39 and later releases some claims only through a `claims_policy` on the client; if groups don't arrive, add a policy that includes `groups` (and `email`) for the ID token.
 
 ### Accounts created and linked by SSO
 
@@ -243,12 +243,13 @@ Two layers decide who may assert an identity, and **both must be configured**:
 1. **Caddy** removes the identity headers from every `/api/*` request whose direct peer is not in `SYNCLET_TRUSTED_PROXIES` (set it to your outer proxy, e.g. `192.168.1.10/32` or `private_ranges`). Without that setting nothing is trusted and the headers are always stripped. **If you configure custom header names, add them to the `request_header @untrusted_auth_headers -<Name>` lines in `deploy/Caddyfile`** (they are not stripped otherwise) and rebuild the Caddy image (`up -d --build`).
 2. **The Synclet server** accepts the headers only if its direct TCP peer is inside the *trusted proxies* of the forward-auth settings. In the shipped setup that peer is the Caddy container, so enter the Docker network of the stack there (find it with `docker network inspect synclet_default`, typically a `172.x.0.0/16`). Never put the address of any untrusted network there; `X-Forwarded-For` is never used for this decision.
 
-Outer proxy example with Caddy and Authelia (the same pattern works for Authentik's `/outpost.goauthentik.io/auth/caddy`):
+Outer proxy example with Caddy and Authelia:
 
 ```
 files.example.com {
-	# Native apps, sync clients and public links authenticate themselves: bypass the SSO gate.
-	@open path /api/sync/* /api/auth/app/* /api/public/* /s/*
+	# Everything that authenticates itself (Synclet tokens, share links) or carries no secret
+	# (the SPA's static files) bypasses the SSO gate.
+	@open path /api/sync/* /api/auth/app/* /api/public/* /s/* /assets/* /favicon.svg /index.html
 	handle @open {
 		reverse_proxy synclet-caddy:80
 	}
@@ -262,7 +263,11 @@ files.example.com {
 }
 ```
 
-nginx and Traefik work the same way with `auth_request` / the `forwardAuth` middleware; copy the four headers to the upstream request. Add the proxy to `SYNCLET_TRUSTED_PROXIES` and to the forward-auth trusted proxies as described. Sync clients and the native apps use their own bearer tokens, so the paths they need must bypass the gate (as above); the web app, which uses the SSO session, must not.
+For Authentik use its outpost instead: add `handle /outpost.goauthentik.io/* { reverse_proxy authentik-outpost:9000 }` before the other blocks, and `forward_auth authentik-outpost:9000 { uri /outpost.goauthentik.io/auth/caddy; copy_headers X-authentik-username X-authentik-email X-authentik-name X-authentik-groups }` (with the matching header names in the Synclet settings and in `deploy/Caddyfile`).
+
+Why these paths bypass: `/s/<token>` is a route of the single-page app, so anonymous visitors of a public share link get the app shell (`index.html`, `/assets/*`, `/favicon.svg`) and then call `/api/public/*`; without the static files the share page does not load. Native apps and sync clients send Synclet tokens to `/api/sync/*` and sign in through `/api/auth/app/*`. **Tradeoff:** the bypass of `/api/auth/app/*` exposes the (rate-limited) password authorize endpoint outside the SSO gate. If you don't want password sign-in reachable that way, turn off password login for users in the SSO settings (admins keep it, by design); the apps then sign in through the browser with an existing SSO session. The `Remote-*` headers are only needed on the web login entry: what must stay behind the gate is `/`, `/login` and `/api/auth/forward`, not the API (the web app also calls `/api/sync/v1/*` with Synclet tokens, which authenticate themselves). The gate must **not** wrap the office subdomain: the Document Server loads in an iframe, uses WebSockets and fetches files from Synclet with its own tokens.
+
+nginx and Traefik work the same way with `auth_request` / the `forwardAuth` middleware; copy the four headers to the upstream request. Add the proxy to `SYNCLET_TRUSTED_PROXIES` and to the forward-auth trusted proxies as described, and keep the bypass list above.
 
 ### Locked out? Emergency recovery
 
