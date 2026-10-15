@@ -4,6 +4,7 @@ import path from 'node:path';
 import { APP_CONFIG, AppConfig } from '../config';
 import { isTempName } from '../common/names';
 import { userRoot } from '../common/paths';
+import { FilesService } from '../files/files.service';
 import { ItemStore } from '../journal/item-store';
 import { JournalService } from '../journal/journal.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -25,12 +26,13 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     private readonly journal: JournalService,
     private readonly store: ItemStore,
     private readonly watcher: WatcherService,
+    private readonly files: FilesService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
   async onApplicationBootstrap() {
     if (!this.config.background) return;
-    await this.startupCleanup();
+    await this.startup();
     void this.scanAll();
     this.timers.push(setInterval(() => void this.scanAll(), this.config.scanIntervalSec * 1000));
     this.timers.push(setInterval(() => void this.maintenance().catch((e) => this.log.error(`maintenance failed: ${(e as Error).message}`)), DAY));
@@ -40,6 +42,16 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
 
   private users() {
     return this.prisma.user.findMany({ where: { disabledAt: null }, select: { id: true, username: true } });
+  }
+
+  /**
+   * Runs before the first scan: removes crash leftovers and finishes/undoes interrupted deletes.
+   * Recovery must complete first – a scan would otherwise journal deletes for entries that a
+   * crash before commit left vacated but whose delete never happened.
+   */
+  async startup(): Promise<void> {
+    await this.startupCleanup();
+    await this.files.recoverStagedTrash().catch((e) => this.log.error(`trash recovery failed: ${(e as Error).message}`));
   }
 
   /** At startup no upload is in flight, so every temp file is a leftover of a crash. */

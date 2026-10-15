@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createTestApp, createTestUser, TestContext } from '../../test/context';
+import { IndexerService } from './indexer.service';
 import { WatcherService } from './watcher.service';
 
 describe('WatcherService.handleEvents', () => {
@@ -25,5 +26,20 @@ describe('WatcherService.handleEvents', () => {
     await watcher.flush();
     const paths = (await ctx.prisma.item.findMany({ where: { deletedAt: null } })).map((i) => i.path).sort();
     expect(paths).toEqual(['new', 'new/f.txt']);
+  });
+  it('ignores trash staging entries and their contents', async () => {
+    const user = await createTestUser(ctx);
+    const watcher = ctx.app.get(WatcherService);
+    await watcher.refreshUsers();
+    const root = path.join(ctx.config.dataRoot, user.username);
+    const spy = jest.spyOn(ctx.app.get(IndexerService), 'reconcileDir');
+    const staged = path.join(root, '.synclet-trash-0123abcd');
+    watcher.handleEvents([
+      { type: 'create', path: staged },
+      { type: 'create', path: path.join(staged, 'inner.txt') },
+      { type: 'delete', path: path.join(staged, 'sub', 'deep.txt') },
+    ]);
+    await watcher.flush();
+    expect(spy).not.toHaveBeenCalled();
   });
 });

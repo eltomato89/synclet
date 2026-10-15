@@ -1,6 +1,11 @@
-import { mkdir, readdir, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { Readable } from 'node:stream';
 import path from 'node:path';
 import { createTestApp, createTestUser, TestContext } from '../../test/context';
+import { trashStagingName } from '../common/names';
+import { FilesService } from '../files/files.service';
+import { IndexerService } from './indexer.service';
 import { SchedulerService } from './scheduler.service';
 import { WatcherService } from './watcher.service';
 
@@ -62,5 +67,41 @@ describe('SchedulerService', () => {
     watcher.handleEvents([{ type: 'create', path: path.join(root, 'a.txt') }]);
     await watcher.flush();
     expect(await ctx.prisma.item.count()).toBe(1);
+  });
+  it('bootstrap finishes trash recovery before the first scan (no delete journaled for an uncommitted delete)', async () => {
+    const user = await createTestUser(ctx);
+    const root = path.join(ctx.config.dataRoot, user.username);
+    const files = ctx.app.get(FilesService);
+    const a = await files.createFolder(user, null, 'A');
+    const x = await files.upload(user, a.id, 'x.txt', Readable.from([Buffer.from('x')]), {});
+    // Crash between staging rename and commit: rows live, path vacated, intent on /meta.
+    const trashId = '11111111-2222-4333-8444-777777777777';
+    await mkdir(path.join(ctx.config.metaRoot, 'staging'), { recursive: true });
+    await writeFile(path.join(ctx.config.metaRoot, 'staging', `${trashId}.json`),
+      JSON.stringify({ userId: user.id, username: user.username, itemId: x.id, originalRel: 'A/x.txt', name: 'x.txt', type: 'file' }));
+    await rename(path.join(root, 'A', 'x.txt'), path.join(root, trashStagingName(trashId)));
+    const before = await ctx.prisma.fileChange.count();
+
+    const s = ctx.app.get(SchedulerService);
+    const indexer = ctx.app.get(IndexerService);
+    let scan: Promise<unknown> = Promise.resolve();
+    let restoredWhenScanStarted: boolean | null = null;
+    jest.spyOn(s, 'scanAll').mockImplementation(() => {
+      restoredWhenScanStarted = existsSync(path.join(root, 'A', 'x.txt'));
+      scan = indexer.fullScan(user);
+      return scan.then(() => undefined);
+    });
+    ctx.config.background = true;
+    try {
+      await s.onApplicationBootstrap();
+      expect(restoredWhenScanStarted).toBe(true);
+      expect(await scan).toMatchObject({ created: 0, updated: 0, moved: 0, deleted: 0 });
+    } finally {
+      s.onModuleDestroy();
+      ctx.config.background = false;
+    }
+    expect(await readFile(path.join(root, 'A', 'x.txt'), 'utf8')).toBe('x');
+    expect(await ctx.prisma.fileChange.count()).toBe(before);
+    expect((await ctx.prisma.item.findUniqueOrThrow({ where: { id: x.id } })).deletedAt).toBeNull();
   });
 });

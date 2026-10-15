@@ -57,7 +57,7 @@ export class WatcherService implements OnApplicationBootstrap, OnModuleDestroy {
           return;
         }
         this.handleEvents(events);
-      }, { ignore: ['**/.synclet-tmp-*'] });
+      }, { ignore: ['**/.synclet-tmp-*', '**/.synclet-trash-*'] });
       this.mode = 'active';
     } catch (e) {
       // Typical cause: inotify watch limit (raise fs.inotify.max_user_watches on the host).

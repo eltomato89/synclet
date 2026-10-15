@@ -8,7 +8,11 @@ const IGNORED_EXACT = new Set([
   'Thumbs.db', 'desktop.ini', '$RECYCLE.BIN', '@eaDir', '#recycle', 'lost+found',
 ]);
 export const TEMP_PREFIX = '.synclet-tmp-';
-const IGNORED_PATTERNS = [/^\._/, /^~\$/, /^~WRL.*\.tmp$/i, /^\.~lock\..*#$/, /^\.synclet-tmp-[A-Za-z0-9]+$/];
+/** Staging name of an entry being moved to the trash (vacated atomically under the user lock). */
+export const TRASH_STAGING_PREFIX = '.synclet-trash-';
+const IGNORED_PATTERNS = [
+  /^\._/, /^~\$/, /^~WRL.*\.tmp$/i, /^\.~lock\..*#$/, /^\.synclet-tmp-[A-Za-z0-9]+$/, /^\.synclet-trash-[A-Za-z0-9-]+$/,
+];
 
 export type NameError = 'empty' | 'forbidden_char' | 'trailing' | 'reserved' | 'too_long' | 'ignored';
 
@@ -22,6 +26,10 @@ export function isIgnored(name: string): boolean {
 
 export function tempName(id: string): string {
   return `${TEMP_PREFIX}${id}`;
+}
+
+export function trashStagingName(trashId: string): string {
+  return `${TRASH_STAGING_PREFIX}${trashId.replace(/-/g, '')}`;
 }
 
 export function isTempName(name: string): boolean {
