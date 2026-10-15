@@ -180,5 +180,187 @@
       "close": "Uploads schließen",
       "dismiss": "Aus der Liste entfernen"
     }
+  },
+  "trash": {
+    "columns": {
+      "location": "Ursprünglicher Ort",
+      "deleted": "Gelöscht",
+      "expires": "Endgültig gelöscht"
+    },
+    "expiresIn_one": "in {{count}} Tag",
+    "expiresIn_other": "in {{count}} Tagen",
+    "expiresToday": "innerhalb eines Tages",
+    "keptForever": "Bleibt, bis du es löschst",
+    "restore": "Wiederherstellen",
+    "restoreItem": "{{name}} wiederherstellen",
+    "deleteItem": "{{name}} endgültig löschen",
+    "deleteForever": "Endgültig löschen",
+    "summary_one": "{{count}} Element im Papierkorb, {{size}}.",
+    "summary_other": "{{count}} Elemente im Papierkorb, {{size}}.",
+    "retention_one": "Elemente werden {{count}} Tag nach dem Löschen endgültig entfernt.",
+    "retention_other": "Elemente werden {{count}} Tage nach dem Löschen endgültig entfernt.",
+    "loadError": "Der Papierkorb konnte nicht geladen werden",
+    "emptyState": {
+      "title": "Der Papierkorb ist leer",
+      "body": "Gelöschte Dateien und Ordner landen hier. Du kannst sie wiederherstellen, bis sie endgültig entfernt werden."
+    },
+    "empty": {
+      "action": "Papierkorb leeren",
+      "title": "Papierkorb leeren?",
+      "body_one": "{{count}} Element wird endgültig gelöscht. Das lässt sich nicht rückgängig machen.",
+      "body_other": "Alle {{count}} Elemente werden endgültig gelöscht. Das lässt sich nicht rückgängig machen.",
+      "submitting": "Wird geleert …"
+    },
+    "deleteDialog": {
+      "title": "„{{name}}“ endgültig löschen?",
+      "fileBody": "Die Datei wird vom Server entfernt. Das lässt sich nicht rückgängig machen.",
+      "folderBody": "Der Ordner und alles darin wird vom Server entfernt. Das lässt sich nicht rückgängig machen.",
+      "submitting": "Wird gelöscht …"
+    },
+    "toast": {
+      "restored": "„{{name}}“ wiederhergestellt",
+      "restoredAs": "„{{name}}“ als „{{newName}}“ wiederhergestellt",
+      "location": "In {{location}}",
+      "renamedHint": "Der ursprüngliche Name war in {{location}} schon vergeben.",
+      "show": "Anzeigen",
+      "deleted": "„{{name}}“ endgültig gelöscht",
+      "emptied_one": "{{count}} Element endgültig gelöscht",
+      "emptied_other": "{{count}} Elemente endgültig gelöscht"
+    },
+    "errors": {
+      "conflict": "Dieses Element wird noch in den Papierkorb verschoben. Versuch es gleich noch einmal.",
+      "not_found": "Dieses Element ist nicht mehr im Papierkorb."
+    }
+  },
+  "shares": {
+    "action": "Teilen …",
+    "share": "Teilen",
+    "shareItem": "„{{name}}“ teilen",
+    "copy": "Link kopieren",
+    "copied": "Kopiert",
+    "copyItem": "Link zu {{name}} kopieren",
+    "edit": "Link bearbeiten",
+    "linkActions": "Link-Aktionen",
+    "linkActionsFor": "Link-Aktionen für {{name}}",
+    "createdOn": "Erstellt am {{date}}",
+    "expiry": {
+      "never": "Kein Ablaufdatum",
+      "until": "Gültig bis {{date}}",
+      "expiredOn": "Abgelaufen am {{date}}"
+    },
+    "badges": {
+      "password": "Passwort",
+      "upload": "Upload",
+      "noDownload": "Kein Download"
+    },
+    "dialog": {
+      "title": "„{{name}}“ teilen",
+      "editTitle": "Link bearbeiten",
+      "editDescription": "Die Änderungen gelten für den bestehenden Link zu „{{name}}“. Die Adresse bleibt gleich.",
+      "fileDescription": "Alle mit dem Link können diese Datei öffnen, ganz ohne Konto.",
+      "folderDescription": "Alle mit dem Link können diesen Ordner und alles darin durchsehen, ganz ohne Konto.",
+      "links": "Links",
+      "createAnother": "Weiteren Link erstellen",
+      "showAll": "Alle Links anzeigen",
+      "done": "Fertig",
+      "back": "Zurück"
+    },
+    "form": {
+      "password": "Passwort",
+      "passwordHint": "Empfänger müssen es eingeben, bevor sie etwas sehen.",
+      "passwordLabel": "Passwort für den Link",
+      "passwordPlaceholder": "Mindestens {{count}} Zeichen",
+      "passwordKeep": "Leer lassen, um das bisherige Passwort zu behalten",
+      "expiry": "Ablaufdatum",
+      "expiryHint": "Danach funktioniert der Link nicht mehr.",
+      "expiryCurrent": "{{text}}. Wähle ein neues Datum, um es zu ändern.",
+      "expiryNone": "Nie",
+      "expiry1d": "1 Tag",
+      "expiry7d": "7 Tage",
+      "expiry30d": "30 Tage",
+      "expiryCustom": "Datum",
+      "expiryDate": "Ablaufdatum",
+      "allowDownload": "Download erlauben",
+      "allowDownloadHint": "Ohne Download können Empfänger die Datei nur im Browser ansehen.",
+      "allowDownloadFolderHint": "Ohne Download können Empfänger Dateien nur im Browser ansehen.",
+      "allowUpload": "Upload erlauben",
+      "allowUploadHint": "Empfänger können Dateien in diesen Ordner hochladen. Vorhandene Dateien werden nie ersetzt.",
+      "create": "Link erstellen",
+      "creating": "Wird erstellt …",
+      "save": "Änderungen speichern",
+      "saving": "Wird gespeichert …",
+      "errors": {
+        "password_required": "Gib ein Passwort ein oder schalte das Passwort aus.",
+        "password_too_short": "Das Passwort braucht mindestens {{count}} Zeichen.",
+        "expiry_required": "Wähle ein Datum.",
+        "expiry_past": "Das Datum liegt in der Vergangenheit. Wähle ein Datum ab heute."
+      }
+    },
+    "created": {
+      "title": "Link erstellt",
+      "body": "Kopiere ihn und schick ihn an alle, mit denen du teilen möchtest.",
+      "rotatedTitle": "Neuer Link erstellt",
+      "rotatedBody": "Der bisherige Link funktioniert nicht mehr. Verschicke stattdessen diesen.",
+      "urlLabel": "Link zum Teilen"
+    },
+    "rotate": {
+      "action": "Neuen Link erzeugen",
+      "title": "Neuen Link erzeugen?",
+      "body": "Der aktuelle Link zu „{{name}}“ funktioniert sofort nicht mehr. Wer weiter Zugriff haben soll, braucht den neuen Link.",
+      "submit": "Neuen Link erzeugen",
+      "submitting": "Wird erzeugt …"
+    },
+    "revoke": {
+      "action": "Link widerrufen",
+      "title": "Diesen Link widerrufen?",
+      "body": "Der Link zu „{{name}}“ funktioniert sofort nicht mehr. Das lässt sich nicht rückgängig machen.",
+      "submit": "Link widerrufen",
+      "submitting": "Wird widerrufen …"
+    },
+    "toast": {
+      "copied": "Link kopiert",
+      "updated": "Link aktualisiert",
+      "rotated": "Neuer Link erzeugt. Der alte funktioniert nicht mehr.",
+      "revoked": "Link widerrufen"
+    },
+    "errors": {
+      "invalid": "Der Server hat diese Einstellungen nicht akzeptiert. Prüfe das Ablaufdatum und versuch es noch einmal.",
+      "not_found": "Dieser Link oder das Element existiert nicht mehr.",
+      "copy": "Der Link konnte nicht kopiert werden. Markiere ihn und kopiere ihn von Hand.",
+      "noUrl": "Dieser Link kann nicht mehr angezeigt werden. Erzeuge einen neuen Link, um eine kopierbare Adresse zu bekommen.",
+      "noUrlShort": "Adresse nicht verfügbar",
+      "copyManual": "Der Link konnte nicht automatisch kopiert werden. Er ist markiert: Drück Strg+C (⌘C am Mac)."
+    },
+    "columns": {
+      "item": "Geteiltes Element",
+      "created": "Erstellt",
+      "expires": "Ablauf",
+      "hits": "Aufrufe"
+    },
+    "page": {
+      "title": "Geteilte Links",
+      "filter": "Links anzeigen",
+      "filters": {
+        "active": "Aktiv",
+        "expired": "Abgelaufen",
+        "all": "Alle"
+      },
+      "count_one": "{{count}} Link",
+      "count_other": "{{count}} Links",
+      "loadError": "Deine Links konnten nicht geladen werden",
+      "emptyTitle": "Noch keine geteilten Links",
+      "emptyBody": "Teile eine Datei oder einen Ordner aus „Meine Dateien“ und du bekommst einen Link, den alle öffnen können, auf Wunsch mit Passwort und Ablaufdatum.",
+      "goToFiles": "Zu meinen Dateien",
+      "noneTitle": {
+        "active": "Keine aktiven Links",
+        "expired": "Keine abgelaufenen Links",
+        "all": "Keine Links"
+      },
+      "noneBody": "Widerrufene Links werden nicht aufgeführt."
+    },
+    "manualCopy": {
+      "title": "Link kopieren",
+      "body": "Dein Browser erlaubt hier kein Kopieren. Der Link ist markiert: Drück Strg+C (⌘C am Mac)."
+    }
   }
 }

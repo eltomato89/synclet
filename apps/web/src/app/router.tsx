@@ -3,6 +3,8 @@ import { AppShell } from '@/components/app-shell/AppShell';
 import { ConnectionError } from '@/components/ConnectionError';
 import { FullPageSpinner } from '@/components/FullPageSpinner';
 import { useAuth } from '@/lib/auth';
+import { SharedPage } from '@/features/shares/SharedPage';
+import { TrashPage } from '@/features/trash/TrashPage';
 import { FilesPage } from '@/pages/FilesPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
@@ -33,6 +35,8 @@ export const router = createBrowserRouter([
         children: [
           { path: '/files', element: <FilesPage /> },
           { path: '/files/:folderId', element: <FilesPage /> },
+          { path: '/shared', element: <SharedPage /> },
+          { path: '/trash', element: <TrashPage /> },
         ],
       },
     ],
