@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { UploadQueue } from './uploads';
+import { type UploadTransport, UploadQueue } from './uploads';
+
+/** These tests cover the raw-POST fallback used when tus is unsupported. */
+const RAW: UploadTransport = { Upload: class {} as unknown as UploadTransport['Upload'], supported: false };
 
 class FakeXHR {
   static instances: FakeXHR[] = [];
@@ -12,10 +15,10 @@ class FakeXHR {
   abort() {}
 }
 
-describe('UploadQueue', () => {
+describe('UploadQueue (raw POST fallback)', () => {
   it('uploads with raw body, progress and max 3 concurrent', async () => {
     vi.stubGlobal('XMLHttpRequest', FakeXHR as unknown as typeof XMLHttpRequest);
-    const q = new UploadQueue(() => 'tok', () => {});
+    const q = new UploadQueue(() => 'tok', () => {}, undefined, RAW);
     const files = Array.from({ length: 4 }, (_, i) => new File(['x'], `f${i}.txt`, { lastModified: 0 }));
     q.enqueue(files, 'root');
     expect(FakeXHR.instances).toHaveLength(3);
@@ -32,12 +35,12 @@ describe('UploadQueue', () => {
   });
 });
 
-describe('UploadQueue error handling', () => {
+describe('UploadQueue error handling (raw POST fallback)', () => {
   const setup = (refresh?: () => Promise<boolean>) => {
     FakeXHR.instances = [];
     vi.stubGlobal('XMLHttpRequest', FakeXHR as unknown as typeof XMLHttpRequest);
     const done = vi.fn();
-    return { q: new UploadQueue(() => 'tok', done, refresh), done };
+    return { q: new UploadQueue(() => 'tok', done, refresh, RAW), done };
   };
   const file = (name = 'a.txt', size = 1) => new File(['x'.repeat(size)], name, { lastModified: Date.UTC(2024, 0, 2) });
 

@@ -21,6 +21,7 @@ import { FileList } from '@/features/files/FileList';
 import {
   folderPath, ROOT_ID, type SortDir, type SortKey, sortItems, useAncestors, useFileMutations, useFolder,
 } from '@/features/files/queries';
+import { useRevealParam } from '@/features/files/reveal';
 import { UploadPanel } from '@/features/files/UploadPanel';
 import { getUploadQueue, type UploadQueue } from '@/features/files/uploads';
 import { quickLookEntries } from '@/features/preview/navigation';
@@ -77,6 +78,8 @@ export function FilesPage() {
         for (const id of pending) void qc.invalidateQueries({ queryKey: ['folder', id] });
         pending.clear();
         void qc.invalidateQueries({ queryKey: ['account'] });
+        void qc.invalidateQueries({ queryKey: ['recent'] });
+        void qc.invalidateQueries({ queryKey: ['search'] });
       }, 250);
     });
   });
@@ -154,6 +157,11 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
     const id = focusAfterRender.current;
     const el = id ? itemEl(id) : null;
     if (el) { focusAfterRender.current = null; el.focus({ preventScroll: true }); el.scrollIntoView({ block: 'nearest' }); }
+  });
+  // `?preview=<id>` (search results, recent files): select that item and preview it if possible.
+  useRevealParam(folderQ.data ? items : undefined, !folderQ.isFetching, (item) => {
+    focusItem(item.id);
+    if (isPreviewable(item)) preview(item);
   });
   /** After a dialog closes, focus goes back to the selection so the keyboard keeps working. */
   const restoreFocus = () => {
