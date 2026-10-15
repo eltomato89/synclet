@@ -283,6 +283,10 @@ public final class SyncAPIClient: Sendable {
     public func thumbnail(itemID: String, size: Int = 256, ifNoneMatch: String? = nil) async throws -> SyncThumbnail? {
         var request = try await makeRequest(.get, sync(["items", itemID, "thumbnail"]), query: [("size", String(size))])
         request.setValue("image/webp, */*", forHTTPHeaderField: "Accept")
+        // The caller caches (ThumbnailCache). With URLCache in the way, a `304` to our
+        // `If-None-Match` would be turned back into the cached `200` (the server sends
+        // `immutable, max-age=1y`), hiding the revalidation and caching the bytes twice.
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         if let ifNoneMatch { request.setValue(Self.quoted(ifNoneMatch), forHTTPHeaderField: "If-None-Match") }
         let (data, response) = try await perform { try await self.session.data(for: request) }
         let http = try Self.httpResponse(response)

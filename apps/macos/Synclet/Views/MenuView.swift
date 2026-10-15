@@ -26,7 +26,9 @@ struct MenuView: View {
     let actions: AppActions
 
     var body: some View {
-        let now = Date()
+        // Reading `problems.now` re-renders the menu when a problem expires; the wall clock
+        // keeps the relative sync time current.
+        let now = max(problems.now, Date())
         if accounts.isEmpty {
             Text("No account connected")
         }
@@ -66,7 +68,8 @@ struct MenuBarLabel: View {
     let problems: ProblemsModel
 
     var body: some View {
-        let badge = AccountMenuState.showsBadge(statuses: accounts.entries.map(\.status), problems: problems.entries, now: Date())
+        let now = max(problems.now, Date())   // reading `problems.now` re-renders on expiry
+        let badge = AccountMenuState.showsBadge(statuses: accounts.entries.map(\.status), problems: problems.entries, now: now)
         Image(systemName: badge ? "exclamationmark.arrow.triangle.2.circlepath" : "arrow.triangle.2.circlepath")
             .accessibilityLabel(badge ? Text("Synclet – needs attention") : Text("Synclet"))
     }

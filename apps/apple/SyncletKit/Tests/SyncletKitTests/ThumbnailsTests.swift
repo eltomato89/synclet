@@ -13,14 +13,18 @@ final class ThumbnailsTests: XCTestCase {
         try? FileManager.default.removeItem(at: tempDir)
     }
 
-    private func image(id: String = "f_1", name: String = "Foto.png", contentEtag: String = "c1", type: String = "file") -> SyncItem {
-        Fixtures.item(id: id, type: type, name: name, contentEtag: contentEtag, etag: "m-" + contentEtag)
-    }
+    private let small = CGSize(width: 128, height: 128)
 
-    private func thumbnailServer(body: Data = Data("WEBP".utf8)) {
+    /// Thumbnail server: `body` with ETag `"<etag>-<size>"`; `304` when `If-None-Match` matches.
+    private func thumbnailServer(body: Data = Data("WEBP".utf8), etag: String = "sha1") {
         MockURLProtocol.reset { request in
-            guard request.path.hasSuffix("/thumbnail") else { return .empty(500) }
-            return .data(200, body, headers: ["Content-Type": "image/webp", "ETag": "\"sha-\(request.query["size"] ?? "")\""])
+            guard request.path.hasSuffix("/thumbnail") else {
+                XCTFail("unexpected request \(request.path)")
+                return .empty(500)
+            }
+            let tag = "\"\(etag)-\(request.query["size"] ?? "")\""
+            if request.header("If-None-Match") == tag { return .empty(304, headers: ["ETag": tag]) }
+            return .data(200, body, headers: ["Content-Type": "image/webp", "ETag": tag])
         }
     }
 
@@ -46,77 +50,99 @@ final class ThumbnailsTests: XCTestCase {
 
     // MARK: Fetcher
 
-    func testFetchRequestsTheBucketAndCachesByEtag() async throws {
+    func testFetchRequestsTheBucketWithoutAnItemLookupAndStoresTheETag() async throws {
+        thumbnailServer()
+        let cache = ThumbnailCache(directory: tempDir)
+        let fetcher = ThumbnailFetcher(cache: cache)
+        let data = try await fetcher.thumbnail(itemID: "f_1", requestedSize: CGSize(width: 900, height: 900), client: Fixtures.client())
+        XCTAssertEqual(data, Data("WEBP".utf8))
+        XCTAssertEqual(MockURLProtocol.requests.map(\.path), ["/api/sync/v1/items/f_1/thumbnail"], "no GET /items/:id")
+        XCTAssertEqual(MockURLProtocol.requests.first?.query["size"], "1024")
+        XCTAssertNil(MockURLProtocol.requests.first?.header("If-None-Match"))
+        // URLCache must not answer for us (it would hide a 304 behind the cached 200).
+        XCTAssertEqual(MockURLProtocol.requests.first?.request.cachePolicy, .reloadIgnoringLocalCacheData)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tempDir.appending(path: "f_1-1024.webp").path))
+        XCTAssertEqual(cache.entry(itemID: "f_1", size: 1024)?.etag, "sha1-1024")
+    }
+
+    func testCacheHitRevalidatesAnd304ServesTheCachedFile() async throws {
+        thumbnailServer(body: Data("FIRST".utf8))
+        let fetcher = ThumbnailFetcher(cache: ThumbnailCache(directory: tempDir))
+        _ = try await fetcher.thumbnail(itemID: "f_1", requestedSize: small, client: Fixtures.client())
+        thumbnailServer(body: Data("WOULD-BE-SENT".utf8))
+        let again = try await fetcher.thumbnail(itemID: "f_1", requestedSize: small, client: Fixtures.client())
+        XCTAssertEqual(again, Data("FIRST".utf8))
+        let request = try XCTUnwrap(MockURLProtocol.requests.first)
+        XCTAssertEqual(MockURLProtocol.requests.count, 1)
+        XCTAssertEqual(request.path, "/api/sync/v1/items/f_1/thumbnail", "a cache hit makes no item GET")
+        XCTAssertEqual(request.header("If-None-Match"), "\"sha1-256\"")
+    }
+
+    func testNewVersionReplacesTheCachedFile() async throws {
+        thumbnailServer(body: Data("OLD".utf8), etag: "sha1")
+        let cache = ThumbnailCache(directory: tempDir)
+        let fetcher = ThumbnailFetcher(cache: cache)
+        _ = try await fetcher.thumbnail(itemID: "f_1", requestedSize: small, client: Fixtures.client())
+        thumbnailServer(body: Data("NEW".utf8), etag: "sha2")
+        let data = try await fetcher.thumbnail(itemID: "f_1", requestedSize: small, client: Fixtures.client())
+        XCTAssertEqual(data, Data("NEW".utf8))
+        XCTAssertEqual(cache.entry(itemID: "f_1", size: 256), ThumbnailCache.Entry(data: Data("NEW".utf8), etag: "sha2-256"))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: tempDir.path), ["f_1-256.webp"], "no stale file")
+    }
+
+    func testMissingThumbnailIsNilAndRememberedForTenMinutes() async throws {
+        for (status, code) in [(404, "not_found"), (415, "invalid_request"), (400, "invalid_request")] {
+            let clock = TestClock()
+            let fetcher = ThumbnailFetcher(cache: ThumbnailCache(directory: tempDir, now: clock.now))
+            MockURLProtocol.reset { _ in .error(status, code) }
+            let first = try await fetcher.thumbnail(itemID: "x_\(status)", requestedSize: small, client: Fixtures.client())
+            XCTAssertNil(first, "\(status)")
+            // Within 10 minutes: no request.
+            clock.advance(9 * 60)
+            MockURLProtocol.reset { request in
+                XCTFail("negative cache missed: \(request.path)")
+                return .empty(500)
+            }
+            let second = try await fetcher.thumbnail(itemID: "x_\(status)", requestedSize: small, client: Fixtures.client())
+            XCTAssertNil(second)
+            XCTAssertTrue(MockURLProtocol.requests.isEmpty)
+            // After 10 minutes: asked again (the worker may have rendered it meanwhile).
+            clock.advance(2 * 60)
+            thumbnailServer()
+            let third = try await fetcher.thumbnail(itemID: "x_\(status)", requestedSize: small, client: Fixtures.client())
+            XCTAssertEqual(third, Data("WEBP".utf8))
+        }
+    }
+
+    func testThumbnailGoneOnTheServerDropsTheCachedFile() async throws {
+        thumbnailServer()
+        let cache = ThumbnailCache(directory: tempDir)
+        let fetcher = ThumbnailFetcher(cache: cache)
+        _ = try await fetcher.thumbnail(itemID: "f_1", requestedSize: small, client: Fixtures.client())
+        MockURLProtocol.reset { _ in .error(404, "not_found") }
+        let data = try await fetcher.thumbnail(itemID: "f_1", requestedSize: small, client: Fixtures.client())
+        XCTAssertNil(data)
+        XCTAssertNil(cache.entry(itemID: "f_1", size: 256))
+    }
+
+    func testNetworkErrorServesTheCachedThumbnail() async throws {
         thumbnailServer()
         let fetcher = ThumbnailFetcher(cache: ThumbnailCache(directory: tempDir))
-        let data = try await fetcher.thumbnail(for: image(), requestedSize: CGSize(width: 900, height: 900), client: Fixtures.client())
-        XCTAssertEqual(data, Data("WEBP".utf8))
-        XCTAssertEqual(MockURLProtocol.requests.map(\.path), ["/api/sync/v1/items/f_1/thumbnail"])
-        XCTAssertEqual(MockURLProtocol.requests.first?.query["size"], "1024")
-        XCTAssertTrue(FileManager.default.fileExists(atPath: tempDir.appending(path: "f_1-c1-1024.webp").path))
-
-        // Same content etag ⇒ served from the cache, no request.
-        MockURLProtocol.reset { request in
-            XCTFail("unexpected request \(request.path)")
-            return .empty(500)
-        }
-        let again = try await fetcher.thumbnail(for: image(), requestedSize: CGSize(width: 1024, height: 1024), client: Fixtures.client())
-        XCTAssertEqual(again, Data("WEBP".utf8))
-        XCTAssertTrue(MockURLProtocol.requests.isEmpty)
-    }
-
-    func testNewContentEtagMissesTheCache() async throws {
-        thumbnailServer(body: Data("OLD".utf8))
-        let fetcher = ThumbnailFetcher(cache: ThumbnailCache(directory: tempDir))
-        _ = try await fetcher.thumbnail(for: image(contentEtag: "c1"), requestedSize: CGSize(width: 128, height: 128), client: Fixtures.client())
-        thumbnailServer(body: Data("NEW".utf8))
-        let data = try await fetcher.thumbnail(for: image(contentEtag: "c2"), requestedSize: CGSize(width: 128, height: 128), client: Fixtures.client())
-        XCTAssertEqual(data, Data("NEW".utf8))
-        XCTAssertEqual(MockURLProtocol.requests.count, 1)
-        XCTAssertEqual(MockURLProtocol.requests.first?.query["size"], "256")
-    }
-
-    func testMissingThumbnailIsNilWithoutError() async throws {
-        for status in [404, 415] {
-            MockURLProtocol.reset { _ in .error(status, status == 404 ? "not_found" : "invalid_request") }
-            let fetcher = ThumbnailFetcher(cache: ThumbnailCache(directory: tempDir))
-            let data = try await fetcher.thumbnail(for: image(), requestedSize: CGSize(width: 256, height: 256), client: Fixtures.client())
-            XCTAssertNil(data, "\(status)")
-        }
-        let files = try FileManager.default.contentsOfDirectory(atPath: tempDir.path)
-        XCTAssertEqual(files, [], "nothing cached for a missing thumbnail")
-    }
-
-    func testFoldersAndTypesWithoutThumbnailsSendNoRequest() async throws {
-        MockURLProtocol.reset { request in
-            XCTFail("unexpected request \(request.path)")
-            return .empty(500)
-        }
-        let fetcher = ThumbnailFetcher(cache: ThumbnailCache(directory: tempDir))
-        let folder = Fixtures.item(id: "d_1", type: "folder", name: "Fotos")
-        let root = Fixtures.item(id: "root", parentId: nil, type: "folder", name: "")
-        let text = image(name: "Notizen.txt")
-        for item in [folder, root, text] {
-            let data = try await fetcher.thumbnail(for: item, requestedSize: CGSize(width: 256, height: 256), client: Fixtures.client())
-            XCTAssertNil(data, item.name)
-        }
-    }
-
-    func testThumbnailableTypesFollowTheContract() {
-        for name in ["a.JPG", "b.jpeg", "c.png", "d.gif", "e.webp", "f.avif", "g.heic", "h.heif", "i.tif", "j.tiff",
-                     "k.bmp", "l.svg", "m.pdf", "n.mp4", "o.m4v", "p.mov", "q.webm", "r.mkv"] {
-            XCTAssertTrue(ThumbnailFetcher.mayHaveThumbnail(image(name: name)), name)
-        }
-        for name in ["a.txt", "b.docx", "noextension", "c.zip"] {
-            XCTAssertFalse(ThumbnailFetcher.mayHaveThumbnail(image(name: name)), name)
-        }
+        _ = try await fetcher.thumbnail(itemID: "f_1", requestedSize: small, client: Fixtures.client())
+        MockURLProtocol.reset { _ in throw URLError(.notConnectedToInternet) }
+        let cached = try await fetcher.thumbnail(itemID: "f_1", requestedSize: small, client: Fixtures.client())
+        XCTAssertEqual(cached, Data("WEBP".utf8))
+        do {
+            _ = try await fetcher.thumbnail(itemID: "f_other", requestedSize: small, client: Fixtures.client())
+            XCTFail("error expected without a cached thumbnail")
+        } catch {}
     }
 
     // MARK: Cache
 
     func testCacheFileNameIsSafe() {
-        XCTAssertEqual(ThumbnailCache.fileName(itemID: "f_1", etag: "c1", size: 256), "f_1-c1-256.webp")
-        let odd = ThumbnailCache.fileName(itemID: "a/b", etag: "\"x:y\"", size: 1024)
+        XCTAssertEqual(ThumbnailCache.fileName(itemID: "f_1", size: 256), "f_1-256.webp")
+        let odd = ThumbnailCache.fileName(itemID: "a/b:c", size: 1024)
         XCTAssertFalse(odd.contains("/"))
         XCTAssertFalse(odd.contains(":"))
         XCTAssertTrue(odd.hasSuffix("-1024.webp"))
@@ -125,27 +151,50 @@ final class ThumbnailsTests: XCTestCase {
     func testCacheEvictsLeastRecentlyUsedAboveTheLimit() throws {
         let cache = ThumbnailCache(directory: tempDir, maxBytes: 3000)
         let blob = Data(repeating: 7, count: 1000)
-        cache.store(blob, itemID: "a", etag: "1", size: 256)
-        cache.store(blob, itemID: "b", etag: "1", size: 256)
-        cache.store(blob, itemID: "c", etag: "1", size: 256)
+        for name in ["a", "b", "c"] { cache.store(blob, etag: "e", itemID: name, size: 256) }
         // Make "a" the oldest, then use it ⇒ "b" becomes the least recently used.
         let fm = FileManager.default
         for (index, name) in ["a", "b", "c"].enumerated() {
             try fm.setAttributes([.modificationDate: Date(timeIntervalSinceNow: Double(index - 100))],
-                                 ofItemAtPath: tempDir.appending(path: "\(name)-1-256.webp").path)
+                                 ofItemAtPath: tempDir.appending(path: "\(name)-256.webp").path)
         }
-        XCTAssertNotNil(cache.data(itemID: "a", etag: "1", size: 256))
-        cache.store(blob, itemID: "d", etag: "1", size: 256)
+        cache.touch(itemID: "a", size: 256)
+        cache.store(blob, etag: "e", itemID: "d", size: 256)
         let names = Set(try fm.contentsOfDirectory(atPath: tempDir.path))
-        XCTAssertFalse(names.contains("b-1-256.webp"), "\(names)")
-        XCTAssertTrue(names.contains("a-1-256.webp"))
-        XCTAssertTrue(names.contains("d-1-256.webp"))
+        XCTAssertFalse(names.contains("b-256.webp"), "\(names)")
+        XCTAssertTrue(names.contains("a-256.webp"))
+        XCTAssertTrue(names.contains("d-256.webp"))
         let total = names.compactMap { (try? fm.attributesOfItem(atPath: tempDir.appending(path: $0).path)[.size]) as? Int }.reduce(0, +)
         XCTAssertLessThanOrEqual(total, 3000)
     }
 
+    func testReplacingAFileDoesNotInflateTheSizeEstimate() {
+        let cache = ThumbnailCache(directory: tempDir, maxBytes: 3000)
+        let blob = Data(repeating: 1, count: 1000)
+        cache.store(blob, etag: "1", itemID: "a", size: 256)
+        cache.store(blob, etag: "1", itemID: "b", size: 256)
+        // Replacing "a" five times must not evict "b" (the old estimate would reach 7000).
+        for round in 2...6 { cache.store(blob, etag: "\(round)", itemID: "a", size: 256) }
+        XCTAssertNotNil(cache.entry(itemID: "b", size: 256))
+        XCTAssertEqual(cache.entry(itemID: "a", size: 256)?.etag, "6")
+    }
+
+    func testConcurrentStoresKeepEveryFileReadable() {
+        let cache = ThumbnailCache(directory: tempDir)
+        DispatchQueue.concurrentPerform(iterations: 40) { index in
+            cache.store(Data(repeating: UInt8(index), count: 2000), etag: "e\(index % 4)", itemID: "f_\(index % 4)", size: 256)
+        }
+        for index in 0..<4 {
+            let entry = cache.entry(itemID: "f_\(index)", size: 256)
+            XCTAssertEqual(entry?.data.count, 2000)
+            XCTAssertEqual(entry?.etag, "e\(index)")
+            XCTAssertEqual(Set(entry?.data ?? Data()).count, 1, "never a mix of two writes")
+        }
+    }
+
     func testDefaultCacheLimitIs200MB() {
         XCTAssertEqual(ThumbnailCache.defaultMaxBytes, 200 * 1024 * 1024)
+        XCTAssertEqual(ThumbnailCache.missingTTL, 600)
         XCTAssertTrue(ThumbnailCache.defaultDirectory().path.hasSuffix("Caches/thumbnails"))
     }
 
@@ -157,44 +206,73 @@ final class ThumbnailsTests: XCTestCase {
         return SyncletReplicatedExtension(domain: domain, temporaryDirectory: tempDir) { context }
     }
 
-    func testFetchThumbnailsReportsEachItem() async throws {
-        let png = Fixtures.itemJSON(id: "f_png", name: "Foto.png", contentEtag: "p1")
-        let pdf = Fixtures.itemJSON(id: "f_pdf", name: "Plan.pdf", contentEtag: "q1")
-        let folder = Fixtures.folderJSON(id: "d_1", name: "Fotos")
+    func testFetchThumbnailsReportsEachItemWithoutItemLookups() async throws {
         MockURLProtocol.reset { request in
             switch request.path {
-            case "/api/sync/v1/items/f_png": return .json(200, png)
-            case "/api/sync/v1/items/f_pdf": return .json(200, pdf)
-            case "/api/sync/v1/items/d_1": return .json(200, folder)
             case "/api/sync/v1/items/f_png/thumbnail": return .data(200, Data("PNG".utf8), headers: ["ETag": "\"x-256\""])
-            case "/api/sync/v1/items/f_pdf/thumbnail": return .error(404, "not_found")
-            case "/api/sync/v1/items/f_gone": return .error(404, "not_found")
-            default: return .empty(500)
+            case "/api/sync/v1/items/f_pdf/thumbnail", "/api/sync/v1/items/f_gone/thumbnail": return .error(404, "not_found")
+            case "/api/sync/v1/items/d_1/thumbnail": return .error(400, "invalid_request")
+            default:
+                XCTFail("unexpected request \(request.path)")
+                return .empty(500)
             }
         }
         let ext = makeExtension()
         let ids = ["f_png", "f_pdf", "d_1", "f_gone", "space:personal", NSFileProviderItemIdentifier.rootContainer.rawValue]
             .map { NSFileProviderItemIdentifier($0) }
-        let results = ResultsBox()
-        let error: Error? = await withCheckedContinuation { continuation in
-            _ = ext.fetchThumbnails(for: ids, requestedSize: CGSize(width: 256, height: 256),
-                                    perThumbnailCompletionHandler: { id, data, error in results.add(id.rawValue, data, error) },
-                                    completionHandler: { continuation.resume(returning: $0) })
-        }
-        XCTAssertNil(error)
-        let byID = results.all
+        let byID = try await fetch(ext, ids)
         XCTAssertEqual(byID.count, ids.count)
         XCTAssertEqual(byID["f_png"]?.data, Data("PNG".utf8))
         for id in ["f_pdf", "d_1", "f_gone", "space:personal", NSFileProviderItemIdentifier.rootContainer.rawValue] {
             XCTAssertNil(byID[id]?.data, id)
             XCTAssertNil(byID[id]?.error, id)
         }
-        // Folders and the virtual top level never ask for a thumbnail.
+        // Only thumbnail requests; nothing for the virtual top level.
         let paths = MockURLProtocol.requests.map(\.path)
-        XCTAssertFalse(paths.contains("/api/sync/v1/items/d_1/thumbnail"))
-        XCTAssertFalse(paths.contains { $0.contains("space") || $0.contains("root") })
-        // Cached in the extension's thumbnail directory.
-        XCTAssertTrue(FileManager.default.fileExists(atPath: tempDir.appending(path: "thumbnails/f_png-p1-256.webp").path))
+        XCTAssertEqual(paths.count, 4)
+        XCTAssertTrue(paths.allSatisfy { $0.hasSuffix("/thumbnail") }, "\(paths)")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tempDir.appending(path: "thumbnails/f_png-256.webp").path))
+
+        // Second round: the png revalidates (304), the others are remembered as missing.
+        MockURLProtocol.reset { request in
+            request.path == "/api/sync/v1/items/f_png/thumbnail" && request.header("If-None-Match") == "\"x-256\""
+                ? .empty(304) : .empty(500)
+        }
+        let again = try await fetch(ext, ids)
+        XCTAssertEqual(again["f_png"]?.data, Data("PNG".utf8))
+        XCTAssertEqual(MockURLProtocol.requests.map(\.path), ["/api/sync/v1/items/f_png/thumbnail"])
+    }
+
+    func testCancellingTheProgressStopsCallbacksAndReportsUserCancelled() async {
+        MockURLProtocol.reset { _ in
+            Thread.sleep(forTimeInterval: 0.5)
+            return .data(200, Data("LATE".utf8), headers: ["ETag": "\"x-256\""])
+        }
+        let ext = makeExtension()
+        let results = ResultsBox()
+        let error: Error? = await withCheckedContinuation { continuation in
+            let progress = ext.fetchThumbnails(for: ["f_1", "f_2"].map { NSFileProviderItemIdentifier($0) },
+                                               requestedSize: CGSize(width: 64, height: 64),
+                                               perThumbnailCompletionHandler: { id, data, error in results.add(id.rawValue, data, error) },
+                                               completionHandler: { continuation.resume(returning: $0) })
+            progress.cancel()
+        }
+        XCTAssertEqual((error as? CocoaError)?.code, .userCancelled)
+        XCTAssertTrue(results.all.isEmpty)
+        // Let the stub's delayed loads finish so they are not recorded by the next test.
+        try? await Task.sleep(for: .seconds(1.2))
+        XCTAssertTrue(results.all.isEmpty, "no callback after cancelling")
+    }
+
+    private func fetch(_ ext: SyncletReplicatedExtension, _ ids: [NSFileProviderItemIdentifier]) async throws -> [String: (data: Data?, error: Error?)] {
+        let results = ResultsBox()
+        let error: Error? = await withCheckedContinuation { continuation in
+            _ = ext.fetchThumbnails(for: ids, requestedSize: CGSize(width: 256, height: 256),
+                                    perThumbnailCompletionHandler: { id, data, error in results.add(id.rawValue, data, error) },
+                                    completionHandler: { continuation.resume(returning: $0) })
+        }
+        if let error { throw error }
+        return results.all
     }
 
     func testFetchThumbnailsWithoutCredentialsFailsGlobally() async {
@@ -217,4 +295,12 @@ final class ResultsBox: @unchecked Sendable {
     private var values: [String: (data: Data?, error: Error?)] = [:]
     func add(_ id: String, _ data: Data?, _ error: Error?) { lock.withLock { values[id] = (data, error) } }
     var all: [String: (data: Data?, error: Error?)] { lock.withLock { values } }
+}
+
+/// A settable clock for the negative cache.
+final class TestClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current = Date(timeIntervalSince1970: 1_791_000_000)
+    var now: @Sendable () -> Date { { [self] in lock.withLock { current } } }
+    func advance(_ seconds: TimeInterval) { lock.withLock { current += seconds } }
 }

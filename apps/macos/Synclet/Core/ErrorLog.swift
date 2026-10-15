@@ -1,4 +1,5 @@
 import Foundation
+import SyncletKit
 
 /// One line of the error log ("Letzte Probleme" in the menu).
 struct ErrorLogEntry: Codable, Equatable, Hashable, Identifiable, Sendable {
@@ -13,10 +14,19 @@ struct ErrorLogEntry: Codable, Equatable, Hashable, Identifiable, Sendable {
     var code: String
     /// File Provider item to reveal in Finder (optional).
     var itemIdentifier: String?
+    /// Extra text of the message (a conflict copy's name).
+    var detail: String?
 
     var id: String { "\(date.timeIntervalSince1970)|\(accountKey)|\(code)|\(fileName)" }
     /// A conflict copy is information, not an error.
     var isInfo: Bool { code == "conflict_copy" }
+
+    /// The message in the reader's language (the app's), rebuilt from `code`; the stored
+    /// `message` (the writer's language) only for codes this build does not know.
+    var localizedMessage: String {
+        guard let known = SyncProblem.Code(rawValue: code) else { return message }
+        return SyncProblem(code: known, fileName: fileName, itemIdentifier: itemIdentifier, detail: detail).message()
+    }
 }
 
 /// The last ``capacity`` user-visible problems, shared by the File Provider extension

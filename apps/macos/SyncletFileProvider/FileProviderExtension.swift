@@ -32,7 +32,7 @@ final class FileProviderExtension: SyncletReplicatedExtension, @unchecked Sendab
         guard let account = store.account(key16: key16) else { return }   // signed out meanwhile
         ErrorLog(container: store.directory).append(ErrorLogEntry(
             date: Date(), accountKey: account.key, fileName: problem.fileName, message: problem.message(),
-            code: problem.code.rawValue, itemIdentifier: problem.itemIdentifier))
+            code: problem.code.rawValue, itemIdentifier: problem.itemIdentifier, detail: problem.detail))
     }
 
     override func fetchThumbnails(for itemIdentifiers: [NSFileProviderItemIdentifier], requestedSize size: CGSize,

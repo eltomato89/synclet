@@ -93,12 +93,15 @@ final class LiveThumbnailTests: XCTestCase {
         created.append(folder.id)
         print("LIVE: uploaded png \(png.id), pdf \(pdf.id), folder \(folder.id)")
 
-        let temp = Fixtures.tempDirectory()
-        defer { try? FileManager.default.removeItem(at: temp) }
         let layout = SpaceLayout(spaces: [.personal()])
         let context = SyncletReplicatedExtension.Context(client: api, deviceName: "Live", layout: layout)
         let domain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier("live000000000000"), displayName: "live")
-        let ext = SyncletReplicatedExtension(domain: domain, temporaryDirectory: temp) { context }
+        // A fresh cache directory per attempt: the in-memory negative cache would otherwise
+        // (correctly) suppress the re-ask for 10 minutes after the first 404.
+        var temps: [URL] = []
+        defer { temps.forEach { try? FileManager.default.removeItem(at: $0) } }
+        var temp = Fixtures.tempDirectory()
+        var ext = SyncletReplicatedExtension(domain: domain, temporaryDirectory: temp) { context }
 
         // The worker renders asynchronously: poll like a client would (§9.1), up to ~90 s.
         let ids = [png.id, pdf.id, folder.id].map { NSFileProviderItemIdentifier($0) }
@@ -107,6 +110,9 @@ final class LiveThumbnailTests: XCTestCase {
         for attempt in 1...30 {
             results = try await fetch(ext, ids, size: CGSize(width: 300, height: 300))
             if results[png.id]?.data != nil, results[pdf.id]?.data != nil { break }
+            temps.append(temp)
+            temp = Fixtures.tempDirectory()
+            ext = SyncletReplicatedExtension(domain: domain, temporaryDirectory: temp) { context }
             print("LIVE: attempt \(attempt): png \(results[png.id]?.data?.count ?? 0) B, pdf \(results[pdf.id]?.data?.count ?? 0) B")
             try await Task.sleep(for: .seconds(3))
         }
@@ -123,13 +129,26 @@ final class LiveThumbnailTests: XCTestCase {
         XCTAssertNil(results[folder.id]?.data)
         XCTAssertNil(results[folder.id]?.error)
 
-        // Cached by content etag in the size bucket 256 (300 is nearer to 256 than to 1024).
+        temps.append(temp)
+
+        // Cached by item id in the size bucket 256 (300 is nearer to 256 than to 1024), with
+        // the server's ETag "<sha256>-256" as the validator: the server answers 304 to it.
         let cacheDir = temp.appending(path: "thumbnails")
         let files = Set(try FileManager.default.contentsOfDirectory(atPath: cacheDir.path))
-        let pngEtag = png.contentEtag ?? png.etag
-        XCTAssertTrue(files.contains(ThumbnailCache.fileName(itemID: png.id, etag: pngEtag, size: 256)), "\(files)")
-        let cache = ThumbnailCache(directory: cacheDir)
-        XCTAssertEqual(cache.data(itemID: png.id, etag: pngEtag, size: 256), results[png.id]?.data)
+        XCTAssertTrue(files.contains(ThumbnailCache.fileName(itemID: png.id, size: 256)), "\(files)")
+        let cached = try XCTUnwrap(ThumbnailCache(directory: cacheDir).entry(itemID: png.id, size: 256))
+        XCTAssertEqual(cached.data, results[png.id]?.data)
+        let etag = try XCTUnwrap(cached.etag)
+        XCTAssertTrue(etag.hasSuffix("-256"), etag)
+        print("LIVE: stored ETag \(etag)")
+        do {
+            _ = try await api.thumbnail(itemID: png.id, size: 256, ifNoneMatch: etag)
+            XCTFail("304 expected")
+        } catch SyncAPIError.notModified {
+            print("LIVE: If-None-Match → 304")
+        }
+        let revalidated = try await fetch(ext, [ids[0]], size: CGSize(width: 300, height: 300))
+        XCTAssertEqual(revalidated[png.id]?.data, cached.data)
 
         // The large bucket is a separate rendition.
         let large = try await fetch(ext, [ids[0]], size: CGSize(width: 1024, height: 1024))

@@ -19,23 +19,41 @@ public enum ThumbnailSize {
     }
 }
 
-/// On-disk thumbnail cache: `<directory>/<itemId>-<etag>-<size>.webp`, least recently used
-/// files are evicted above ``maxBytes``.
+/// On-disk thumbnail cache: one file per item and size, `<directory>/<itemId>-<size>.webp`,
+/// with the server's thumbnail ETag (`"<sha256>-<size>"`, SYNC_API.md §9.1) in the extended
+/// attribute ``etagAttribute``. Least recently used files are evicted above ``maxBytes``.
 ///
-/// The etag is the item's content etag, so a new content version never hits an old
-/// thumbnail. A hit refreshes the file's modification date (the LRU clock). Thread safe;
-/// several instances on the same directory (one per domain) stay correct because the size
-/// is re-measured before evicting.
+/// The ETag is the validator: the fetcher revalidates with `If-None-Match`, so a new content
+/// version replaces the file (no stale files for old versions) without an item lookup. A hit
+/// refreshes the file's modification date (the LRU clock). Thread safe; several instances on
+/// the same directory (one per domain) stay correct because the size is re-measured before
+/// evicting.
+///
+/// Also keeps a short in-memory negative cache ("no thumbnail", 404/415/400) so Finder's
+/// repeated requests for types without thumbnails do not each reach the server.
 public final class ThumbnailCache: Sendable {
     public static let defaultMaxBytes: Int64 = 200 * 1024 * 1024
+    /// How long a "no thumbnail" answer is remembered (the worker may still be rendering).
+    public static let missingTTL: TimeInterval = 10 * 60
+    static let etagAttribute = "tech.jensk.synclet.thumbnail-etag"
+
+    public struct Entry: Sendable, Hashable {
+        public var data: Data
+        /// The server's thumbnail ETag (unquoted); `nil` when it was not stored.
+        public var etag: String?
+    }
 
     public let directory: URL
     public let maxBytes: Int64
+    private let now: @Sendable () -> Date
     private let state = Mutex<Int64?>(nil) // approximate bytes on disk; nil = not measured yet
+    private let missing = Mutex<[String: Date]>([:]) // "<id>-<size>" → expiry
 
-    public init(directory: URL, maxBytes: Int64 = ThumbnailCache.defaultMaxBytes) {
+    public init(directory: URL, maxBytes: Int64 = ThumbnailCache.defaultMaxBytes,
+                now: @escaping @Sendable () -> Date = { Date() }) {
         self.directory = directory
         self.maxBytes = maxBytes
+        self.now = now
     }
 
     /// `Library/Caches/thumbnails` of the running process (the extension's container).
@@ -57,10 +75,10 @@ public final class ThumbnailCache: Sendable {
 
     private static let registry = Mutex<[String: ThumbnailCache]>([:])
 
-    /// `<itemId>-<etag>-<size>.webp` with every character outside `[A-Za-z0-9._-]`
-    /// percent-encoded (no `/` or `:` from an etag or id reaches the file system).
-    public static func fileName(itemID: String, etag: String, size: Int) -> String {
-        "\(safe(itemID))-\(safe(etag))-\(size).webp"
+    /// `<itemId>-<size>.webp` with every character outside `[A-Za-z0-9._-]` percent-encoded
+    /// (no `/` or `:` from an id reaches the file system).
+    public static func fileName(itemID: String, size: Int) -> String {
+        "\(safe(itemID))-\(size).webp"
     }
 
     private static let allowed: CharacterSet = {
@@ -73,35 +91,53 @@ public final class ThumbnailCache: Sendable {
         value.addingPercentEncoding(withAllowedCharacters: allowed) ?? "_"
     }
 
-    private func url(itemID: String, etag: String, size: Int) -> URL {
-        directory.appending(path: Self.fileName(itemID: itemID, etag: etag, size: size), directoryHint: .notDirectory)
+    private func url(itemID: String, size: Int) -> URL {
+        directory.appending(path: Self.fileName(itemID: itemID, size: size), directoryHint: .notDirectory)
     }
 
-    /// The cached bytes, or `nil`. A hit marks the file as recently used.
-    public func data(itemID: String, etag: String, size: Int) -> Data? {
-        let file = url(itemID: itemID, etag: etag, size: size)
+    // MARK: Files
+
+    /// The cached thumbnail and its ETag, or `nil`. Does not count as a use (see ``touch``).
+    public func entry(itemID: String, size: Int) -> Entry? {
+        let file = url(itemID: itemID, size: size)
         guard let data = try? Data(contentsOf: file) else { return nil }
-        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: file.path)
-        return data
+        return Entry(data: data, etag: Self.readETag(file))
     }
 
-    /// Writes a thumbnail and evicts the least recently used ones above the limit.
-    public func store(_ data: Data, itemID: String, etag: String, size: Int) {
+    /// Marks a cached thumbnail as recently used (LRU).
+    public func touch(itemID: String, size: Int) {
+        try? FileManager.default.setAttributes([.modificationDate: now()], ofItemAtPath: url(itemID: itemID, size: size).path)
+    }
+
+    /// Writes (or replaces) a thumbnail with its ETag and evicts the least recently used
+    /// ones above the limit.
+    public func store(_ data: Data, etag: String?, itemID: String, size: Int) {
         let fm = FileManager.default
+        let file = url(itemID: itemID, size: size)
+        let previous = Int64((try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
         do {
             try fm.createDirectory(at: directory, withIntermediateDirectories: true)
-            try data.write(to: url(itemID: itemID, etag: etag, size: size), options: .atomic)
+            try data.write(to: file, options: .atomic)
+            if let etag { Self.writeETag(etag, to: file) }
         } catch {
             Log.fileProvider.error("thumbnail cache write failed: \(String(describing: error), privacy: .public)")
             return
         }
         let needsEviction = state.withLock { known -> Bool in
             // First store: measure the directory (it already holds the new file).
-            let total = known.map { $0 + Int64(data.count) } ?? measure()
+            let total = known.map { $0 - previous + Int64(data.count) } ?? measure()
             known = total
             return total > maxBytes
         }
         if needsEviction { evict() }
+    }
+
+    /// Deletes a cached thumbnail (the server has none any more).
+    public func remove(itemID: String, size: Int) {
+        let file = url(itemID: itemID, size: size)
+        let previous = Int64((try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+        guard (try? FileManager.default.removeItem(at: file)) != nil else { return }
+        state.withLock { known in known = known.map { $0 - previous } }
     }
 
     /// Deletes the least recently used files until the cache fits into 90 % of the limit.
@@ -129,42 +165,91 @@ public final class ThumbnailCache: Sendable {
         let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.fileSizeKey])) ?? []
         return files.reduce(0) { $0 + Int64((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
     }
+
+    private static func readETag(_ file: URL) -> String? {
+        file.withUnsafeFileSystemRepresentation { path -> String? in
+            guard let path else { return nil }
+            let length = getxattr(path, etagAttribute, nil, 0, 0, 0)
+            guard length > 0 else { return nil }
+            var buffer = [UInt8](repeating: 0, count: length)
+            guard getxattr(path, etagAttribute, &buffer, length, 0, 0) == length else { return nil }
+            return String(decoding: buffer, as: UTF8.self)
+        }
+    }
+
+    private static func writeETag(_ etag: String, to file: URL) {
+        file.withUnsafeFileSystemRepresentation { path in
+            guard let path else { return }
+            let bytes = Array(etag.utf8)
+            _ = setxattr(path, etagAttribute, bytes, bytes.count, 0, 0)
+        }
+    }
+
+    // MARK: Negative cache
+
+    /// Whether the server recently said there is no thumbnail.
+    public func isKnownMissing(itemID: String, size: Int) -> Bool {
+        let key = "\(itemID)-\(size)", current = now()
+        return missing.withLock { entries in
+            guard let expiry = entries[key] else { return false }
+            if expiry > current { return true }
+            entries[key] = nil
+            return false
+        }
+    }
+
+    public func markMissing(itemID: String, size: Int) {
+        let expiry = now().addingTimeInterval(Self.missingTTL)
+        missing.withLock { entries in
+            if entries.count > 10_000 { entries = entries.filter { $0.value > expiry.addingTimeInterval(-Self.missingTTL) } }
+            entries["\(itemID)-\(size)"] = expiry
+        }
+    }
 }
 
-/// Loads server thumbnails (`GET /items/:id/thumbnail`) through a ``ThumbnailCache``.
+/// Loads server thumbnails (`GET /items/:id/thumbnail`) through a ``ThumbnailCache``, by
+/// item id alone (no item lookup).
 public struct ThumbnailFetcher: Sendable {
-    /// File types the server renders thumbnails for (SYNC_API.md §9.1).
-    public static let thumbnailExtensions: Set<String> = [
-        "jpg", "jpeg", "png", "gif", "webp", "avif", "heic", "heif", "tif", "tiff", "bmp", "svg",
-        "pdf",
-        "mp4", "m4v", "mov", "webm", "mkv",
-    ]
-
     public let cache: ThumbnailCache
 
     public init(cache: ThumbnailCache) {
         self.cache = cache
     }
 
-    /// Whether asking the server can yield a thumbnail: files of a type from §9.1, or any
-    /// file the server already reports a thumbnail for.
-    public static func mayHaveThumbnail(_ item: SyncItem) -> Bool {
-        guard item.type == .file, !item.isFolder else { return false }
-        if item.preview?.thumbnail == true { return true }
-        let ext = (item.name as NSString).pathExtension.lowercased()
-        return thumbnailExtensions.contains(ext)
+    /// The webp thumbnail of an item in the server size nearest to `requestedSize`.
+    ///
+    /// - A cached thumbnail is revalidated with `If-None-Match` (its ETag): `304` serves the
+    ///   file, `200` replaces it.
+    /// - `404`/`415` (no thumbnail, or not rendered yet) and `400` (a folder) ⇒ `nil`, the
+    ///   cached file is dropped and the answer is remembered for ``ThumbnailCache/missingTTL``.
+    /// - Network errors serve a cached thumbnail when there is one.
+    public func thumbnail(itemID: String, requestedSize: CGSize, client: SyncAPIClient) async throws -> Data? {
+        let size = ThumbnailSize.bucket(for: requestedSize)
+        if cache.isKnownMissing(itemID: itemID, size: size) { return nil }
+        let cached = cache.entry(itemID: itemID, size: size)
+        do {
+            guard let thumbnail = try await client.thumbnail(itemID: itemID, size: size,
+                                                             ifNoneMatch: cached?.data != nil ? cached?.etag : nil) else {
+                noThumbnail(itemID: itemID, size: size)
+                return nil
+            }
+            cache.store(thumbnail.data, etag: thumbnail.etag, itemID: itemID, size: size)
+            return thumbnail.data
+        } catch SyncAPIError.notModified {
+            cache.touch(itemID: itemID, size: size)
+            return cached?.data
+        } catch SyncAPIError.invalidRequest, SyncAPIError.notFound, SyncAPIError.http(status: 400, _, _) {
+            noThumbnail(itemID: itemID, size: size)
+            return nil
+        } catch let error as SyncAPIError where error.isTransient && !error.isAuthenticationFailure {
+            if let cached { return cached.data }
+            throw error
+        }
     }
 
-    /// The webp thumbnail of `item` in the server size nearest to `requestedSize`; `nil` for
-    /// folders, roots, types without thumbnails and when the server has none (404/415).
-    public func thumbnail(for item: SyncItem, requestedSize: CGSize, client: SyncAPIClient) async throws -> Data? {
-        guard Self.mayHaveThumbnail(item) else { return nil }
-        let size = ThumbnailSize.bucket(for: requestedSize)
-        let etag = item.contentEtag ?? item.sha256 ?? item.etag
-        if let cached = cache.data(itemID: item.id, etag: etag, size: size) { return cached }
-        guard let thumbnail = try await client.thumbnail(itemID: item.id, size: size) else { return nil }
-        cache.store(thumbnail.data, itemID: item.id, etag: etag, size: size)
-        return thumbnail.data
+    private func noThumbnail(itemID: String, size: Int) {
+        cache.remove(itemID: itemID, size: size)
+        cache.markMissing(itemID: itemID, size: size)
     }
 }
 
@@ -182,9 +267,11 @@ extension SyncletReplicatedExtension: NSFileProviderThumbnailing {
         return ThumbnailFetcher(cache: .shared(directory: directory))
     }
 
-    /// Server thumbnails for Finder (spec §2.7). Folders, the root container and space
-    /// folders get none (`nil`, no error); so do files without a server thumbnail. A missing
-    /// sign-in fails the whole request; other failures are reported per item.
+    /// Server thumbnails for Finder (spec §2.7), one `GET /thumbnail` per item (revalidated
+    /// with `If-None-Match`, no item lookup). The root container and space folders get none
+    /// without a request; folders (`400`) and files without a server thumbnail (`404`/`415`)
+    /// get `nil` without an error. A missing sign-in fails the whole request; other failures
+    /// are reported per item.
     open func fetchThumbnails(for itemIdentifiers: [NSFileProviderItemIdentifier], requestedSize size: CGSize,
                               perThumbnailCompletionHandler: @escaping (NSFileProviderItemIdentifier, Data?, Error?) -> Void,
                               completionHandler: @escaping (Error?) -> Void) -> Progress {
@@ -231,10 +318,7 @@ extension SyncletReplicatedExtension: NSFileProviderThumbnailing {
         let layout = context.layout
         guard !layout.isTopLevel(identifier), let id = layout.serverID(for: identifier) else { return (nil, nil) }
         do {
-            let item = try await context.client.item(id: id)
-            return (try await fetcher.thumbnail(for: item, requestedSize: size, client: context.client), nil)
-        } catch SyncAPIError.notFound {
-            return (nil, nil)
+            return (try await fetcher.thumbnail(itemID: id, requestedSize: size, client: context.client), nil)
         } catch {
             return (nil, ErrorMapping.fileProviderError(error))
         }

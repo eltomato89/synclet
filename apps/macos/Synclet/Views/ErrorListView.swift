@@ -26,7 +26,7 @@ struct ErrorListView: View {
 
     /// "Film.mov – Zu groß für den Server – nicht hochgeladen. (jens@host)".
     static func title(_ entry: ErrorLogEntry, accountTitle: String?) -> String {
-        let text = "\(entry.fileName) – \(entry.message)"
+        let text = "\(entry.fileName) – \(entry.localizedMessage)"
         guard let accountTitle else { return text }
         return "\(text) (\(accountTitle))"
     }

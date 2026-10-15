@@ -176,8 +176,107 @@ final class MenuStatusTests: XCTestCase {
     }
 
     func testErrorListTitles() {
-        let entry = ErrorLogEntry(date: now, accountKey: key, fileName: "Film.mov", message: "Zu groß.", code: "too_large")
+        let entry = ErrorLogEntry(date: now, accountKey: key, fileName: "Film.mov", message: "Zu groß.", code: "future_code")
         XCTAssertEqual(ErrorListView.title(entry, accountTitle: nil), "Film.mov – Zu groß.")
         XCTAssertEqual(ErrorListView.title(entry, accountTitle: "jens@host"), "Film.mov – Zu groß. (jens@host)")
     }
+
+    func testMessagesAreLocalizedByTheReaderFromTheCode() {
+        // Written by an extension running in another language: the app rebuilds the text.
+        let entry = ErrorLogEntry(date: now, accountKey: key, fileName: "a.txt", message: "Changed elsewhere – …",
+                                  code: "conflict_copy", itemIdentifier: "f_c", detail: "a (Konflikt Mac 2026-10-16 10-00).txt")
+        let expected = SyncProblem(code: .conflictCopy, fileName: "a.txt", itemIdentifier: "f_c",
+                                   detail: "a (Konflikt Mac 2026-10-16 10-00).txt").message()
+        XCTAssertEqual(entry.localizedMessage, expected)
+        XCTAssertTrue(entry.localizedMessage.contains("a (Konflikt Mac 2026-10-16 10-00).txt"))
+        XCTAssertEqual(ErrorLogEntry(date: now, accountKey: key, fileName: "x", message: "stored", code: "other").localizedMessage, "stored")
+    }
+
+    func testRecentWindowBoundary() {
+        XCTAssertTrue(AccountMenuState.hasRecentProblem([problem(minutesAgo: 59.99)], accountKey: key, now: now))
+        XCTAssertFalse(AccountMenuState.hasRecentProblem([problem(minutesAgo: 60)], accountKey: key, now: now))
+    }
+
+    // MARK: Expiry (I1)
+
+    func testNextExpiryIgnoresInfoAndExpiredEntries() {
+        let entries = [problem(minutesAgo: 70), problem(minutesAgo: 30), problem(minutesAgo: 10),
+                       problem(minutesAgo: 50, code: "conflict_copy")]
+        XCTAssertEqual(ProblemsModel.nextExpiry(entries, after: now), now.addingTimeInterval(30 * 60))
+        XCTAssertNil(ProblemsModel.nextExpiry([problem(minutesAgo: 61), problem(minutesAgo: 1, code: "conflict_copy")], after: now))
+    }
+
+    func testProblemExpiryUpdatesTheObservedTimeOnItsOwn() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "synclet-expiry-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        ErrorLog(container: directory).append(problem(minutesAgo: 59), post: false)
+
+        let clock = FakeTimer(start: now)
+        let model = ProblemsModel(container: directory, clock: { clock.current }, sleeper: { try await clock.sleep($0) })
+        XCTAssertEqual(model.now, now)
+        XCTAssertTrue(AccountMenuState.showsBadge(statuses: [.ok], problems: model.entries, now: model.now))
+
+        // One timer, armed for the expiry (60 s from now) plus the slack.
+        try await waitUntil { clock.requested.count == 1 }
+        XCTAssertEqual(clock.requested, [.milliseconds(60_500)])
+
+        let changed = ChangeFlag()
+        withObservationTracking { _ = model.now } onChange: { changed.set() }
+        clock.fire()   // advances the clock by the requested time and wakes the sleeper
+        try await waitUntil { model.now == self.now.addingTimeInterval(60.5) }
+        XCTAssertTrue(changed.value, "views reading `now` are invalidated")
+        XCTAssertFalse(AccountMenuState.showsBadge(statuses: [.ok], problems: model.entries, now: model.now))
+        // Nothing recent left ⇒ no new timer.
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(clock.requested.count, 1)
+    }
+
+    func testReloadRearmsTheTimerForANewerProblem() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "synclet-expiry-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let clock = FakeTimer(start: now)
+        let model = ProblemsModel(container: directory, clock: { clock.current }, sleeper: { try await clock.sleep($0) })
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertTrue(clock.requested.isEmpty, "no problem, no timer")
+        ErrorLog(container: directory).append(problem(minutesAgo: 0), post: false)
+        model.reload()
+        try await waitUntil { clock.requested.count == 1 }
+        XCTAssertEqual(clock.requested, [.milliseconds(3_600_500)])
+    }
+
+    private func waitUntil(_ condition: @escaping () -> Bool) async throws {
+        for _ in 0..<200 where !condition() { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(condition(), "condition not reached")
+    }
+}
+
+/// Clock plus sleeper for ``ProblemsModel``: records requested sleeps and wakes them on `fire()`.
+@MainActor
+final class FakeTimer {
+    private(set) var current: Date
+    private(set) var requested: [Duration] = []
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    init(start: Date) { current = start }
+
+    func sleep(_ duration: Duration) async throws {
+        requested.append(duration)
+        await withCheckedContinuation { waiting.append($0) }
+    }
+
+    func fire() {
+        if let last = requested.last {
+            current += Double(last.components.seconds) + Double(last.components.attoseconds) / 1e18
+        }
+        let pending = waiting
+        waiting = []
+        pending.forEach { $0.resume() }
+    }
+}
+
+final class ChangeFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var flag = false
+    func set() { lock.withLock { flag = true } }
+    var value: Bool { lock.withLock { flag } }
 }

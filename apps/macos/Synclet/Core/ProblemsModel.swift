@@ -11,6 +11,11 @@ import os
 final class ProblemsModel {
     /// Newest first.
     private(set) var entries: [ErrorLogEntry] = []
+    /// The time the menu evaluates "recent" against. Updated on every `reload()` and by a
+    /// one-shot timer when the next problem leaves ``AccountMenuState/recentProblemWindow``,
+    /// so the badge and "Fehler" expire without any other change. Views read it (to be
+    /// re-rendered) instead of calling `Date()` alone.
+    private(set) var now: Date
 
     @ObservationIgnored let log: ErrorLog
     /// Finder URL of an item of a domain (production: `NSFileProviderManager.getUserVisibleURL`).
@@ -21,14 +26,47 @@ final class ProblemsModel {
     @ObservationIgnored var fileExists: (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path) }
     /// Selects a file in a Finder window.
     @ObservationIgnored var reveal: (URL) -> Void = { NSWorkspace.shared.activateFileViewerSelecting([$0]) }
+    @ObservationIgnored private let clock: () -> Date
+    @ObservationIgnored private let sleeper: (Duration) async throws -> Void
+    @ObservationIgnored private var expiryTask: Task<Void, Never>?
+    /// Woken a little after the exact expiry, so the derivation surely sees it as expired.
+    static let expirySlack: TimeInterval = 0.5
 
-    init(container: URL) {
+    init(container: URL, clock: @escaping () -> Date = { Date() },
+         sleeper: @escaping (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
         log = ErrorLog(container: container)
+        self.clock = clock
+        self.sleeper = sleeper
+        now = clock()
         reload()
     }
 
     func reload() {
         entries = log.entries().reversed()
+        tick()
+    }
+
+    /// Updates ``now`` and arms the timer for the next expiry.
+    private func tick() {
+        now = clock()
+        expiryTask?.cancel()
+        expiryTask = nil
+        guard let expiry = Self.nextExpiry(entries, after: now) else { return }
+        let delay = expiry.timeIntervalSince(now) + Self.expirySlack
+        let sleeper = self.sleeper
+        expiryTask = Task { [weak self] in
+            do { try await sleeper(.milliseconds(Int64((delay * 1000).rounded(.up)))) } catch { return }
+            guard !Task.isCancelled else { return }
+            self?.tick()
+        }
+    }
+
+    /// When the next non-info problem stops being "recent" (`nil`: none is recent).
+    static func nextExpiry(_ entries: [ErrorLogEntry], after now: Date) -> Date? {
+        entries.filter { !$0.isInfo }
+            .map { $0.date.addingTimeInterval(AccountMenuState.recentProblemWindow) }
+            .filter { $0 > now }
+            .min()
     }
 
     func clear() {
