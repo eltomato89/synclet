@@ -1,6 +1,6 @@
 import type { SyncAccount } from '@synclet/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronsUpDown, Clock, Folder, LogOut, Share2, Trash2, type LucideIcon } from 'lucide-react';
+import { ChevronsUpDown, Clock, Folder, LogOut, Share2, ShieldCheck, Trash2, type LucideIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { NavLink, useNavigate } from 'react-router';
 import { Wordmark } from '@/components/brand/Logo';
@@ -25,10 +25,14 @@ const NAV: NavEntry[] = [
   { to: '/trash', label: 'shell.trash', icon: Trash2 },
 ];
 
+const ADMIN_NAV: NavEntry = { to: '/admin', label: 'shell.administration', icon: ShieldCheck };
+
 const itemBase = 'flex h-8 items-center gap-2.5 rounded-md px-2.5 text-sm font-medium outline-none focus-visible:ring-3 focus-visible:ring-ring/50';
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { t } = useTranslation();
+  const { user } = useAuth();
+  const entries = user?.role === 'admin' ? [...NAV, ADMIN_NAV] : NAV;
   return (
     <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
       <div className="flex h-13 shrink-0 items-center px-4 md:mt-2">
@@ -36,8 +40,8 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </div>
       <nav aria-label={t('shell.navigation')} className="px-2 pt-2">
         <ul className="flex flex-col gap-0.5">
-          {NAV.map(({ to, label, icon: Icon }) => (
-            <li key={label}>
+          {entries.map(({ to, label, icon: Icon }) => (
+            <li key={label} className={cn(to === ADMIN_NAV.to && 'mt-3 border-t border-sidebar-border pt-3')}>
               <NavLink
                 to={to}
                 onClick={onNavigate}

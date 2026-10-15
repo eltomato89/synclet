@@ -58,7 +58,8 @@
     "notFoundTitle": "Page not found",
     "notFoundBody": "There's nothing at this address. The link may be cut off or the folder may have moved.",
     "notFoundBack": "Go to my files",
-    "skipToContent": "Skip to content"
+    "skipToContent": "Skip to content",
+    "administration": "Administration"
   },
   "files": {
     "newMenu": "New",
@@ -512,5 +513,363 @@
     "emptyBody": "Files you upload or change show up here – across all folders, newest first.",
     "emptyAction": "Go to my files",
     "limitNote": "The {{count}} most recently modified files"
+  },
+  "admin": {
+    "title": "Administration",
+    "nav": {
+      "users": "Users",
+      "status": "Status",
+      "shares": "Share links",
+      "sso": "Sign-in"
+    },
+    "tags": {
+      "remove": "Remove {{value}}"
+    },
+    "errors": {
+      "lastAdmin": "This is the last administrator who can sign in with a password. Give another enabled administrator a password first.",
+      "selfDisable": "You can't disable your own account.",
+      "selfDelete": "You can't delete your own account.",
+      "emailTaken": "Another user already has this email address.",
+      "userTaken": "That username or email address is already in use.",
+      "folderTaken": "This folder already belongs to a user.",
+      "folderMissing": "This folder doesn't exist in the data directory anymore. Reload the list and pick another one.",
+      "usernameInvalid": "This name can't be used as a folder name. It can't start with a dot or contain characters like / \\ : * ? @.",
+      "dataNotWritable": "The server can't write to the data directory. Check the permissions of the /data volume.",
+      "invalid": "The server didn't accept these values. Check the fields and try again."
+    },
+    "users": {
+      "title": "Users",
+      "create": "New user",
+      "loadError": "Users couldn't be loaded",
+      "columns": {
+        "name": "Name",
+        "email": "Email",
+        "roleStatus": "Role",
+        "storage": "Storage",
+        "devices": "Devices",
+        "lastLogin": "Last sign-in",
+        "identities": "Sign-in methods"
+      },
+      "role": {
+        "user": "User",
+        "admin": "Administrator"
+      },
+      "identity": {
+        "local": "Password",
+        "oidc": "OIDC",
+        "forward": "Auth proxy"
+      },
+      "you": "(you)",
+      "disabled": "Disabled",
+      "never": "Never",
+      "actionsFor": "Actions for {{name}}",
+      "edit": "Edit",
+      "access": "Sessions and devices",
+      "count_one": "{{count}} user, {{active}} active",
+      "count_other": "{{count}} users, {{active}} active",
+      "toast": {
+        "created": "{{name}} can sign in now",
+        "updated": "Changes to {{name}} saved"
+      },
+      "disable": {
+        "action": "Disable",
+        "title": "Disable {{name}}?",
+        "body": "{{name}} is signed out everywhere and can't sign in or sync until you enable the account again. Files and share links stay as they are.",
+        "submit": "Disable account",
+        "submitting": "Disabling …",
+        "done": "{{name}} is disabled"
+      },
+      "enable": {
+        "action": "Enable",
+        "title": "Enable {{name}}?",
+        "body": "{{name}} can sign in again. Devices and share links that were revoked stay revoked.",
+        "submit": "Enable account",
+        "submitting": "Enabling …",
+        "done": "{{name}} is enabled"
+      },
+      "delete": {
+        "action": "Delete",
+        "title": "Delete {{name}}?",
+        "body": "The account is disabled and all sessions, sync devices and share links of {{name}} are revoked. The folder /data/{{username}} and its files stay on the server untouched; remove them yourself if you no longer need them.",
+        "submit": "Delete account",
+        "submitting": "Deleting …",
+        "done": "{{name}} is deleted. The folder stays on the server."
+      },
+      "form": {
+        "createTitle": "New user",
+        "createDescription": "The username becomes the folder name in the data directory and can't be changed later.",
+        "editTitle": "Edit {{name}}",
+        "editDescription": "Username and folder: {{username}}",
+        "adopt": "Use an existing folder",
+        "adoptHint": "For files that are already in the data directory, e.g. after a migration. The user gets the folder's name as username.",
+        "noFolders": "There are no folders without a user in the data directory.",
+        "folder": "Folder",
+        "displayName": "Display name",
+        "username": "Username",
+        "usernameHint": "Also the folder name: /data/<username>",
+        "email": "Email (optional)",
+        "emailHint": "Can be used to sign in instead of the username.",
+        "password": "Password",
+        "passwordHint": "At least {{count}} characters. Share it with the user in a safe way.",
+        "newPassword": "New password",
+        "newPasswordHint": "Leave empty to keep the current one. A new password signs the user out everywhere.",
+        "role": "Role",
+        "roleHint": {
+          "user": "Can use their own files and share links.",
+          "admin": "Can also manage users, sign-in settings and all share links."
+        },
+        "roleSelf": "You can't remove your own administrator role.",
+        "create": "Create user",
+        "creating": "Creating …",
+        "saving": "Saving …",
+        "errors": {
+          "displayNameRequired": "Enter a display name.",
+          "displayNameTooLong": "The display name can be at most 100 characters.",
+          "usernameRequired": "Enter a username.",
+          "folderRequired": "Pick a folder.",
+          "usernameInvalid": "This name can't be used as a folder name. It can't start with a dot or contain characters like / \\ : * ? @.",
+          "emailInvalid": "Enter a valid email address or leave the field empty.",
+          "passwordRequired": "Enter a password.",
+          "passwordTooShort": "The password needs at least {{count}} characters.",
+          "passwordTooLong": "The password can be at most 200 characters."
+        }
+      }
+    },
+    "detail": {
+      "back": "Back to users",
+      "notFound": "User not found",
+      "notFoundBody": "This user doesn't exist anymore.",
+      "created": "Created",
+      "sessions": "Browser sessions",
+      "sessionsHint": "Sign-ins in the web app. Revoking one signs that browser out within a few minutes at most.",
+      "sessionsSelf": "Your own sign-ins. Revoking the session you're using signs you out here too.",
+      "revokeAll": "Sign out everywhere",
+      "noSessions": "No active sessions.",
+      "client": "Browser",
+      "signedIn": "Signed in",
+      "expires": "Expires",
+      "revoke": "Revoke",
+      "revokeSessionFor": "Revoke session {{client}}",
+      "revoking": "Revoking …",
+      "devices": "Sync devices",
+      "devicesHint": "Apps that sync files with this account. A revoked device stops syncing and has to be connected again.",
+      "noDevices": "No connected devices.",
+      "device": "Device",
+      "app": "App version",
+      "lastSeen": "Last seen",
+      "revokeDeviceFor": "Revoke device {{name}}",
+      "uaOn": "{{browser}} on {{os}}",
+      "uaUnknown": "Unknown browser",
+      "confirm": {
+        "session": {
+          "title": "Revoke this session?",
+          "body": "{{client}} is signed out of {{name}}'s account.",
+          "submit": "Revoke session",
+          "done": "Session revoked"
+        },
+        "allSessions": {
+          "title": "Sign out everywhere?",
+          "body": "Every browser session of {{name}} ends. Sync devices keep working.",
+          "submit": "Sign out everywhere",
+          "done": "All sessions revoked"
+        },
+        "device": {
+          "title": "Revoke {{device}}?",
+          "body": "{{device}} stops syncing with {{name}}'s account. Files already on the device stay there.",
+          "submit": "Revoke device",
+          "done": "Device revoked"
+        }
+      }
+    },
+    "status": {
+      "title": "Server status",
+      "updated": "Updated {{time}}",
+      "refresh": "Refresh now",
+      "refreshHint": "Refreshes every {{seconds}} seconds",
+      "loadError": "The status couldn't be loaded",
+      "stale": "The latest refresh failed. The values below may be out of date.",
+      "watcher": "File watcher",
+      "watch": {
+        "active": "Watching",
+        "scan-only": "Scans only",
+        "off": "Off"
+      },
+      "watchHint": {
+        "active": "Changes in /data show up right away",
+        "scan-only": "Changes in /data show up with the next scan",
+        "off": "Changes made directly in /data aren't picked up"
+      },
+      "lastScan": "Last full scan",
+      "noScan": "Not yet",
+      "users": "Active users",
+      "usersDisabled_one": "{{count}} disabled",
+      "usersDisabled_other": "{{count}} disabled",
+      "office": "Office editor",
+      "officeState": {
+        "off": "Not set up",
+        "unknown": "Not checked yet",
+        "ok": "Reachable",
+        "down": "Not reachable"
+      },
+      "versions": "File versions",
+      "versionsHint": "Turned on with SYNCLET_VERSIONS=on",
+      "on": "On",
+      "off": "Off",
+      "server": "Synclet",
+      "uptime": "Running for {{time}}",
+      "uptimeDays": "{{d}} d {{h}} h",
+      "uptimeHours": "{{h}} h {{m}} min",
+      "uptimeMinutes": "{{m}} min",
+      "storage": "Storage",
+      "storageHint": "Free space on the volumes for user files and for Synclet's own data.",
+      "dataHint": "User files",
+      "metaHint": "Previews, trash, versions, uploads",
+      "diskLabel": "Disk usage of {{path}}",
+      "diskOf": "{{used}} of {{total}}",
+      "diskFree": "{{used}} of {{total}} used, {{free}} free",
+      "diskUnknown": "Disk size not available",
+      "metaBreakdown": "Synclet data on /meta",
+      "meta": {
+        "derived": "Previews and search index",
+        "versions": "File versions",
+        "trash": "Trash",
+        "uploads": "Unfinished uploads"
+      },
+      "jobs": "Background jobs",
+      "jobsHint": "Thumbnails and text extraction for search. Failed jobs aren't retried automatically.",
+      "queue": "Queue",
+      "jobKind": {
+        "thumb": "Thumbnails",
+        "text": "Text for search"
+      },
+      "jobState": {
+        "pending": "Waiting",
+        "running": "Running",
+        "done": "Done",
+        "failed": "Failed",
+        "unsupported": "Unsupported"
+      }
+    },
+    "shares": {
+      "title": "All share links",
+      "loadError": "Share links couldn't be loaded",
+      "owner": "Owner",
+      "allUsers": "All users",
+      "none": {
+        "active": "No active links",
+        "expired": "No expired links",
+        "all": "No links"
+      },
+      "noneBody": "Links appear here as soon as someone shares a file or folder.",
+      "noneForUser": "This user has no links with this status.",
+      "revoked": "Revoked",
+      "revokedOn": "Revoked on {{date}}",
+      "revokeFor": "Revoke link to {{name}} by {{owner}}",
+      "revokeBody": "The link to “{{name}}” shared by {{owner}} stops working right away. This can't be undone."
+    },
+    "sso": {
+      "title": "Sign-in",
+      "loadError": "Sign-in settings couldn't be loaded",
+      "saved": "Sign-in settings saved",
+      "save": "Save changes",
+      "saving": "Saving …",
+      "discard": "Discard",
+      "unsaved": "Unsaved changes",
+      "upToDate": "All changes saved",
+      "emergency": {
+        "title": "Emergency mode is on",
+        "body": "SYNCLET_SSO_EMERGENCY=1 is set: single sign-on is switched off and everyone can sign in with a password. Fix the settings below, then remove the variable and restart the server."
+      },
+      "password": {
+        "title": "Password sign-in",
+        "hint": "Administrators can always sign in with their password, also when this is off (at /login?local=1).",
+        "forUsers": "Allow password sign-in for users",
+        "forUsersHint": "Turn off to have users sign in only through single sign-on."
+      },
+      "oidc": {
+        "title": "OpenID Connect",
+        "hint": "Single sign-on with an identity provider such as Authentik, Keycloak, Authelia or Microsoft Entra ID.",
+        "enabled": "Sign in with OpenID Connect",
+        "enabledHint": "Shows a sign-in button on the login page. Accounts are created on first sign-in.",
+        "noPublicUrl": "Needs SYNCLET_PUBLIC_URL on the server for the redirect URI.",
+        "redirectUri": "Redirect URI",
+        "redirectHint": "Register this address as the redirect (callback) URI of the Synclet client at your identity provider.",
+        "redirectMissing": "No redirect URI: set SYNCLET_PUBLIC_URL to the address Synclet is reached at (e.g. https://files.example.com) and restart the server. OpenID Connect can't be turned on until then.",
+        "redirectCopied": "Redirect URI copied",
+        "redirectCopyManual": "The address couldn't be copied automatically. It's selected: press Ctrl+C (⌘C on a Mac).",
+        "copyRedirect": "Copy redirect URI",
+        "issuer": "Issuer URL",
+        "issuerHint": "The provider's base address; Synclet reads /.well-known/openid-configuration from it.",
+        "test": "Test connection",
+        "testing": "Testing …",
+        "testOk": "Connected. Found provider {{issuer}}",
+        "testFailed": "Couldn't reach the provider: {{error}}",
+        "clientId": "Client ID",
+        "clientSecret": "Client secret",
+        "secretSet": "Set",
+        "secretReplace": "Replace",
+        "secretRemove": "Remove",
+        "secretUndo": "Keep secret",
+        "secretWillRemove": "Will be removed on save",
+        "secretKeepHint": "Stored encrypted and never shown again.",
+        "secretReplaceHint": "The new secret replaces the stored one when you save.",
+        "secretRemoveHint": "Only for public clients that don't use a secret.",
+        "secretHint": "Leave empty for public clients. Stored encrypted and never shown again.",
+        "secretPlaceholder": "Client secret",
+        "secretNewPlaceholder": "New client secret",
+        "scopes": "Scopes",
+        "scopesHint": "Separated by spaces; must include openid.",
+        "buttonLabel": "Button label",
+        "buttonLabelHint": "Text of the sign-in button on the login page.",
+        "usernameClaim": "Username claim",
+        "usernameClaimHint": "Becomes the username and folder name of new accounts.",
+        "groupsClaim": "Groups claim",
+        "groupsClaimHint": "Claim that lists the user's groups.",
+        "linkByEmail": "Link existing accounts by email",
+        "linkByEmailHint": "A first sign-in with a verified email address that matches a local account signs in to that account.",
+        "linkByEmailWarning": "Only turn this on if you trust the identity provider to verify email addresses. Anyone who can get a matching, verified address there takes over the Synclet account with that address, including administrator accounts."
+      },
+      "forward": {
+        "title": "Auth proxy (forward-auth)",
+        "hint": "A reverse proxy in front of Synclet signs users in (e.g. Authelia, Authentik outpost, oauth2-proxy) and passes the user in request headers.",
+        "warningTitle": "Only behind a proxy that strips these headers",
+        "warning": "Synclet trusts the headers below from the trusted proxy addresses. Your proxy must remove these headers from every incoming client request and set them itself. Otherwise anyone can sign in as any user, including administrators, by sending the header.",
+        "enabled": "Sign in through the auth proxy",
+        "enabledHint": "Users who arrive with the user header from a trusted proxy are signed in automatically.",
+        "trustedProxies": "Trusted proxy addresses",
+        "trustedProxiesHint": "IP addresses or CIDR ranges of your proxy, e.g. 172.18.0.0/16. Headers from any other address are ignored.",
+        "userHeader": "User header",
+        "emailHeader": "Email header",
+        "nameHeader": "Name header",
+        "groupsHeader": "Groups header"
+      },
+      "groups": {
+        "allowed": "Allowed groups",
+        "allowedHint": "Only members of these groups can sign in. Empty: everyone.",
+        "admin": "Administrator groups",
+        "adminHint": "Members become administrators; others become users at their next sign-in.",
+        "placeholder": "Type a group, press Enter"
+      },
+      "lockout": {
+        "title": "Locked out?",
+        "emergency": "If a broken setting keeps everyone from signing in, start the server with this environment variable. It switches single sign-on off and allows password sign-in for everyone:",
+        "reset": "If no administrator knows a password, set a new one on the server. Without a password on standard input a random one is printed:",
+        "local": "Administrators with a password can always use the password form at /login?local=1."
+      },
+      "errors": {
+        "issuerUrl": "Enter a full URL starting with https://.",
+        "issuerRequired": "OpenID Connect needs an issuer URL.",
+        "clientIdRequired": "OpenID Connect needs a client ID.",
+        "secretRequired": "Enter the new secret or cancel replacing it.",
+        "publicUrlMissing": "OpenID Connect needs SYNCLET_PUBLIC_URL on the server. Set it and restart, or turn OpenID Connect off.",
+        "scopesOpenid": "The scopes must include openid.",
+        "required": "This field can't be empty.",
+        "tooLong": "At most 60 characters.",
+        "claim": "Enter a claim name without spaces.",
+        "header": "Use only letters, digits and hyphens.",
+        "cidr": "“{{value}}” isn't an IP address or CIDR range.",
+        "proxyRequired": "Add at least one trusted proxy address before turning on the auth proxy."
+      }
+    }
   }
 }

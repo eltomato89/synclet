@@ -1,7 +1,9 @@
+import type { ComponentType } from 'react';
 import { createBrowserRouter, Navigate, Outlet, type RouteObject, useLocation } from 'react-router';
 import { AppShell } from '@/components/app-shell/AppShell';
 import { ConnectionError } from '@/components/ConnectionError';
 import { FullPageSpinner } from '@/components/FullPageSpinner';
+import { AdminLayout, RequireAdmin } from '@/features/admin/AdminLayout';
 import { PublicSharePage } from '@/features/public/PublicSharePage';
 import { RecentPage } from '@/features/recent/RecentPage';
 import { SharedPage } from '@/features/shares/SharedPage';
@@ -33,10 +35,26 @@ function AuthRoot() {
   return <AuthProvider><Outlet /></AuthProvider>;
 }
 
+/** Route `lazy` loader for a named page export (keeps the admin area out of the main bundle). */
+function lazyPage<M>(load: () => Promise<M>, name: keyof M) {
+  return async () => ({ Component: (await load())[name] as ComponentType });
+}
+
+const adminChildren: RouteObject[] = [
+  { index: true, element: <Navigate to="/admin/users" replace /> },
+  { path: 'users', lazy: lazyPage(() => import('@/features/admin/UsersPage'), 'UsersPage') },
+  { path: 'users/:id', lazy: lazyPage(() => import('@/features/admin/UserDetailPage'), 'UserDetailPage') },
+  { path: 'status', lazy: lazyPage(() => import('@/features/admin/StatusPage'), 'StatusPage') },
+  { path: 'shares', lazy: lazyPage(() => import('@/features/admin/SharesPage'), 'SharesPage') },
+  { path: 'sso', lazy: lazyPage(() => import('@/features/admin/SsoPage'), 'SsoPage') },
+];
+
 export const routes: RouteObject[] = [
   { path: '/s/:token', element: <PublicSharePage /> },
   {
     element: <AuthRoot />,
+    // Shown while a lazy route (admin pages) loads on a direct visit.
+    hydrateFallbackElement: <FullPageSpinner />,
     children: [
       { path: '/setup', element: <SetupPage /> },
       { path: '/login', element: <LoginPage /> },
@@ -52,6 +70,16 @@ export const routes: RouteObject[] = [
               { path: '/recent', element: <RecentPage /> },
               { path: '/shared', element: <SharedPage /> },
               { path: '/trash', element: <TrashPage /> },
+            ],
+          },
+          {
+            // Non-admins get the plain 404 page, outside the app shell.
+            element: <RequireAdmin />,
+            children: [
+              {
+                element: <AppShell />,
+                children: [{ path: '/admin', element: <AdminLayout />, children: adminChildren }],
+              },
             ],
           },
         ],
