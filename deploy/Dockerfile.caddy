@@ -1,0 +1,14 @@
+FROM node:24-bookworm-slim AS web
+RUN corepack enable
+WORKDIR /src
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml tsconfig.base.json ./
+# packages/shared has a `prepare` script (tsc) that runs during install, so its sources must be present
+COPY packages/shared packages/shared
+COPY apps/web/package.json apps/web/
+RUN pnpm install --frozen-lockfile --filter @synclet/web...
+COPY apps/web apps/web
+RUN pnpm --filter @synclet/shared build && pnpm --filter @synclet/web build
+
+FROM caddy:2-alpine
+COPY deploy/Caddyfile /etc/caddy/Caddyfile
+COPY --from=web /src/apps/web/dist /srv/web
