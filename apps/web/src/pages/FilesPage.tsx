@@ -24,12 +24,15 @@ import {
 import { useRevealParam } from '@/features/files/reveal';
 import { UploadPanel } from '@/features/files/UploadPanel';
 import { getUploadQueue, type UploadQueue } from '@/features/files/uploads';
+import { quickLookEntries } from '@/features/preview/navigation';
+import { isPreviewable, syncPreviewSource } from '@/features/preview/source';
 import { ApiError, api } from '@/lib/api';
 
 const NewFolderDialog = lazy(() => import('@/features/files/NewFolderDialog').then((m) => ({ default: m.NewFolderDialog })));
 const RenameDialog = lazy(() => import('@/features/files/RenameDialog').then((m) => ({ default: m.RenameDialog })));
 const MoveDialog = lazy(() => import('@/features/files/MoveDialog').then((m) => ({ default: m.MoveDialog })));
 const DeleteDialog = lazy(() => import('@/features/files/DeleteDialog').then((m) => ({ default: m.DeleteDialog })));
+const QuickLook = lazy(() => import('@/features/preview/QuickLook').then((m) => ({ default: m.QuickLook })));
 const ShareDialog = lazy(() => import('@/features/shares/ShareDialog').then((m) => ({ default: m.ShareDialog })));
 
 const FOLDER_ID = /^(root|d_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
@@ -117,6 +120,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<(DialogState & { open: boolean; n: number }) | null>(null);
   const [menuItem, setMenuItem] = useState<SyncItem | null>(null);
+  const [quickLook, setQuickLook] = useState<{ id: string; open: boolean } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const viewRef = useRef<HTMLDivElement>(null);
   const focusAfterRender = useRef<string | null>(null);
@@ -174,12 +178,24 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   const openDialog = (d: DialogState) => setDialog((cur) => ({ ...d, open: true, n: (cur?.n ?? 0) + 1 }));
   const onDialogOpenChange = (o: boolean) => { if (!o) setDialog((cur) => (cur ? { ...cur, open: false } : cur)); };
 
-  const open = (item: SyncItem) => {
-    if (item.type === 'folder') { navigate(folderPath(item.id)); return; }
+  const download = (item: SyncItem) => {
     mutations.download(item).catch((err: unknown) => notify.error(err instanceof ApiError ? t(errorKey(err)) : t('files.toast.downloadFailed')));
   };
+  const open = (item: SyncItem) => {
+    if (item.type === 'folder') navigate(folderPath(item.id));
+    else download(item);
+  };
+  const preview = (item: SyncItem) => {
+    if (item.type !== 'file') return;
+    setSelectedId(item.id);
+    setQuickLook({ id: item.id, open: true });
+  };
+  /** Double-click / tap: folders open, previewable files show QuickLook, anything else downloads. */
+  const activate = (item: SyncItem) => { if (isPreviewable(item)) preview(item); else open(item); };
+  const quickLookFiles = useMemo(() => quickLookEntries(items), [items]);
   const actions: ItemActions = {
     open,
+    preview,
     rename: (item) => { setSelectedId(item.id); if (item.capabilities.rename) openDialog({ kind: 'rename', item }); },
     move: (item) => { setSelectedId(item.id); if (item.capabilities.move) openDialog({ kind: 'move', item }); },
     remove: (item) => { setSelectedId(item.id); if (item.capabilities.delete) openDialog({ kind: 'delete', item }); },
@@ -223,6 +239,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
       case 'Home': go(0); break;
       case 'End': go(items.length - 1); break;
       case 'Enter': if (!sel) return; open(sel); break;
+      case ' ': if (sel?.type !== 'file') return; preview(sel); break;
       case 'F2': if (!sel) return; actions.rename(sel); break;
       case 'Delete': case 'Backspace': if (!sel) return; actions.remove(sel); break;
       case 'Escape': if (!sel) return; setSelectedId(null); break;
@@ -324,7 +341,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   } else {
     const folders = items.filter((i) => i.type === 'folder').length;
     const files = items.length - folders;
-    const viewProps = { items, label: t('files.listLabel', { name: folderName }), selectedId, onSelect: setSelectedId, onOpen: open, actions };
+    const viewProps = { items, label: t('files.listLabel', { name: folderName }), selectedId, onSelect: setSelectedId, onOpen: activate, actions };
     body = (
       <ContextMenu modal={false} onOpenChange={(o) => { if (!o) setMenuItem(null); }}>
         <ContextMenuTrigger asChild onContextMenu={onContextMenu}>
@@ -357,6 +374,19 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
       </div>
       <DropZone enabled={canAdd} folderName={folderName} onFiles={enqueue} />
       <Suspense fallback={null}>
+        {quickLook && (
+          <QuickLook
+            entries={quickLookFiles}
+            activeId={quickLook.id}
+            open={quickLook.open}
+            onActiveChange={(id) => { setQuickLook({ id, open: true }); setSelectedId(id); }}
+            onOpenChange={(o) => { if (!o) setQuickLook((q) => (q ? { ...q, open: false } : q)); }}
+            onClosed={(id) => { setQuickLook(null); focusItem(id); }}
+            resolveSource={syncPreviewSource}
+            onDownload={download}
+            onShare={actions.share}
+          />
+        )}
         {d?.kind === 'newFolder' && (
           <NewFolderDialog
             key={d.n}
@@ -424,7 +454,10 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
             key={d.n}
             open={d.open}
             onOpenChange={onDialogOpenChange}
-            onClosed={restoreFocus}
+            // Opened from QuickLook: focus goes back to QuickLook, so ←/→ and Space keep working.
+            onClosed={quickLook?.open
+              ? () => document.querySelector<HTMLElement>('[data-slot="quicklook"]')?.focus({ preventScroll: true })
+              : restoreFocus}
             item={d.item}
           />
         )}

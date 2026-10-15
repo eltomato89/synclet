@@ -13,11 +13,12 @@ describe('external tools', () => {
   it('kills a tool that exceeds its timeout', async () => {
     const fake = path.join(dir, 'fake-heif-convert');
     const pidFile = path.join(dir, 'pid');
-    // `exec` replaces the shell, so the recorded pid is the sleeping process itself.
+    // `exec` replaces the shell, so the recorded pid is the sleeping process itself. The timeout
+    // leaves the shell enough time to start under load (300 ms was flaky in the full suite).
     await writeFile(fake, `#!/bin/sh\necho $$ > "${pidFile}"\nexec sleep 30\n`);
     await chmod(fake, 0o755);
     const started = Date.now();
-    await expect(heifToJpeg(path.join(dir, 'in.heic'), path.join(dir, 'out'), { bin: { 'heif-convert': fake }, timeoutMs: 300 }))
+    await expect(heifToJpeg(path.join(dir, 'in.heic'), path.join(dir, 'out'), { bin: { 'heif-convert': fake }, timeoutMs: 1500 }))
       .rejects.toBeInstanceOf(ToolTimeoutError);
     expect(Date.now() - started).toBeLessThan(5000);
     const pid = Number((await readFile(pidFile, 'utf8')).trim());

@@ -6,7 +6,7 @@ import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { z } from 'zod';
 import { AuthGuard } from '../auth/auth.guard';
-import { AuthService } from '../auth/auth.service';
+import { AuthService, DOWNLOAD_TOKEN_TTL_S, PREVIEW_TOKEN_TTL_S } from '../auth/auth.service';
 import { AllowDownloadToken, CurrentUser } from '../auth/current-user.decorator';
 import { ServerConfigService } from '../auth/server-config.service';
 import { APP_CONFIG, AppConfig } from '../config';
@@ -14,11 +14,13 @@ import { SyncError } from '../common/sync-error';
 import type { AuthUser } from '../common/types';
 import { ZodPipe } from '../common/zod.pipe';
 import { DerivedStore } from '../derivatives/derived-store';
+import { previewKind } from '../derivatives/preview-kind';
+import { decodeText, readPrefix, TextEncodingName } from '../derivatives/text-extract';
 import { FilesService, itemEtag, OnConflict } from '../files/files.service';
 import { JournalService } from '../journal/journal.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { etagList, first, HeaderMap, rawBody, SANDBOX_CSP, sendFile, unquote } from './http-content';
-import { SerializerService } from './serializer.service';
+import { mimeFor, SerializerService } from './serializer.service';
 import { parseSyncId, ROOT_ID, toSyncId, UUID } from './sync-ids';
 
 const CreateBody = z.object({ parentId: z.string(), type: z.literal('folder'), name: z.string(), onConflict: z.enum(['fail', 'rename']).optional() });
@@ -29,6 +31,10 @@ const modifiedAt = (h: HeaderMap) => {
   const d = raw ? new Date(raw) : null;
   return d && !Number.isNaN(d.getTime()) ? d : null;
 };
+/** preview-text returns at most this many bytes of the file. */
+export const PREVIEW_TEXT_BYTES = 256 * 1024;
+const TEXT_PREVIEW_KINDS = new Set(['text', 'markdown', 'code']);
+
 const clampLimit = (raw: string | undefined) => Math.min(Math.max(Math.floor(Number(raw)) || 500, 1), 1000);
 
 @Controller('sync/v1')
@@ -146,12 +152,25 @@ export class SyncController {
     return { items: await this.serializer.toSyncItems(user, pageRows), nextPageToken, cursor };
   }
 
+  /**
+   * Short-lived URL for a browser download (`purpose` omitted: 60 s, attachment), or with
+   * `purpose=preview` a 6 h token for inline `<img>`/`<video>`/`<iframe>` use: the URL has no
+   * `download=1`, and the token is also accepted by the thumbnail route.
+   */
   @Post('items/:id/download-token')
-  async downloadToken(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+  async downloadToken(@CurrentUser() user: AuthUser, @Param('id') id: string, @Query('purpose') purpose?: string) {
+    if (purpose !== undefined && purpose !== 'download' && purpose !== 'preview') throw new SyncError('invalid_request', 'invalid purpose');
     const row = await this.resolveFile(user, id);
     const syncId = toSyncId(row);
-    const dt = await this.auth.signDownloadToken(user.id, syncId);
-    return { url: `/api/sync/v1/items/${syncId}/content?download=1&dt=${encodeURIComponent(dt)}` };
+    const preview = purpose === 'preview';
+    const ttl = preview ? PREVIEW_TOKEN_TTL_S : DOWNLOAD_TOKEN_TTL_S;
+    const dt = await this.auth.signDownloadToken(user.id, syncId, ttl);
+    const query = `${preview ? '' : 'download=1&'}dt=${encodeURIComponent(dt)}`;
+    return {
+      url: `/api/sync/v1/items/${syncId}/content?${query}`,
+      token: dt,
+      expiresAt: new Date(Date.now() + ttl * 1000).toISOString(),
+    };
   }
 
   @Get('items/:id/content')
@@ -185,7 +204,8 @@ export class SyncController {
       const st = await fh.stat();
       const tag = `${sha}-${size}`;
       reply.header('ETag', `"${tag}"`).header('Cache-Control', 'private, max-age=31536000, immutable')
-        .header('X-Content-Type-Options', 'nosniff').header('Content-Security-Policy', SANDBOX_CSP);
+        .header('X-Content-Type-Options', 'nosniff').header('Content-Security-Policy', SANDBOX_CSP)
+        .header('Referrer-Policy', 'no-referrer');
       if (etagList(req.headers['if-none-match']).includes(tag)) return reply.status(304).send();
       reply.header('Content-Type', 'image/webp').header('Content-Length', st.size);
       handedOver = true;
@@ -193,6 +213,23 @@ export class SyncController {
     } finally {
       if (!handedOver) await fh.close();
     }
+  }
+
+  /**
+   * The first 256 KiB of a text/markdown/code file, decoded (UTF-8, latin1 fallback). Read from
+   * disk on every request (never the possibly stale extracted text); 415 for other kinds.
+   */
+  @Get('items/:id/preview-text')
+  async previewText(@CurrentUser() user: AuthUser, @Param('id') id: string, @Res({ passthrough: true }) reply: FastifyReply): Promise<{ text: string; truncated: boolean; encoding: TextEncodingName }> {
+    const row = await this.resolveFile(user, id);
+    if (!TEXT_PREVIEW_KINDS.has(previewKind(row.name, mimeFor(row.name)))) {
+      throw new SyncError('invalid_request', 'no text preview for this file type', undefined, 415);
+    }
+    const { abs } = await this.files.openRead(user, row.id);
+    const { buf, size } = await readPrefix(abs, PREVIEW_TEXT_BYTES).catch(() => { throw new SyncError('not_found'); });
+    const { text, encoding } = decodeText(buf);
+    reply.header('Cache-Control', 'no-store');
+    return { text: text.replace(/\u0000/g, ''), truncated: size > buf.length, encoding };
   }
 
   @Put('items/:id/content')

@@ -179,6 +179,25 @@
       "expand": "Uploads ausklappen",
       "close": "Uploads schließen",
       "dismiss": "Aus der Liste entfernen"
+    },
+    "preview": "Vorschau",
+    "shortcutPreview": "Leertaste"
+  },
+  "preview": {
+    "close": "Vorschau schließen",
+    "previous": "Vorherige Datei",
+    "next": "Nächste Datei",
+    "share": "Teilen",
+    "position": "{{index}} von {{total}}",
+    "meta": "{{size}}, geändert am {{date}}",
+    "loading": "Vorschau wird geladen …",
+    "zoomFit": "An Fenster anpassen",
+    "zoomActual": "Originalgröße",
+    "truncated": "Es wird nur der Anfang der Datei angezeigt. Lade sie herunter, um alles zu sehen.",
+    "none": {
+      "title": "Keine Vorschau verfügbar",
+      "body": "Lade die Datei herunter, um sie in einer passenden App zu öffnen.",
+      "failed": "Die Vorschau konnte nicht geladen werden. Lade die Datei herunter, um sie in einer App zu öffnen."
     }
   },
   "trash": {
