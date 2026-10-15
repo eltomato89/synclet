@@ -46,9 +46,9 @@ describe('SSO', () => {
   };
 
   /** Runs start → fake IdP authorize → callback; returns the callback response. */
-  async function oidcLogin(claims: Record<string, unknown>, opts: { ret?: string; mutateQuery?: (q: URLSearchParams) => void; dropCookie?: boolean } = {}) {
+  async function oidcLogin(claims: Record<string, unknown>, opts: { ret?: string; mutateQuery?: (q: URLSearchParams) => void; dropCookie?: boolean; startCookies?: Record<string, string> } = {}) {
     idp.nextClaims = claims;
-    const start = await ctx.app.inject({ method: 'GET', url: `/api/auth/oidc/start?return=${encodeURIComponent(opts.ret ?? '/files/docs')}` });
+    const start = await ctx.app.inject({ method: 'GET', url: `/api/auth/oidc/start?return=${encodeURIComponent(opts.ret ?? '/files/docs')}`, cookies: opts.startCookies ?? {} });
     expect(start.statusCode).toBe(302);
     const flow = start.cookies.find((c) => c.name === 'synclet_oidc');
     expect(flow).toMatchObject({ httpOnly: true, path: '/api/auth/oidc', sameSite: 'Lax' });
@@ -225,6 +225,32 @@ describe('SSO', () => {
       }
       expect((await oidcLogin({ sub: 's-ok', preferred_username: 'x' }, { ret: '/app-login?client_id=a&state=b' })).headers.location)
         .toBe('/app-login?client_id=a&state=b');
+    });
+
+    it('ends the previous session of the browser after a successful login (its cookie travels in the flow cookie)', async () => {
+      await enableOidc();
+      const refreshOf = (res: { cookies: { name: string; value: string }[] }) => res.cookies.find((c) => c.name === 'synclet_refresh')!.value;
+      const first = refreshOf(await oidcLogin({ sub: 'p-1', preferred_username: 'paula' }));
+      const second = refreshOf(await oidcLogin({ sub: 'p-1', preferred_username: 'paula' }, { startCookies: { synclet_refresh: first } }));
+      expect(await ctx.prisma.session.findFirst({ where: { revokedAt: { not: null }, revokedReason: 'logout' } })).toBeTruthy();
+      const refresh = (rt: string) => ctx.app.inject({ method: 'POST', url: '/api/auth/refresh', cookies: { synclet_refresh: rt } });
+      expect((await refresh(first)).statusCode).toBe(401);
+      expect((await refresh(second)).statusCode).toBe(200);
+    });
+
+    it('a failed attempt returns to the login page with the safe return path as next', async () => {
+      const failStart = await ctx.app.inject({ method: 'GET', url: `/api/auth/oidc/start?return=${encodeURIComponent('/app-login?client_id=a&state=b')}` });
+      const loc = new URL(failStart.headers.location as string, 'http://x');
+      expect([loc.pathname, loc.searchParams.get('sso_error'), loc.searchParams.get('next')]).toEqual(['/login', 'oidc_disabled', '/app-login?client_id=a&state=b']);
+      await enableOidc();
+      const failCb = await oidcLogin({ sub: 'n-1' }, { ret: '/app-login?client_id=a&state=b', mutateQuery: (q) => q.set('state', 'forged') });
+      expect(new URL(failCb.headers.location as string, 'http://x').searchParams.get('next')).toBe('/app-login?client_id=a&state=b');
+      // Unsafe or default targets are not carried along; neither is anything without a valid flow cookie.
+      for (const ret of ['//evil.example', '/files']) {
+        const res = await oidcLogin({ sub: 'n-2' }, { ret, mutateQuery: (q) => q.set('state', 'forged') });
+        expect(res.headers.location).toBe('/login?sso_error=invalid_state');
+      }
+      expect((await oidcLogin({ sub: 'n-3' }, { dropCookie: true })).headers.location).toBe('/login?sso_error=invalid_state');
     });
 
     it('rejects a state mismatch or a missing flow cookie', async () => {
@@ -431,6 +457,15 @@ describe('SSO', () => {
       const again = await forward('::ffff:10.9.9.9', { 'remote-user': 'fred' });
       expect(again.statusCode).toBe(200);
       expect(again.json().user.id).toBe(user.id);
+    });
+
+    it('ends the session of the refresh cookie the browser still sent', async () => {
+      const old = (await forward('10.1.2.3', { 'remote-user': 'fred' })).cookies.find((c) => c.name === 'synclet_refresh')!.value;
+      const res = await ctx.app.inject({ method: 'POST', url: '/api/auth/forward', remoteAddress: '10.1.2.3', headers: { 'remote-user': 'fred' }, cookies: { synclet_refresh: old } });
+      expect(res.statusCode).toBe(200);
+      const refresh = (rt: string) => ctx.app.inject({ method: 'POST', url: '/api/auth/refresh', cookies: { synclet_refresh: rt } });
+      expect((await refresh(old)).statusCode).toBe(401);
+      expect((await refresh(res.cookies.find((c) => c.name === 'synclet_refresh')!.value)).statusCode).toBe(200);
     });
 
     it('ignores headers from untrusted peers, including spoofed X-Forwarded-For', async () => {

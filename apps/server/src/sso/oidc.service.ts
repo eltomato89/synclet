@@ -13,7 +13,8 @@ export const OIDC_COOKIE_PATH = '/api/auth/oidc';
 export const OIDC_COOKIE_TTL_S = 600;
 export const DEFAULT_RETURN = '/files';
 
-interface FlowClaims { typ: 'oidc'; st: string; nc: string; cv: string; ret: string; iss: string }
+/** `prev`: hash of the refresh cookie the browser had at the start (ended after a successful login). */
+interface FlowClaims { typ: 'oidc'; st: string; nc: string; cv: string; ret: string; iss: string; prev?: string }
 
 /** Codes of `/login?sso_error=<code>` redirects. */
 export type SsoErrorCode =
@@ -107,7 +108,7 @@ export class OidcService {
   }
 
   /** Authorization URL (code flow, PKCE S256, state, nonce) and the flow cookie value. */
-  async start(returnTo: unknown): Promise<{ url: string; cookie: string }> {
+  async start(returnTo: unknown, previousSessionHash?: string): Promise<{ url: string; cookie: string }> {
     const oidc = await this.effective();
     const config = await this.configuration(oidc);
     const client = await oidcLib();
@@ -118,7 +119,7 @@ export class OidcService {
       redirect_uri: oidc.redirectUri, response_type: 'code', scope: oidc.scopes,
       code_challenge: await client.calculatePKCECodeChallenge(cv), code_challenge_method: 'S256', state: st, nonce: nc,
     });
-    const claims: FlowClaims = { typ: 'oidc', st, nc, cv, ret: safeReturnPath(returnTo), iss: oidc.issuer };
+    const claims: FlowClaims = { typ: 'oidc', st, nc, cv, ret: safeReturnPath(returnTo), iss: oidc.issuer, ...(previousSessionHash ? { prev: previousSessionHash } : {}) };
     const cookie = await this.jwt.signAsync(claims, { secret: await this.secret(), expiresIn: OIDC_COOKIE_TTL_S });
     return { url: url.href, cookie };
   }
@@ -127,7 +128,7 @@ export class OidcService {
    * Validates the authorization response (state, then code exchange with PKCE, id_token signature,
    * issuer, audience, nonce) and returns the normalized identity plus the post-login path.
    */
-  async callback(rawQuery: string, cookie: string | undefined): Promise<{ claims: SsoClaims; returnTo: string }> {
+  async callback(rawQuery: string, cookie: string | undefined): Promise<{ claims: SsoClaims; returnTo: string; previousSessionHash: string | null }> {
     const oidc = await this.effective();
     let flow: FlowClaims | null = null;
     if (cookie) {
@@ -183,6 +184,21 @@ export class OidcService {
         groups,
       },
       returnTo: flow.ret,
+      previousSessionHash: typeof flow.prev === 'string' && /^[0-9a-f]{64}$/.test(flow.prev) ? flow.prev : null,
     };
+  }
+
+  /**
+   * The post-login path of a flow cookie that still verifies (any issuer, so it also works after a
+   * settings change), for the `/login?sso_error=…&next=…` redirect of a failed attempt. null otherwise.
+   */
+  async returnPathOf(cookie: string | undefined): Promise<string | null> {
+    if (!cookie) return null;
+    try {
+      const flow = await this.jwt.verifyAsync<FlowClaims>(cookie, { secret: await this.secret() });
+      return flow.typ === 'oidc' ? safeReturnPath(flow.ret) : null;
+    } catch {
+      return null;
+    }
   }
 }

@@ -129,6 +129,11 @@ export class AuthService {
 
   async logout(raw: string | undefined) {
     if (!raw) return;
-    await this.prisma.session.updateMany({ where: { tokenHash: hashToken(raw), revokedAt: null }, data: { revokedAt: new Date(), revokedReason: 'logout' } });
+    await this.revokeByHash(hashToken(raw));
+  }
+
+  /** Ends the session of a refresh token known only by its hash (idempotent). */
+  async revokeByHash(tokenHash: string) {
+    await this.prisma.session.updateMany({ where: { tokenHash, revokedAt: null }, data: { revokedAt: new Date(), revokedReason: 'logout' } });
   }
 }

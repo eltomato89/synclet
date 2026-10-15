@@ -6,7 +6,7 @@ import { SyncError } from '../common/sync-error';
 import { ZodPipe } from '../common/zod.pipe';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from './auth.service';
-import { setRefreshCookie } from './auth.controller';
+import { replaceRefreshCookie } from './auth.controller';
 import { RateLimits } from './rate-limit';
 import { UsersService } from './users.service';
 
@@ -33,7 +33,7 @@ export class SetupController {
     if ((await this.prisma.user.count()) > 0) throw new SyncError('setup_done', 'setup already completed');
     const user = await this.users.create({ ...body, role: 'admin' });
     const { access, refreshToken } = await this.auth.issueLogin(user, req.headers['user-agent']);
-    setRefreshCookie(reply, refreshToken, this.auth.config.secureCookies);
+    await replaceRefreshCookie(this.auth, req, reply, refreshToken);
     return access;
   }
 }
