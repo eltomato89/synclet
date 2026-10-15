@@ -48,6 +48,8 @@ model User {
   displayName String
   role        Role         @default(user)
   disabledAt  DateTime?
+  /// Last successful login (password, OIDC, forward-auth, app login).
+  lastLoginAt DateTime?
   createdAt   DateTime     @default(now())
   updatedAt   DateTime     @updatedAt
   identities  Identity[]
@@ -124,6 +126,8 @@ model Item {
   updatedAt   DateTime  @updatedAt
   /// Tombstone; kept for tombstoneWindowSec so external moves can be paired.
   deletedAt   DateTime?
+  /// Key of the last office editing session that saved this file.
+  officeKey   String?
 
   @@index([ownerId, parentId])
   @@index([ownerId, dev, ino])
@@ -233,4 +237,79 @@ model ShareLink {
 
   @@index([ownerId])
   @@index([itemId])
+}
+
+enum VersionSource {
+  api
+  office
+  restore
+}
+
+/// Superseded content of a file (only when SYNCLET_VERSIONS=on). Follows the item id across moves.
+model FileVersion {
+  id        String        @id @default(uuid()) @db.Uuid
+  itemId    String        @db.Uuid
+  ownerId   String        @db.Uuid
+  /// Item.version this content had while it was current.
+  version   Int
+  sha       String
+  size      BigInt
+  /// mtime of the content while it was current.
+  mtime     DateTime
+  /// When it was superseded (= version timestamp used by retention buckets).
+  createdAt DateTime      @default(now())
+  createdBy String?       @db.Uuid
+  source    VersionSource
+  /// Absolute path under <meta>/versions.
+  storePath String
+
+  @@index([itemId, createdAt])
+  @@index([ownerId])
+  @@index([sha])
+}
+
+/// One-time PKCE authorization codes for native app login (hash only).
+model AppAuthCode {
+  id            String    @id @default(uuid()) @db.Uuid
+  codeHash      String    @unique
+  userId        String    @db.Uuid
+  clientId      String
+  redirectUri   String
+  codeChallenge String
+  expiresAt     DateTime
+  usedAt        DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([expiresAt])
+}
+
+/// Singleton (id = 1): runtime auth settings edited in the admin UI.
+model AuthSettings {
+  id                        Int      @id @default(1)
+  /// Disable password login for non-admin users (admins always keep it).
+  passwordLoginForUsers     Boolean  @default(true)
+  oidcEnabled               Boolean  @default(false)
+  oidcIssuer                String?
+  oidcClientId              String?
+  /// SecretBox ciphertext (purpose "oidc-client-secret").
+  oidcClientSecretEnc       String?
+  oidcScopes                String   @default("openid profile email")
+  oidcButtonLabel           String   @default("Single Sign-on")
+  oidcUsernameClaim         String   @default("preferred_username")
+  oidcGroupsClaim           String   @default("groups")
+  oidcAllowedGroups         String[] @default([])
+  oidcAdminGroups           String[] @default([])
+  /// Attach an OIDC login to an existing account with the same verified email.
+  oidcLinkByEmail           Boolean  @default(false)
+  forwardAuthEnabled        Boolean  @default(false)
+  forwardAuthUserHeader     String   @default("Remote-User")
+  forwardAuthEmailHeader    String   @default("Remote-Email")
+  forwardAuthNameHeader     String   @default("Remote-Name")
+  forwardAuthGroupsHeader   String   @default("Remote-Groups")
+  /// CIDRs of proxies allowed to set forward-auth headers (direct socket peer of the server).
+  forwardAuthTrustedProxies String[] @default([])
+  forwardAuthAdminGroups    String[] @default([])
+  forwardAuthAllowedGroups  String[] @default([])
+  updatedAt                 DateTime @updatedAt
+  updatedBy                 String?  @db.Uuid
 }

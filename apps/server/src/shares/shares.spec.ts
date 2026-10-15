@@ -1,7 +1,8 @@
 import { PassThrough, Readable, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { RateLimiter } from '../auth/rate-limit';
-import { decryptToken, encryptToken, parseItemId, SHARE_TOKEN, shareTokenKey } from './share-auth';
+import { SecretBox } from '../common/secret-box';
+import { parseItemId, SHARE_TOKEN, SHARE_TOKEN_PURPOSE } from './share-auth';
 import { ShareBusyError, ShareQuotas } from './share-quotas';
 import { createZip, zipEntryName } from './zip';
 
@@ -10,32 +11,27 @@ const OTHER = '11111111-1d2a-4c3b-9a8b-0123456789ab';
 const silent = { warn: () => undefined };
 
 describe('share token encryption (ruling 1b-3)', () => {
-  const key = shareTokenKey('server-secret');
+  const box = new SecretBox('server-secret');
+  const seal = (t: string, id: string) => box.seal(t, SHARE_TOKEN_PURPOSE, id);
+  const open = (b: SecretBox, e: string, id: string) => b.open(e, SHARE_TOKEN_PURPOSE, id);
   const token = 'A'.repeat(43);
 
   it('round-trips with a random IV in base64url iv.ciphertext.tag form', () => {
-    const a = encryptToken(key, token, ID);
-    const b = encryptToken(key, token, ID);
-    expect(a).not.toBe(b);
+    const a = seal(token, ID);
+    expect(a).not.toBe(seal(token, ID));
     expect(a).toMatch(/^[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{22}$/);
-    expect(decryptToken(key, a, ID)).toBe(token);
+    expect(open(box, a, ID)).toBe(token);
   });
 
   it('rejects another share id, another secret and tampering', () => {
-    const enc = encryptToken(key, token, ID);
-    expect(() => decryptToken(key, enc, OTHER)).toThrow();
-    expect(() => decryptToken(shareTokenKey('other-secret'), enc, ID)).toThrow();
+    const enc = seal(token, ID);
+    expect(() => open(box, enc, OTHER)).toThrow();
+    expect(() => open(new SecretBox('other-secret'), enc, ID)).toThrow();
     const [iv, ct, tag] = enc.split('.');
     const flipped = Buffer.from(ct, 'base64url');
     flipped[0] ^= 1;
-    expect(() => decryptToken(key, [iv, flipped.toString('base64url'), tag].join('.'), ID)).toThrow();
-    expect(() => decryptToken(key, 'garbage', ID)).toThrow();
-  });
-
-  it('derives a stable 32-byte key per secret', () => {
-    expect(shareTokenKey('s')).toHaveLength(32);
-    expect(shareTokenKey('s').equals(shareTokenKey('s'))).toBe(true);
-    expect(shareTokenKey('s').equals(shareTokenKey('t'))).toBe(false);
+    expect(() => open(box, [iv, flipped.toString('base64url'), tag].join('.'), ID)).toThrow();
+    expect(() => open(box, 'garbage', ID)).toThrow();
   });
 });
 

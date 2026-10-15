@@ -27,4 +27,25 @@ describe('loadConfig', () => {
     expect(loadConfig({ SYNCLET_TRUST_PROXY: '' }).trustProxy).toBe(false);
     expect(loadConfig({ SYNCLET_TRUST_PROXY: 'true' }).trustProxy).toBe(true);
   });
+
+  it('phase 1c defaults', () => {
+    const c = loadConfig({});
+    expect(c).toMatchObject({
+      versions: false, versionsMaxBytes: 0, officeUrl: null, officeJwtSecret: null,
+      officeApiUrl: 'http://server:3000/api', officeInternalUrl: 'http://office', ssoEmergency: false,
+    });
+  });
+
+  it('reads phase 1c variables; empty means default', () => {
+    const c = loadConfig({
+      SYNCLET_VERSIONS: 'on', SYNCLET_VERSIONS_MAX_BYTES: '1000', OFFICE_URL: 'https://office.example.com',
+      OFFICE_JWT_SECRET: 's', OFFICE_API_URL: 'http://srv/api', OFFICE_INTERNAL_URL: 'http://ds', SYNCLET_SSO_EMERGENCY: '1',
+    });
+    expect(c).toMatchObject({
+      versions: true, versionsMaxBytes: 1000, officeUrl: 'https://office.example.com', officeJwtSecret: 's',
+      officeApiUrl: 'http://srv/api', officeInternalUrl: 'http://ds', ssoEmergency: true,
+    });
+    const e = loadConfig({ SYNCLET_VERSIONS: '', OFFICE_URL: '', OFFICE_API_URL: '', SYNCLET_SSO_EMERGENCY: '' });
+    expect(e).toMatchObject({ versions: false, officeUrl: null, officeApiUrl: 'http://server:3000/api', ssoEmergency: false });
+  });
 });
