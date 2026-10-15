@@ -98,4 +98,23 @@ describe('UploadQueue error handling', () => {
     q.retry(q.snapshot()[0].id);
     expect(FakeXHR.instances).toHaveLength(5);
   });
+
+  it('a rejected session refresh fails the task with network and frees the slot', async () => {
+    const { q } = setup(vi.fn().mockRejectedValue(new Error('offline')));
+    q.enqueue([file('a.txt'), file('b.txt'), file('c.txt'), file('d.txt')], 'd_1');
+    const first = FakeXHR.instances[0];
+    first.status = 401; first.responseText = '{}'; first.onload?.();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(q.snapshot()[0]).toMatchObject({ status: 'error', error: 'network' });
+    expect(FakeXHR.instances).toHaveLength(4); // queued task took the freed slot
+  });
+
+  it('a 2xx response with an unparsable body fails the task with server_error', () => {
+    const { q, done } = setup();
+    q.enqueue([file()], 'd_1');
+    const x = FakeXHR.instances[0];
+    x.status = 201; x.responseText = '<html>proxy</html>'; x.onload?.();
+    expect(q.snapshot()[0]).toMatchObject({ status: 'error', error: 'server_error' });
+    expect(done).not.toHaveBeenCalled();
+  });
 });

@@ -9,7 +9,7 @@ async function main() {
   const config = loadConfig();
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule.forRoot(config),
-    new FastifyAdapter({ trustProxy: true, bodyLimit: 10 * 1024 * 1024 }),
+    new FastifyAdapter({ trustProxy: config.trustProxy, bodyLimit: 10 * 1024 * 1024 }),
   );
   await configureApp(app);
   app.enableShutdownHooks();

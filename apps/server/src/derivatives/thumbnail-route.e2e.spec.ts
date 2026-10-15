@@ -46,6 +46,7 @@ describe('thumbnail route and preview field', () => {
       expect(res.headers.etag).toBe(`"${item.sha256}-${size}"`);
       expect(res.headers['cache-control']).toBe('private, max-age=31536000, immutable');
       expect(res.headers['x-content-type-options']).toBe('nosniff');
+      expect(res.headers['referrer-policy']).toBe('no-referrer');
       expect((await sharp(res.rawPayload).metadata()).format).toBe('webp');
     }
     expect((await api('GET', `/items/${item.id}/thumbnail`)).statusCode).toBe(200); // default 256

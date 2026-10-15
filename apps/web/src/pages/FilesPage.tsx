@@ -1,6 +1,6 @@
 import type { SyncAccount, SyncItem } from '@synclet/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { FolderPlus, LayoutGrid, List, Plus, Upload } from 'lucide-react';
+import { FolderPlus, LayoutGrid, List, Plus, Share2, Upload } from 'lucide-react';
 import { type KeyboardEvent, lazy, type MouseEvent, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useParams } from 'react-router';
@@ -23,12 +23,16 @@ import {
 } from '@/features/files/queries';
 import { UploadPanel } from '@/features/files/UploadPanel';
 import { getUploadQueue, type UploadQueue } from '@/features/files/uploads';
+import { quickLookEntries } from '@/features/preview/navigation';
+import { isPreviewable, syncPreviewSource } from '@/features/preview/source';
 import { ApiError, api } from '@/lib/api';
 
 const NewFolderDialog = lazy(() => import('@/features/files/NewFolderDialog').then((m) => ({ default: m.NewFolderDialog })));
 const RenameDialog = lazy(() => import('@/features/files/RenameDialog').then((m) => ({ default: m.RenameDialog })));
 const MoveDialog = lazy(() => import('@/features/files/MoveDialog').then((m) => ({ default: m.MoveDialog })));
 const DeleteDialog = lazy(() => import('@/features/files/DeleteDialog').then((m) => ({ default: m.DeleteDialog })));
+const QuickLook = lazy(() => import('@/features/preview/QuickLook').then((m) => ({ default: m.QuickLook })));
+const ShareDialog = lazy(() => import('@/features/shares/ShareDialog').then((m) => ({ default: m.ShareDialog })));
 
 const FOLDER_ID = /^(root|d_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const VIEW_KEY = 'synclet.files.view';
@@ -57,7 +61,7 @@ const notify = {
   error: (msg: string) => toast.error(msg, { position: 'bottom-center' }),
 };
 
-type DialogState = { kind: 'newFolder' } | { kind: 'rename' | 'move' | 'delete'; item: SyncItem };
+type DialogState = { kind: 'newFolder' } | { kind: 'rename' | 'move' | 'delete' | 'share'; item: SyncItem };
 
 export function FilesPage() {
   const { folderId = ROOT_ID } = useParams();
@@ -114,6 +118,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<(DialogState & { open: boolean; n: number }) | null>(null);
   const [menuItem, setMenuItem] = useState<SyncItem | null>(null);
+  const [quickLook, setQuickLook] = useState<{ id: string; open: boolean } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const viewRef = useRef<HTMLDivElement>(null);
   const focusAfterRender = useRef<string | null>(null);
@@ -169,16 +174,30 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   const openDialog = (d: DialogState) => setDialog((cur) => ({ ...d, open: true, n: (cur?.n ?? 0) + 1 }));
   const onDialogOpenChange = (o: boolean) => { if (!o) setDialog((cur) => (cur ? { ...cur, open: false } : cur)); };
 
-  const open = (item: SyncItem) => {
-    if (item.type === 'folder') { navigate(folderPath(item.id)); return; }
+  const download = (item: SyncItem) => {
     mutations.download(item).catch((err: unknown) => notify.error(err instanceof ApiError ? t(errorKey(err)) : t('files.toast.downloadFailed')));
   };
+  const open = (item: SyncItem) => {
+    if (item.type === 'folder') navigate(folderPath(item.id));
+    else download(item);
+  };
+  const preview = (item: SyncItem) => {
+    if (item.type !== 'file') return;
+    setSelectedId(item.id);
+    setQuickLook({ id: item.id, open: true });
+  };
+  /** Double-click / tap: folders open, previewable files show QuickLook, anything else downloads. */
+  const activate = (item: SyncItem) => { if (isPreviewable(item)) preview(item); else open(item); };
+  const quickLookFiles = useMemo(() => quickLookEntries(items), [items]);
   const actions: ItemActions = {
     open,
+    preview,
     rename: (item) => { setSelectedId(item.id); if (item.capabilities.rename) openDialog({ kind: 'rename', item }); },
     move: (item) => { setSelectedId(item.id); if (item.capabilities.move) openDialog({ kind: 'move', item }); },
     remove: (item) => { setSelectedId(item.id); if (item.capabilities.delete) openDialog({ kind: 'delete', item }); },
+    share: (item) => { setSelectedId(item.id); if (item.kind !== 'root') openDialog({ kind: 'share', item }); },
   };
+  const selectedItem = items.find((i) => i.id === selectedId) ?? null;
   const startUpload = () => fileInput.current?.click();
   const newFolder = () => { if (canAdd) openDialog({ kind: 'newFolder' }); };
   const enqueue = (files: File[]) => { if (canAdd && files.length) queue.enqueue(files, folderId); };
@@ -216,6 +235,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
       case 'Home': go(0); break;
       case 'End': go(items.length - 1); break;
       case 'Enter': if (!sel) return; open(sel); break;
+      case ' ': if (sel?.type !== 'file') return; preview(sel); break;
       case 'F2': if (!sel) return; actions.rename(sel); break;
       case 'Delete': case 'Backspace': if (!sel) return; actions.remove(sel); break;
       case 'Escape': if (!sel) return; setSelectedId(null); break;
@@ -241,6 +261,22 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
         <Breadcrumbs chain={ancestors.data ?? (ancestors.isError ? [] : undefined)} />
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
+        {selectedItem && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => actions.share(selectedItem)}
+                aria-label={t('shares.shareItem', { name: selectedItem.name })}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <Share2 /><span className="max-lg:hidden">{t('shares.share')}</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('shares.shareItem', { name: selectedItem.name })}</TooltipContent>
+          </Tooltip>
+        )}
         <ToggleGroup
           type="single"
           size="sm"
@@ -301,7 +337,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   } else {
     const folders = items.filter((i) => i.type === 'folder').length;
     const files = items.length - folders;
-    const viewProps = { items, label: t('files.listLabel', { name: folderName }), selectedId, onSelect: setSelectedId, onOpen: open, actions };
+    const viewProps = { items, label: t('files.listLabel', { name: folderName }), selectedId, onSelect: setSelectedId, onOpen: activate, actions };
     body = (
       <ContextMenu modal={false} onOpenChange={(o) => { if (!o) setMenuItem(null); }}>
         <ContextMenuTrigger asChild onContextMenu={onContextMenu}>
@@ -334,6 +370,19 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
       </div>
       <DropZone enabled={canAdd} folderName={folderName} onFiles={enqueue} />
       <Suspense fallback={null}>
+        {quickLook && (
+          <QuickLook
+            entries={quickLookFiles}
+            activeId={quickLook.id}
+            open={quickLook.open}
+            onActiveChange={(id) => { setQuickLook({ id, open: true }); setSelectedId(id); }}
+            onOpenChange={(o) => { if (!o) setQuickLook((q) => (q ? { ...q, open: false } : q)); }}
+            onClosed={(id) => { setQuickLook(null); focusItem(id); }}
+            resolveSource={syncPreviewSource}
+            onDownload={download}
+            onShare={actions.share}
+          />
+        )}
         {d?.kind === 'newFolder' && (
           <NewFolderDialog
             key={d.n}
@@ -394,6 +443,18 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
               setSelectedId(next);
               notify.success(t('files.toast.deleted', { name: d.item.name }));
             }}
+          />
+        )}
+        {d?.kind === 'share' && (
+          <ShareDialog
+            key={d.n}
+            open={d.open}
+            onOpenChange={onDialogOpenChange}
+            // Opened from QuickLook: focus goes back to QuickLook, so ←/→ and Space keep working.
+            onClosed={quickLook?.open
+              ? () => document.querySelector<HTMLElement>('[data-slot="quicklook"]')?.focus({ preventScroll: true })
+              : restoreFocus}
+            item={d.item}
           />
         )}
       </Suspense>

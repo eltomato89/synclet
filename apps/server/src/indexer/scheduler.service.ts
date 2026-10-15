@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
+import type { Dirent } from 'node:fs';
 import { lstat, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { APP_CONFIG, AppConfig } from '../config';
@@ -79,23 +80,31 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     await this.files.recoverStagedTrash().catch((e) => this.log.error(`trash recovery failed: ${(e as Error).message}`));
   }
 
-  /** At startup no upload is in flight, so every temp file is a leftover of a crash. */
+  /**
+   * Removes `.synclet-tmp-*` files and directories (any depth) left by crashes; at boot nothing is
+   * in flight, so no age gate applies. Symlinks are never followed; `.synclet-trash-*` is never touched.
+   */
   async startupCleanup(): Promise<number> {
     let removed = 0;
-    for (const u of await this.users().catch(() => [])) {
-      const root = userRoot(this.config.dataRoot, u.username);
-      const names = await readdir(root).catch(() => [] as string[]);
-      for (const n of names.filter(isTempName)) {
+    const walk = async (dir: string, owner: string): Promise<void> => {
+      let entries: Dirent[];
+      try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        const abs = path.join(dir, e.name);
         try {
-          const abs = path.join(root, n);
-          if (!(await lstat(abs)).isFile()) continue; // never touch directories or symlinks
-          await rm(abs, { force: true });
-          removed++;
-        } catch (e) {
-          this.log.warn(`startup cleanup: cannot remove ${n} in ${u.username}: ${(e as Error).message}`);
+          if (isTempName(e.name)) {
+            const st = await lstat(abs);
+            if (st.isSymbolicLink()) continue;
+            if (st.isDirectory() || st.isFile()) { await rm(abs, { recursive: true, force: true }); removed++; }
+          } else if (e.isDirectory() && !e.name.startsWith('.synclet-trash-')) {
+            await walk(abs, owner); // Dirent from readdir never follows symlinks
+          }
+        } catch (err) {
+          this.log.warn(`startup cleanup: cannot remove ${abs} (${owner}): ${(err as Error).message}`);
         }
       }
-    }
+    };
+    for (const u of await this.users().catch(() => [])) await walk(userRoot(this.config.dataRoot, u.username), u.username);
     return removed;
   }
 

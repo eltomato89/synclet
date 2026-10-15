@@ -55,7 +55,9 @@ export async function sendFile(req: FastifyRequest, reply: FastifyReply, item: I
     const size = Number(st.size);
     const mtime = new Date(Number(st.mtimeMs)); // same derivation as the indexer (statEntry)
     const tag = `v${item.version}`;
-    reply.header('ETag', `"${tag}"`).header('Accept-Ranges', 'bytes').header('Last-Modified', mtime.toUTCString());
+    reply.header('Cache-Control', 'private, no-store').header('ETag', `"${tag}"`).header('Accept-Ranges', 'bytes').header('Last-Modified', mtime.toUTCString());
+    // URLs may carry a `dt` token: never pass them on (e.g. links clicked inside a PDF).
+    reply.header('Referrer-Policy', 'no-referrer');
     const inm = etagList(req.headers['if-none-match']);
     if (inm.includes(tag) || inm.includes('*')) return reply.status(304).send();
     // If-Range: resume only if the client's validator still describes these bytes; otherwise

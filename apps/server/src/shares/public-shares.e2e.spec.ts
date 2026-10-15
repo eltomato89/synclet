@@ -154,12 +154,12 @@ describe('Share links', () => {
       const t = await tree();
       const f = await share(t.a.id);
       expect((await pub('GET', f.token)).json()).toEqual({
-        name: 'a.txt', type: 'file', size: 5, mime: 'text/plain', ownerDisplayName: 'Jens Owner',
+        id: t.a.id, name: 'a.txt', type: 'file', size: 5, mime: 'text/plain', ownerDisplayName: 'Jens Owner',
         allowDownload: true, allowUpload: false, expiresAt: null,
       });
       const d = await share(t.A.id, { allowUpload: true });
       const info = await pub('GET', d.token);
-      expect(info.json()).toMatchObject({ name: 'A', type: 'folder', size: 'alpha'.length + 'inside x'.length, mime: null, allowUpload: true });
+      expect(info.json()).toMatchObject({ id: t.A.id, name: 'A', type: 'folder', size: 'alpha'.length + 'inside x'.length, mime: null, allowUpload: true });
       expect(info.headers['x-robots-tag']).toContain('noindex');
       expect(info.headers['cache-control']).toBe('private, no-store');
       await pub('GET', d.token);
