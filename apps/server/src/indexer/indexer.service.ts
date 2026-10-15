@@ -7,7 +7,6 @@ import { APP_CONFIG, AppConfig } from '../config';
 import { nameKey } from '../common/names';
 import { absPath, joinRel, parentRel, userRoot } from '../common/paths';
 import type { IndexUser } from '../common/types';
-import { BusyPaths } from '../journal/busy-paths';
 import { ItemStore } from '../journal/item-store';
 import { ItemRef, JournalService, Tx } from '../journal/journal.service';
 import { PrismaService, TX_OPTS } from '../prisma/prisma.service';
@@ -65,7 +64,6 @@ export class IndexerService {
     private readonly prisma: PrismaService,
     private readonly journal: JournalService,
     private readonly store: ItemStore,
-    private readonly busy: BusyPaths,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -100,7 +98,6 @@ export class IndexerService {
     const queue: QueueEntry[] = [{ dir: relDir, recursive: recursive0 }];
     while (queue.length) {
       const { dir, recursive } = queue.shift()!;
-      if (dir !== '' && this.busy.covers(user.id, dir)) continue;
       let res: OneResult;
       try {
         res = await this.reconcileOne(user, dir, stats);
@@ -155,7 +152,6 @@ export class IndexerService {
         throw e;
       }
       if (dir === '' && disk.length === 0 && (await this.refuseEmptyRoot(tx, user, abs))) return { kind: 'refused' };
-      disk = disk.filter((e) => !this.busy.covers(user.id, joinRel(dir, e.name)));
       return this.applyDiff(tx, user, dir, parentId, disk, stats);
     }, TX_OPTS);
     if (first.kind !== 'ok') return first;
@@ -200,8 +196,6 @@ export class IndexerService {
     const byName = new Map(rows.map((r) => [r.name, r]));
     const diskByName = new Map(disk.map((e) => [e.name, e]));
     const seen = new Set<string>();
-    // Busy paths were filtered out of `disk`; their rows must not be mistaken for deletions either.
-    for (const r of rows) if (this.busy.covers(user.id, r.path)) seen.add(r.id);
     const upserts: ItemRef[] = [];
     const deletes: ItemRef[] = [];
     const touchedKeys = new Map<string | null, Set<string>>(); // parentId -> nameKeys whose display names may shift
@@ -316,7 +310,7 @@ export class IndexerService {
     for (const group of chunks(part, 64)) {
       const ok = await Promise.all(group.map(async (e) => {
         const rel = joinRel(dir, e.name);
-        if (taken.has(e.name) || this.busy.covers(user.id, rel)) return false;
+        if (taken.has(e.name)) return false;
         const st = await lstat(absPath(this.config.dataRoot, user.username, rel), { bigint: true }).catch(() => null);
         return !!st && st.ino === e.ino && st.dev === e.dev && (e.type === 'folder' ? st.isDirectory() : st.isFile());
       }));
@@ -349,7 +343,7 @@ export class IndexerService {
     listings: Map<string, Promise<Set<string> | null>>,
   ): Promise<Item | null> {
     for (const c of cands) {
-      if (c.type !== e.type || seen.has(c.id) || this.busy.covers(user.id, c.path)) continue;
+      if (c.type !== e.type || seen.has(c.id)) continue;
       // Guard against inode reuse: files must keep size and mtime across a move …
       if (e.type === 'file' && (c.size !== e.size || c.mtime.getTime() !== e.mtime.getTime())) continue;
       // A live row only moved if its old path is gone (otherwise it is a hard link).
