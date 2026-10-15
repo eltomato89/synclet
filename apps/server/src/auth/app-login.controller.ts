@@ -20,7 +20,7 @@ const AuthorizeBody = z.object({ login: z.string().min(1).max(320), password: z.
 const SessionBody = z.object(Pkce);
 const TokenBody = z.object({
   code: z.string().min(1).max(200),
-  codeVerifier: z.string().min(43).max(128),
+  codeVerifier: z.string().regex(/^[A-Za-z0-9\-._~]{43,128}$/),
   clientId: z.string().min(1).max(40),
   redirectUri: z.string().min(1).max(200),
 });
@@ -60,6 +60,8 @@ export class AppLoginController {
   @UseGuards(AuthGuard)
   authorizeSession(@CurrentUser() user: AuthUser, @Body(new ZodPipe(SessionBody)) body: z.infer<typeof SessionBody>, @Req() req: FastifyRequest, @Res({ passthrough: true }) reply: FastifyReply) {
     this.limits.takeIp(ipKey(req.ip), reply);
+    // A long-lived device token must not be escalated into a web session with a refresh token.
+    if (user.deviceId) throw new SyncError('forbidden', 'device tokens cannot authorize app logins');
     return this.appLogin.authorizeForUser(user.id, body);
   }
 

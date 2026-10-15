@@ -173,6 +173,23 @@ describe('app login (PKCE)', () => {
     expect(t.json().user.username).toBe('jens');
   });
 
+  it('session authorize rejects device tokens', async () => {
+    const dev = await ctx.app.inject({
+      method: 'POST', url: '/api/sync/v1/devices', headers: { authorization: `Bearer ${admin}` },
+      payload: { name: 'Mac', platform: 'macos', appVersion: '1.0.0' },
+    });
+    const r = await post('authorize/session', { clientId: 'macos', redirectUri: REDIRECT, codeChallenge: pkceChallenge(VERIFIER), codeChallengeMethod: 'S256' }, { authorization: `Bearer ${dev.json().token}` });
+    expect(r.statusCode).toBe(403);
+    expect(r.json().code).toBe('forbidden');
+  });
+
+  it('rejects code verifiers outside the RFC 7636 charset', async () => {
+    const { code } = (await authorize()).json();
+    expect((await exchange(code, { codeVerifier: 'v'.repeat(42) + '!' })).statusCode).toBe(400);
+    expect((await exchange(code, { codeVerifier: 'v'.repeat(129) })).statusCode).toBe(400);
+    expect((await exchange(code)).statusCode).toBe(200);
+  });
+
   it('session-based authorize ignores the password-login setting (SSO users)', async () => {
     await mkUser('anna');
     const annaToken = (await ctx.app.inject({ method: 'POST', url: '/api/auth/login', payload: { login: 'anna', password: PW } })).json().accessToken;
