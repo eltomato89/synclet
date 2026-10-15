@@ -59,10 +59,17 @@ final class FakeMonitorWorld: @unchecked Sendable {
             },
             signal: { container in self.lock.withLock { self.signals.append(container) } },
             fetchAccount: {
-                if self.fetchDelay > .zero { try await Task.sleep(for: self.fetchDelay) }
-                let spaces = self.lock.withLock { () -> [SyncSpace] in
+                // Counted when the request starts, so a test can act while it is in flight.
+                let (spaces, delay) = self.lock.withLock { () -> ([SyncSpace], Duration) in
                     self.accountFetches += 1
-                    return self.spaces
+                    return (self.spaces, self.fetchDelay)
+                }
+                if delay > .zero {
+                    // Ignores cancellation (like a response already on its way), so only the
+                    // monitor's own guard can keep a late answer from being applied.
+                    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                        DispatchQueue.global().asyncAfter(deadline: .now() + delay.timeInterval) { continuation.resume() }
+                    }
                 }
                 return SyncAccount(userId: "u1", email: nil, displayName: "Jens", organizationId: "srv1:u1",
                                    slug: "jens", cursor: "7", spaces: spaces)
@@ -77,6 +84,13 @@ final class FakeMonitorWorld: @unchecked Sendable {
                 AsyncStream { continuation in self.lock.withLock { self.wakeContinuation = continuation } }
             }
         )
+    }
+}
+
+extension Duration {
+    var timeInterval: TimeInterval {
+        let (seconds, attoseconds) = components
+        return Double(seconds) + Double(attoseconds) / 1e18
     }
 }
 
@@ -188,9 +202,11 @@ final class ChangeMonitorTests: XCTestCase {
         monitor.start()
         _ = await eventually { self.world.streamCount == 1 }
         world.send(.connected(cursor: "1"))
-        _ = await eventually { self.world.accountFetches == 1 }
-        monitor.stop()
+        let inFlight = await eventually { self.world.accountFetches == 1 }
+        XCTAssertTrue(inFlight)
+        monitor.stop()   // the fetch is still sleeping (200 ms)
         try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(world.accountFetches, 1)
         XCTAssertEqual(world.rootSignals, 0)
         XCTAssertEqual(stored.value.map(\.id), ["personal"])
     }
