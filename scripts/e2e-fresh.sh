@@ -66,12 +66,14 @@ wait_for 60 "localhost:$OIDC_PORT/default/.well-known/openid-configuration" "moc
 
 # Caddy may only trust the auth proxy container as a source of Remote-* headers (never the Docker
 # gateway the browser's connections come from), so its address is known only now: restart Caddy
-# with it. The server trusts the whole e2e network (it only ever sees Caddy).
+# with it (SYNCLET_FORWARD_AUTH_PROXIES for the headers, SYNCLET_TRUSTED_PROXIES for its XFF).
+# The server trusts the whole e2e network (a throwaway stack; it only ever sees Caddy).
 PROXY=$("${DC[@]}" ps -q authproxy)
 NET=$(docker inspect -f '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' "$PROXY")
 PROXY_IP=$(docker inspect -f "{{(index .NetworkSettings.Networks \"$NET\").IPAddress}}" "$PROXY")
 CIDR=$(docker network inspect -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}' "$NET" | tr ' ' '\n' | grep -m1 '\.' || true)
 [ -n "$PROXY_IP" ] && [ -n "$CIDR" ] || { echo "FAIL: cannot determine the e2e network ($NET: proxy '$PROXY_IP', subnet '$CIDR')" >&2; exit 1; }
+echo "SYNCLET_FORWARD_AUTH_PROXIES=$PROXY_IP/32" >> "$WORK/.env"
 echo "SYNCLET_TRUSTED_PROXIES=$PROXY_IP/32" >> "$WORK/.env"
 "${DC[@]}" up -d --no-deps caddy
 wait_for 30 "localhost:$PORT/api/health" "Caddy"

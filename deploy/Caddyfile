@@ -1,10 +1,10 @@
 {
 	admin off
 	servers {
-		# Proxies in front of Caddy whose X-Forwarded-For is trusted (client IP for rate limits).
+		# Proxies in front of Caddy whose X-Forwarded-For is trusted (client IP for rate limits only).
 		# Empty (default) = trust none: Caddy replaces X-Forwarded-For with the peer address.
-		# Behind an outer reverse proxy set SYNCLET_TRUSTED_PROXIES, e.g. "private_ranges" or
-		# "192.168.1.10/32 10.0.0.0/8".
+		# Behind an outer reverse proxy set SYNCLET_TRUSTED_PROXIES to that proxy's address, e.g.
+		# "192.168.1.10/32". This never makes Caddy pass forward-auth headers (see below).
 		trusted_proxies static {$SYNCLET_TRUSTED_PROXIES:}
 		# Pick the client IP right-to-left (first untrusted hop), so a client cannot spoof it by
 		# sending its own X-Forwarded-For through a proxy that appends to the header.
@@ -30,16 +30,19 @@
 				close
 			}
 		}
-		# Forward-auth identity headers are only honored from the direct peers in
-		# SYNCLET_TRUSTED_PROXIES (an authenticating outer proxy); from anyone else they are removed
-		# before reaching the server, which trusts Caddy as its forward-auth proxy.
-		# remote_ip = the direct connection, never X-Forwarded-For. Unset, SYNCLET_TRUSTED_PROXIES
-		# falls back to the default after the colon (192.0.2.255, a documentation address that never
+		# Forward-auth identity headers are only passed on from the direct peers in
+		# SYNCLET_FORWARD_AUTH_PROXIES: the exact address(es) of the authenticating outer proxy
+		# (e.g. "192.168.1.10/32"), never a whole range such as private_ranges, because any host
+		# in it could then sign in as anyone. From everyone else they are removed before reaching
+		# the server, which trusts Caddy as its forward-auth proxy. This is independent of
+		# SYNCLET_TRUSTED_PROXIES (X-Forwarded-For only).
+		# remote_ip = the direct connection, never X-Forwarded-For. Unset, the variable falls back
+		# to the default after the colon (192.0.2.255, a documentation address that never
 		# connects); set but empty (compose passes it empty by default) it gives a remote_ip matcher
 		# without ranges, which matches nobody. Either way nothing is trusted and the headers are
-		# always removed (checked against the e2e stack).
+		# always removed.
 		# Custom header names configured in the admin UI (SSO > forward-auth) must be added here too.
-		@untrusted_auth_headers not remote_ip {$SYNCLET_TRUSTED_PROXIES:192.0.2.255/32}
+		@untrusted_auth_headers not remote_ip {$SYNCLET_FORWARD_AUTH_PROXIES:192.0.2.255/32}
 		request_header @untrusted_auth_headers -Remote-User
 		request_header @untrusted_auth_headers -Remote-Email
 		request_header @untrusted_auth_headers -Remote-Name

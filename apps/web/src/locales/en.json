@@ -974,7 +974,7 @@
         "enabled": "Sign in through the auth proxy",
         "enabledHint": "Users who arrive with the user header from a trusted proxy are signed in automatically.",
         "trustedProxies": "Trusted proxy addresses",
-        "trustedProxiesHint": "IP addresses or CIDR ranges of your proxy, e.g. 172.18.0.0/16. Headers from any other address are ignored.",
+        "trustedProxiesHint": "Only the address Synclet receives the headers from directly: in the shipped setup the fixed IP of the Caddy container, e.g. 172.30.0.10/32 (see README), not the whole Docker network. Headers from any other address are ignored.",
         "userHeader": "User header",
         "emailHeader": "Email header",
         "nameHeader": "Name header",
