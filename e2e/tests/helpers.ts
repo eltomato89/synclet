@@ -4,53 +4,39 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inflateRawSync } from 'node:zlib';
 
-// Shared helpers for the Phase 1b specs. files.spec.ts runs first (Playwright project dependency)
-// and creates the administrator; every other spec signs up its own user through the admin API, so
-// specs never see each other's files and can run in parallel.
+// Shared helpers for the Phase 1b specs. Project order (playwright.config.ts): files.spec.ts runs
+// the first-run setup and leaves the administrator; users.setup.ts signs in as it once and creates
+// one account per spec (SPEC_USERS); each spec then signs in once as its own user, so specs never
+// see each other's files and can run in parallel. Logins are few on purpose: the server allows 10
+// per client IP in a burst, then one per 6 s.
 
 export const BASE_URL = process.env.SYNCLET_URL ?? 'http://localhost:8080';
 export const ADMIN = { login: 'e2e', password: 'correct horse battery' };
+export const SPEC_USERS = ['trash', 'share', 'preview', 'search', 'upload'] as const;
+export type SpecUser = (typeof SPEC_USERS)[number];
+export const USER_PASSWORD = 'correct horse battery';
 export const FIXTURES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../apps/server/test/fixtures');
 export const fixture = (name: string) => readFileSync(path.join(FIXTURES, name));
 
-export interface TestUser { username: string; password: string; api: APIRequestContext }
+export interface TestUser { username: string; api: APIRequestContext }
 
-async function tokenFor(login: string, password: string): Promise<string> {
-  const ctx = await request.newContext({ baseURL: BASE_URL });
-  try {
-    const res = await ctx.post('/api/auth/login', { data: { login, password } });
-    expect(res.ok(), `login ${login}: ${res.status()}`).toBeTruthy();
-    return (await res.json()).accessToken as string;
-  } finally {
-    await ctx.dispose();
-  }
+export async function login(ctx: APIRequestContext, username: string, password: string): Promise<string> {
+  const res = await ctx.post('/api/auth/login', { data: { login: username, password } });
+  expect(res.ok(), `login ${username}: ${res.status()} ${await res.text()}`).toBeTruthy();
+  return (await res.json()).accessToken as string;
 }
 
-async function bearer(login: string, password: string): Promise<APIRequestContext> {
-  const token = await tokenFor(login, password);
-  return request.newContext({ baseURL: BASE_URL, extraHTTPHeaders: { authorization: `Bearer ${token}` } });
-}
-
-/** A fresh, empty account (unique username) plus an API client signed in as it. */
-export async function newUser(prefix: string): Promise<TestUser> {
-  const admin = await bearer(ADMIN.login, ADMIN.password);
-  const username = `${prefix}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-  const password = 'correct horse battery';
-  try {
-    const res = await admin.post('/api/admin/users', { data: { username, displayName: username, password } });
-    expect(res.status(), await res.text()).toBe(201);
-  } finally {
-    await admin.dispose();
-  }
-  return { username, password, api: await bearer(username, password) };
-}
-
-/** Signs the browser context in (refresh cookie via the API) and opens My files. */
-export async function signIn(page: Page, user: TestUser): Promise<void> {
-  const res = await page.request.post('/api/auth/login', { data: { login: user.username, password: user.password } });
-  expect(res.ok()).toBeTruthy();
+/**
+ * Signs the browser context in as the spec's user (the refresh cookie lands in the context), opens
+ * My files, and returns an API client using the same session's access token.
+ */
+export async function signIn(page: Page, username: SpecUser): Promise<TestUser> {
+  const token = await login(page.request, `e2e-${username}`, USER_PASSWORD);
   await page.goto('/files');
-  await expect(page.getByRole('grid')).toBeVisible();
+  await expect(page).toHaveURL(/\/files$/);
+  await expect(page.locator('#main')).toBeVisible();
+  const api = await request.newContext({ baseURL: BASE_URL, extraHTTPHeaders: { authorization: `Bearer ${token}` } });
+  return { username: `e2e-${username}`, api };
 }
 
 export async function mkdir(api: APIRequestContext, parentId: string, name: string): Promise<string> {

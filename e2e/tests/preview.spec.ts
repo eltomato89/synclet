@@ -1,5 +1,5 @@
 import { expect, type Page, test } from '@playwright/test';
-import { fixture, mkdir, newUser, row, signIn, textPdf, upload, waitForThumbnail } from './helpers';
+import { fixture, mkdir, row, signIn, textPdf, upload, waitForThumbnail } from './helpers';
 
 test.use({ locale: 'en-US' });
 
@@ -24,14 +24,14 @@ async function openPreview(page: Page, name: string) {
 }
 
 test('QuickLook shows images, PDFs, sanitized markdown and video; thumbnails appear in the list', async ({ page }) => {
-  const user = await newUser('preview');
+  const user = await signIn(page, 'preview');
   const folder = await mkdir(user.api, 'root', 'Media');
   const jpg = await upload(user.api, folder, 'photo.jpg', fixture('rotated.jpg'));
   await upload(user.api, folder, 'invoice.pdf', textPdf('Invoice 42'));
   await upload(user.api, folder, 'notes.md', HOSTILE_MD);
   await upload(user.api, folder, 'clip.mp4', fixture('sample.mp4'));
   await waitForThumbnail(user.api, jpg);
-  await signIn(page, user);
+  await page.reload();
   await row(page, 'Media').dblclick();
 
   // Thumbnail from the worker replaces the file icon.

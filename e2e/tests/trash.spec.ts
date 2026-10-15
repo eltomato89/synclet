@@ -1,13 +1,13 @@
 import { expect, test } from '@playwright/test';
-import { mkdir, newUser, row, signIn, upload } from './helpers';
+import { mkdir, row, signIn, upload } from './helpers';
 
 test.use({ locale: 'en-US' });
 
 test('delete a folder, find it in the trash, restore it into its old place', async ({ page }) => {
-  const user = await newUser('trash');
+  const user = await signIn(page, 'trash');
   const folderId = await mkdir(user.api, 'root', 'Projects');
   const fileId = await upload(user.api, folderId, 'plan.txt', 'step one');
-  await signIn(page, user);
+  await page.reload();
 
   await row(page, 'Projects').click();
   await page.keyboard.press('Delete');

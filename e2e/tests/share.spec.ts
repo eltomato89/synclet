@@ -1,16 +1,16 @@
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
-import { mkdir, newUser, readZip, row, signIn, upload } from './helpers';
+import { mkdir, readZip, row, signIn, upload } from './helpers';
 
 test.use({ locale: 'en-US' });
 
 test('password-protected folder link: unlock in a fresh browser, download a file and the ZIP', async ({ page, browser }) => {
-  const user = await newUser('share');
+  const user = await signIn(page, 'share');
   const folderId = await mkdir(user.api, 'root', 'Holiday');
   await upload(user.api, folderId, 'notes.txt', 'sunny');
   const sub = await mkdir(user.api, folderId, 'Day 1');
   await upload(user.api, sub, 'beach.txt', 'sand');
-  await signIn(page, user);
+  await page.reload();
 
   await row(page, 'Holiday').click({ button: 'right' });
   await page.getByRole('menuitem', { name: 'Share …' }).click();
