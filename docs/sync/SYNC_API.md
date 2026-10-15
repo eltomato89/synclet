@@ -388,11 +388,13 @@ stream that tells a client **that** its journal advanced. It never carries the c
 |---|---|---|
 | `hello` | `{ cursor }` | First event of every stream; `cursor` is the user's current head (as in `GET /account`). |
 | `changes` | `{ space, cursor }` | New journal entries of the user were committed. `space` is currently always `"personal"`; `cursor` is the head at the time of the event. Bursts are coalesced: at most one event per 250 ms. |
-| `bye` | `{ reason }` | The server ends the stream right after this event. `too_many_streams`: the user opened another stream (see limits). `unauthorized`: the token is no longer valid (device revoked, user disabled, access token expired); reconnecting returns the matching `401`. Clients must accept unknown reasons. |
+| `bye` | `{ reason }` | The server ends the stream right after this event. `too_many_streams`: the user opened another stream (see limits). `unauthorized`: the token is no longer valid (device revoked, user disabled, access token expired); reconnecting returns the matching `401`. `server_shutdown`: the server is stopping; reconnect after a short delay (with backoff). Clients must accept unknown reasons. |
 
 - **Ping:** a comment line `: ping` every 25 s (`SYNCLET_EVENTS_PING_SECONDS` on the server).
   Before each ping the server re-checks the token; a revoked device or disabled user's stream ends
-  at the latest at the next ping. A client that has seen nothing (no event, no ping) for about
+  at the latest at the next ping. It also compares the user's cursor with the last one it sent on
+  the stream and sends `changes` first if they differ, so a change whose notification was lost
+  inside the server is signalled at the latest with the next ping. A client that has seen nothing (no event, no ping) for about
   60 s should treat the connection as dead and reconnect.
 - **Wake-up only.** An event is a hint, never data: on `hello` and on every `changes`, drain
   `GET /sync/v1/changes?cursor=<stored cursor>` as usual (§5) and store the resulting cursor. The

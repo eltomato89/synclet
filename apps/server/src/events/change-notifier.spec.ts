@@ -4,10 +4,19 @@ import { ChangeNotifier, CHANGES_CHANNEL, ListenClient } from './change-notifier
 class FakeClient extends EventEmitter implements ListenClient {
   queries: string[] = [];
   ended = false;
+  destroyed = false;
+  /** How `SELECT 1` behaves: answer, never answer (half-open TCP), or fail. */
+  health: 'ok' | 'hang' | 'fail' = 'ok';
   constructor(private readonly failConnect = false) { super(); }
   async connect() { if (this.failConnect) throw new Error('ECONNREFUSED'); }
-  async query(sql: string) { this.queries.push(sql); }
+  query(sql: string): Promise<unknown> {
+    this.queries.push(sql);
+    if (sql === 'SELECT 1' && this.health === 'hang') return new Promise(() => undefined);
+    if (sql === 'SELECT 1' && this.health === 'fail') return Promise.reject(new Error('Connection terminated'));
+    return Promise.resolve();
+  }
   async end() { this.ended = true; }
+  destroy() { this.destroyed = true; }
   push(payload: string, channel = CHANGES_CHANNEL) { this.emit('notification', { channel, payload }); }
 }
 
@@ -122,6 +131,74 @@ describe('ChangeNotifier', () => {
     jest.advanceTimersByTime(30_000);
     await tick();
     expect(clients.length).toBe(before + 1);
+  });
+
+  it('ready resolves after the first successful LISTEN', async () => {
+    let done = false;
+    void n.ready.then(() => { done = true; });
+    n.onModuleInit();
+    await tick(); await tick();
+    expect(done).toBe(true);
+  });
+
+  it('liveness check: a SELECT 1 without answer within 5 s destroys the client, reconnects and wakes everyone', async () => {
+    n.onModuleInit();
+    await tick();
+    const cb = jest.fn();
+    n.subscribe('u1', cb);
+    jest.advanceTimersByTime(30_000);
+    await tick();
+    expect(clients[0].queries).toEqual(['LISTEN synclet_changes', 'SELECT 1']); // healthy: stays
+    expect(clients).toHaveLength(1);
+    clients[0].health = 'hang';
+    jest.advanceTimersByTime(30_000);
+    await tick();
+    jest.advanceTimersByTime(4999);
+    await tick();
+    expect(clients[0].destroyed).toBe(false);
+    jest.advanceTimersByTime(1);
+    await tick();
+    expect(clients[0].destroyed).toBe(true);
+    expect(clients[0].ended).toBe(true);
+    jest.advanceTimersByTime(1000); // backoff
+    await tick();
+    expect(clients).toHaveLength(2);
+    expect(clients[1].queries).toEqual(['LISTEN synclet_changes']);
+    jest.advanceTimersByTime(250);
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
+
+  it('liveness check: a failing SELECT 1 reconnects', async () => {
+    n.onModuleInit();
+    await tick();
+    clients[0].health = 'fail';
+    jest.advanceTimersByTime(30_000);
+    await tick(); await tick();
+    expect(clients[0].destroyed).toBe(true);
+    jest.advanceTimersByTime(1000);
+    await tick();
+    expect(clients).toHaveLength(2);
+  });
+
+  it('a throwing client factory is retried with backoff, never an unhandled rejection', async () => {
+    let calls = 0;
+    const m = new ChangeNotifier({
+      createClient: () => {
+        calls++;
+        if (calls === 1) throw new Error('invalid connection string');
+        const c = new FakeClient();
+        clients.push(c);
+        return c;
+      },
+    });
+    m.onModuleInit();
+    await tick();
+    expect(calls).toBe(1);
+    jest.advanceTimersByTime(1000);
+    await tick();
+    expect(calls).toBe(2);
+    expect(clients.at(-1)!.queries).toEqual(['LISTEN synclet_changes']);
+    await m.stop();
   });
 
   it('does not connect when disabled', async () => {

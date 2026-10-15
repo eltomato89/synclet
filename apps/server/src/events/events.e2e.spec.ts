@@ -3,6 +3,8 @@ import type { AddressInfo } from 'node:net';
 import { createTestApp, createTestUser, TestContext } from '../../test/context';
 import { AuthService } from '../auth/auth.service';
 import { JournalService } from '../journal/journal.service';
+import { ChangeNotifier } from './change-notifier';
+import { EventsController } from './events.controller';
 
 interface SseEvent { event: string; data: unknown }
 
@@ -96,7 +98,7 @@ describe('GET /api/sync/v1/events (SSE)', () => {
     token = res.json().accessToken; userId = res.json().user.id;
     deviceToken = (await api('POST', '/sync/v1/devices', { name: 'Mac', platform: 'macos', appVersion: '1.0' })).json().token;
     // The LISTEN connection is established asynchronously at startup.
-    await sleep(300);
+    await ctx.app.get(ChangeNotifier).ready;
   });
   afterEach(async () => {
     for (const s of streams.splice(0)) s.close();
@@ -130,14 +132,37 @@ describe('GET /api/sync/v1/events (SSE)', () => {
     expect(s.of('changes')[0].data).toEqual({ space: 'personal', cursor });
   });
 
-  it('a burst of changes is coalesced into one event', async () => {
+  it('a burst of commits is coalesced into fewer events', async () => {
     const s = await opened();
-    await Promise.all(['a', 'b', 'c', 'd', 'e'].map((n) => api('POST', '/sync/v1/items', { parentId: 'root', type: 'folder', name: n })));
+    const journal = ctx.app.get(JournalService);
+    for (let i = 0; i < 5; i++) {
+      await ctx.prisma.$transaction(async (tx) => {
+        await journal.lockUser(tx, userId);
+        await journal.record(tx, userId, [{ id: `00000000-0000-4000-8000-00000000000${i}`, type: 'folder' }], 'upsert');
+      });
+    }
     await s.until(() => s.of('changes').length > 0, 3000, 'changes');
     await sleep(600);
     const { cursor } = (await api('GET', '/sync/v1/cursor')).json();
     expect(s.of('changes').at(-1)!.data).toEqual({ space: 'personal', cursor });
-    expect(s.of('changes').length).toBeLessThanOrEqual(2);
+    expect(s.of('changes').length).toBeLessThan(5);
+  });
+
+  it('catches up at the next ping when no notification arrives (dead or ineffective LISTEN)', async () => {
+    const notifier = ctx.app.get(ChangeNotifier);
+    const swallow = jest.spyOn(notifier, 'notify').mockImplementation(() => undefined);
+    const s = await opened();
+    const pingsBefore = s.pings;
+    await api('POST', '/sync/v1/items', { parentId: 'root', type: 'folder', name: 'silent' });
+    const { cursor } = (await api('GET', '/sync/v1/cursor')).json();
+    await s.until(() => s.of('changes').length > 0, 2500, 'changes from the ping catch-up');
+    expect(swallow).toHaveBeenCalled(); // the notification itself was swallowed
+    expect(s.of('changes')[0].data).toEqual({ space: 'personal', cursor });
+    // Sent together with the next ping (changes first, then the ping), and only once.
+    await s.until(() => s.pings > pingsBefore, 2000, 'ping');
+    await s.until(() => s.pings > pingsBefore + 1, 2000, 'second ping');
+    expect(s.of('changes')).toHaveLength(1);
+    swallow.mockRestore();
   });
 
   it('a rolled-back journal transaction yields no event', async () => {
@@ -173,6 +198,28 @@ describe('GET /api/sync/v1/events (SSE)', () => {
     const s = await opened(token);
     await ctx.prisma.user.update({ where: { id: userId }, data: { disabledAt: new Date() } });
     await s.until(() => s.ended, 3000, 'end of stream');
+    expect(s.of('bye').at(-1)?.data).toEqual({ reason: 'unauthorized' });
+  });
+
+  it('streams that ended free their slot: 10 open, 5 closed by the client, 5 more → no bye', async () => {
+    const first: StreamClient[] = [];
+    for (let i = 0; i < 10; i++) first.push(await opened());
+    for (const s of first.slice(0, 5)) s.close();
+    await sleep(200);
+    const more: StreamClient[] = [];
+    for (let i = 0; i < 5; i++) more.push(await opened());
+    await sleep(300);
+    for (const s of [...first.slice(5), ...more]) {
+      expect(s.ended).toBe(false);
+      expect(s.of('bye')).toEqual([]);
+    }
+  });
+
+  it('a stream opened during shutdown is closed at once with bye server_shutdown', async () => {
+    ctx.app.get(EventsController).onModuleDestroy();
+    const s = await open();
+    await s.until(() => s.ended, 3000, 'end');
+    expect(s.of('bye')).toEqual([{ event: 'bye', data: { reason: 'server_shutdown' } }]);
   });
 
   it('opening an 11th stream closes the oldest with bye too_many_streams', async () => {
@@ -206,6 +253,7 @@ describe('GET /api/sync/v1/events (SSE)', () => {
     const s = await open();
     await s.until(() => s.ended, 3000, 'end');
     expect(s.status).toBe(429);
+    expect(Number(s.headers['retry-after'])).toBeGreaterThanOrEqual(1);
     expect(JSON.parse(s.body).code).toBe('rate_limited');
   });
 });

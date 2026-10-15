@@ -93,14 +93,24 @@ describe('events (SSE)', () => {
     expect(schemaErrors('EventHello', hello)).toBe('');
 
     const folder = await scratchFolder(api, ctx, 'events');
-    await s.until(() => s.of('changes').length > 0, 3000, 'changes');
-    const changes = s.of('changes').at(-1)!.data;
-    expect(schemaErrors('EventChanges', changes)).toBe('');
-    expect(changes.space).toBe('personal');
     // A wake-up only: the change itself comes from /changes.
     const drained = await drainChanges(api, hello.cursor);
     expect(drained.changes).toContainEqual({ op: 'upsert', item: expect.objectContaining({ id: folder.id }) });
-    expect((await drainChanges(api, changes.cursor)).changes.some((c) => c.op === 'upsert' && c.item.id === folder.id)).toBe(false);
+    // Unrelated activity of the account may produce earlier events: wait (3 s in total) for the
+    // event whose cursor already covers the folder, i.e. draining from it no longer returns it.
+    const deadline = Date.now() + 3000;
+    let seen = 0;
+    for (;;) {
+      await s.until(() => s.of('changes').length > seen, Math.max(1, deadline - Date.now()), '`changes` covering the new folder');
+      const events = s.of('changes');
+      const covered = await Promise.all(events.slice(seen).map(async (e) => {
+        expect(schemaErrors('EventChanges', e.data)).toBe('');
+        expect(e.data.space).toBe('personal');
+        return !(await drainChanges(api, e.data.cursor)).changes.some((c) => c.op === 'upsert' && c.item.id === folder.id);
+      }));
+      if (covered.includes(true)) break;
+      seen = events.length;
+    }
   });
 
   it(`sends a \`: ping\` comment (every ${pingMs / 1000} s)`, async () => {

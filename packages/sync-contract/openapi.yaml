@@ -369,7 +369,8 @@ paths:
           per 250 ms).
         - `event: bye` – the server ends the stream, `data` = `EventBye`.
         - `: ping` comment every 25 s; the token is re-checked before each ping and the stream
-          ends (`bye`, `unauthorized`) when it is no longer valid.
+          ends (`bye`, `unauthorized`) when it is no longer valid. A change the server did not
+          signal at once (notification lost) is signalled with the next ping at the latest.
 
         At most 10 open streams per user (opening another closes the oldest with `bye`,
         `too_many_streams`); at most 30 stream opens per user and minute.
@@ -1214,7 +1215,7 @@ components:
       properties:
         reason:
           type: string
-          description: '`too_many_streams` (another stream of the user was opened) or `unauthorized` (token no longer valid: reconnect to learn the error code). Clients must accept other values.'
+          description: '`too_many_streams` (another stream of the user was opened), `unauthorized` (token no longer valid: reconnect to learn the error code) or `server_shutdown` (reconnect after a short delay). Clients must accept other values.'
     SyncChange:
       oneOf:
         - type: object

@@ -61,6 +61,9 @@ const byteCount = (name: string, v: string | undefined, dflt: number) => {
   return Number(v);
 };
 
+/** At least 1 s (0 and negative values mean 1 s); unparsable values fall back to 25 s. */
+const pingSeconds = (v: number) => (Number.isFinite(v) ? Math.max(1, v) : 25);
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const publicUrl = env.SYNCLET_PUBLIC_URL || null;
   return {
@@ -89,7 +92,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     officeInternalUrl: env.OFFICE_INTERNAL_URL || 'http://office',
     ssoEmergency: bool(env.SYNCLET_SSO_EMERGENCY, false),
     ssoAllowHttpIssuer: env.SYNCLET_SSO_ALLOW_HTTP_ISSUER === '1',
-    eventsPingSeconds: Math.max(1, int(env.SYNCLET_EVENTS_PING_SECONDS, 25) || 25),
+    eventsPingSeconds: pingSeconds(int(env.SYNCLET_EVENTS_PING_SECONDS, 25)),
     role: 'server',
   };
 }

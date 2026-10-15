@@ -8,6 +8,8 @@ export interface ListenClient {
   connect(): Promise<unknown>;
   query(sql: string): Promise<unknown>;
   end(): Promise<unknown>;
+  /** Tears the socket down at once (a half-open connection never completes `end()`). */
+  destroy?(): void;
   on(event: 'notification', cb: (msg: { channel: string; payload?: string }) => void): unknown;
   on(event: 'error', cb: (err: Error) => void): unknown;
   on(event: 'end', cb: () => void): unknown;
@@ -20,6 +22,10 @@ export interface ChangeNotifierOptions {
   coalesceMs?: number;
   minBackoffMs?: number;
   maxBackoffMs?: number;
+  /** Interval of the `SELECT 1` liveness check on the LISTEN connection. */
+  healthIntervalMs?: number;
+  /** A liveness check without an answer within this time counts as a lost connection. */
+  healthTimeoutMs?: number;
   /** false: never connect (worker role). */
   enabled?: boolean;
 }
@@ -42,11 +48,19 @@ export class ChangeNotifier implements OnModuleInit, OnModuleDestroy {
   private readonly coalesceMs: number;
   private readonly minBackoffMs: number;
   private readonly maxBackoffMs: number;
+  private readonly healthIntervalMs: number;
+  private readonly healthTimeoutMs: number;
+  private healthTimer: NodeJS.Timeout | null = null;
+  private markReady!: () => void;
+  /** Resolves after the first successful LISTEN (tests wait for it). */
+  readonly ready = new Promise<void>((resolve) => { this.markReady = resolve; });
 
   constructor(private readonly opts: ChangeNotifierOptions) {
     this.coalesceMs = opts.coalesceMs ?? 250;
     this.minBackoffMs = opts.minBackoffMs ?? 1000;
     this.maxBackoffMs = opts.maxBackoffMs ?? 30_000;
+    this.healthIntervalMs = opts.healthIntervalMs ?? 30_000;
+    this.healthTimeoutMs = opts.healthTimeoutMs ?? 5000;
   }
 
   onModuleInit(): void {
@@ -96,6 +110,8 @@ export class ChangeNotifier implements OnModuleInit, OnModuleDestroy {
     this.stopped = true;
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = null;
+    if (this.healthTimer) clearInterval(this.healthTimer);
+    this.healthTimer = null;
     for (const t of this.pending.values()) clearTimeout(t);
     this.pending.clear();
     const c = this.client;
@@ -105,13 +121,24 @@ export class ChangeNotifier implements OnModuleInit, OnModuleDestroy {
 
   private async connect(): Promise<void> {
     if (this.stopped) return;
-    const client = this.opts.createClient();
+    let client: ListenClient;
+    try {
+      client = this.opts.createClient();
+    } catch (e) {
+      // E.g. an unusable connection string: never an unhandled rejection, keep retrying.
+      if (this.attempt === 0) this.log.error(`cannot create the LISTEN client: ${(e as Error).message}`);
+      this.scheduleRetry();
+      return;
+    }
     this.client = client;
     let lost = false;
     const onLost = (err?: Error) => {
       if (lost) return;
       lost = true;
       if (this.client === client) this.client = null;
+      if (this.healthTimer) clearInterval(this.healthTimer);
+      this.healthTimer = null;
+      client.destroy?.();
       void client.end().catch(() => undefined);
       if (this.stopped) return;
       // Once per outage, not on every failed retry.
@@ -133,7 +160,25 @@ export class ChangeNotifier implements OnModuleInit, OnModuleDestroy {
     if (lost || this.stopped) return;
     if (this.attempt > 0) this.log.log('LISTEN connection restored');
     this.attempt = 0;
+    this.markReady();
+    // A LISTEN connection sends nothing on its own, so a silently dead peer (half-open TCP, a
+    // restarted proxy) would go unnoticed: probe it.
+    this.healthTimer = setInterval(() => void this.probe(client, onLost), this.healthIntervalMs);
     this.wakeAll();
+  }
+
+  private async probe(client: ListenClient, onLost: (err?: Error) => void): Promise<void> {
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`no answer to the liveness check within ${this.healthTimeoutMs} ms`)), this.healthTimeoutMs);
+    });
+    try {
+      await Promise.race([client.query('SELECT 1'), timeout]);
+    } catch (e) {
+      onLost(e as Error);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private scheduleRetry(): void {

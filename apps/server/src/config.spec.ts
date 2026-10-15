@@ -68,5 +68,7 @@ describe('loadConfig', () => {
     expect(loadConfig({ SYNCLET_EVENTS_PING_SECONDS: '' }).eventsPingSeconds).toBe(25);
     expect(loadConfig({ SYNCLET_EVENTS_PING_SECONDS: '5' }).eventsPingSeconds).toBe(5);
     expect(loadConfig({ SYNCLET_EVENTS_PING_SECONDS: 'x' }).eventsPingSeconds).toBe(25);
+    expect(loadConfig({ SYNCLET_EVENTS_PING_SECONDS: '0' }).eventsPingSeconds).toBe(1);
+    expect(loadConfig({ SYNCLET_EVENTS_PING_SECONDS: '-3' }).eventsPingSeconds).toBe(1);
   });
 });

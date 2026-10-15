@@ -55,27 +55,42 @@ export class EventsController implements OnModuleDestroy {
     res.flushHeaders();
 
     let closed = false;
+    /** The cursor of the last `hello`/`changes` actually written to this stream. */
     let lastCursor: string | null = null;
+    let changesQueued = false;
     let queue: Promise<void> = Promise.resolve();
-    const write = (chunk: string) => {
-      if (!closed && !res.writableEnded && !res.destroyed) res.write(chunk);
+    /**
+     * Writes unless the client is not reading (socket buffer full): then the chunk is dropped.
+     * Dropping is safe, `changes` is idempotent: the cursor is re-sent on `drain` or at the next
+     * ping because `lastCursor` stays behind. `force` is for the final `bye`.
+     */
+    const write = (chunk: string, force = false): boolean => {
+      if (closed || res.writableEnded || res.destroyed) return false;
+      if (res.writableNeedDrain && !force) return false;
+      res.write(chunk);
+      return true;
     };
     /** Runs stream work one at a time, so events never overtake each other. */
     const enqueue = (fn: () => Promise<void>) => {
       queue = queue.then(fn).catch((e: Error) => this.log.warn(`event stream: ${e.message}`));
     };
-    const sendCursor = (event: 'hello' | 'changes') => enqueue(async () => {
-      if (closed) return;
+    /** Sends `changes` when the journal moved past the last cursor sent (reads the cursor). */
+    const catchUp = async () => {
       const cursor = await this.journal.currentCursor(user.id);
-      if (event === 'changes' && cursor === lastCursor) return; // e.g. a reconnect wake-up without news
-      lastCursor = cursor;
-      write(event === 'hello'
-        ? `event: hello\ndata: ${JSON.stringify({ cursor })}\n\n`
-        : `event: changes\ndata: ${JSON.stringify({ space: 'personal', cursor })}\n\n`);
-    });
+      if (cursor === lastCursor) return; // e.g. a reconnect wake-up without news
+      if (write(`event: changes\ndata: ${JSON.stringify({ space: 'personal', cursor })}\n\n`)) lastCursor = cursor;
+    };
+    const queueChanges = () => {
+      if (changesQueued) return; // the pending read will see the newest cursor anyway
+      changesQueued = true;
+      enqueue(async () => {
+        changesQueued = false;
+        if (!closed) await catchUp();
+      });
+    };
 
     // Subscribe before reading the hello cursor, so no commit between the two is missed.
-    const unsubscribe = this.notifier.subscribe(user.id, () => sendCursor('changes'));
+    const unsubscribe = this.notifier.subscribe(user.id, queueChanges);
     const ping = setInterval(() => enqueue(async () => {
       if (closed) return;
       try {
@@ -87,6 +102,9 @@ export class EventsController implements OnModuleDestroy {
         stream.close('unauthorized');
         return;
       }
+      // Safety net: should the LISTEN connection be dead without anybody noticing (or never get
+      // notifications, e.g. behind a transaction pooler), a change still arrives within one ping.
+      await catchUp();
       write(': ping\n\n');
     }), this.config.eventsPingSeconds * 1000);
 
@@ -102,7 +120,7 @@ export class EventsController implements OnModuleDestroy {
     const stream: Stream = {
       userId: user.id,
       close: (reason) => {
-        if (reason) write(`event: bye\ndata: ${JSON.stringify({ reason })}\n\n`);
+        if (reason) write(`event: bye\ndata: ${JSON.stringify({ reason })}\n\n`, true);
         cleanup();
         res.end();
       },
@@ -111,17 +129,32 @@ export class EventsController implements OnModuleDestroy {
     req.raw.on('close', cleanup);
     res.on('close', cleanup);
     res.on('error', cleanup);
+    res.on('drain', queueChanges);
 
+    if (this.shuttingDown) {
+      stream.close('server_shutdown');
+      return;
+    }
     const list = this.streams.get(user.id) ?? [];
     while (list.length >= MAX_STREAMS_PER_USER) list.shift()!.close('too_many_streams');
     list.push(stream);
     this.streams.set(user.id, list);
 
-    sendCursor('hello');
+    enqueue(async () => {
+      if (closed) return;
+      const cursor = await this.journal.currentCursor(user.id);
+      if (write(`event: hello\ndata: ${JSON.stringify({ cursor })}\n\n`, true)) lastCursor = cursor;
+    });
   }
 
-  /** Ends every open stream on shutdown (otherwise the HTTP server waits for them). */
+  private shuttingDown = false;
+
+  /**
+   * Ends every open stream on shutdown (otherwise the HTTP server waits for them). Streams opened
+   * after this, before the HTTP server stops accepting, are closed right away.
+   */
   onModuleDestroy(): void {
-    for (const list of [...this.streams.values()]) for (const s of [...list]) s.close();
+    this.shuttingDown = true;
+    for (const list of [...this.streams.values()]) for (const s of [...list]) s.close('server_shutdown');
   }
 }
