@@ -15,6 +15,7 @@ export class JournalService {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${userId}::text, 0))`;
   }
 
+  /** The only writer of `FileChange` rows (API and indexer). */
   async record(tx: Tx, userId: string, refs: ItemRef[], op: ChangeOp): Promise<void> {
     const unique = [...new Map(refs.map((r) => [r.id, r])).values()];
     if (unique.length === 0) return;
@@ -27,6 +28,9 @@ export class JournalService {
     await tx.fileChange.createMany({
       data: unique.map((r, i) => ({ scopeId: userId, seq: first + BigInt(i), itemId: r.id, itemType: r.type, op })),
     });
+    // Wakes the user's SSE streams (events/change-notifier.ts). Sent on the same transaction:
+    // Postgres delivers it only on commit, and a rolled-back transaction delivers nothing.
+    await tx.$executeRaw`SELECT pg_notify('synclet_changes', ${userId}::text)`;
   }
 
   async currentCursor(userId: string): Promise<string> {

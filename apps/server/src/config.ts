@@ -41,6 +41,8 @@ export interface AppConfig {
    * Without it, issuers must use https.
    */
   ssoAllowHttpIssuer: boolean;
+  /** Interval of the `: ping` comment on SSE event streams; the token is re-checked before each ping. */
+  eventsPingSeconds: number;
   /** Process role; set by the entrypoint, not by the environment. */
   role: 'server' | 'worker';
 }
@@ -87,6 +89,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     officeInternalUrl: env.OFFICE_INTERNAL_URL || 'http://office',
     ssoEmergency: bool(env.SYNCLET_SSO_EMERGENCY, false),
     ssoAllowHttpIssuer: env.SYNCLET_SSO_ALLOW_HTTP_ISSUER === '1',
+    eventsPingSeconds: Math.max(1, int(env.SYNCLET_EVENTS_PING_SECONDS, 25) || 25),
     role: 'server',
   };
 }

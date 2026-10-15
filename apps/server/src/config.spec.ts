@@ -62,4 +62,11 @@ describe('loadConfig', () => {
       expect(() => loadConfig({ SYNCLET_MAX_UPLOAD_BYTES: v })).toThrow(/SYNCLET_MAX_UPLOAD_BYTES must be a plain number of bytes/);
     }
   });
+
+  it('SYNCLET_EVENTS_PING_SECONDS: default 25 s, at least 1 s', () => {
+    expect(loadConfig({}).eventsPingSeconds).toBe(25);
+    expect(loadConfig({ SYNCLET_EVENTS_PING_SECONDS: '' }).eventsPingSeconds).toBe(25);
+    expect(loadConfig({ SYNCLET_EVENTS_PING_SECONDS: '5' }).eventsPingSeconds).toBe(5);
+    expect(loadConfig({ SYNCLET_EVENTS_PING_SECONDS: 'x' }).eventsPingSeconds).toBe(25);
+  });
 });

@@ -355,8 +355,62 @@ by order or compute with it. A cursor is per user, not per device.
 
 **Recommended client loop:** on first sync take `account.cursor` (or the first `children` page's
 cursor), enumerate, then poll `/changes` (File Provider: on `enumerateChanges`; Windows: on a timer,
-e.g. every 30 s, and after local writes). A push channel (`GET /events`, SSE) and APNs follow in
-Phase 2/3; until then clients poll.
+e.g. every 30 s, and after local writes). To learn about remote changes without delay, keep the
+event stream open (§5a) and drain `/changes` on each event; poll only while it is disconnected.
+APNs pushes follow in Phase 3.
+
+---
+
+## 5a. Events
+
+`GET /sync/v1/events` is a long-lived [Server-Sent Events](https://html.spec.whatwg.org/multipage/server-sent-events.html)
+stream that tells a client **that** its journal advanced. It never carries the changes themselves.
+
+- **Authentication:** device token (`Authorization: Bearer syd_…`) or web access token.
+  `401 unauthorized` / `401 device_revoked` as for every other route.
+- **Response:** `200`, `Content-Type: text/event-stream`, `Cache-Control: no-cache, no-transform`,
+  `X-Accel-Buffering: no`. UTF-8, one event per block, blocks separated by a blank line:
+
+  ```
+  event: hello
+  data: {"cursor":"1234"}
+
+  event: changes
+  data: {"space":"personal","cursor":"1240"}
+
+  : ping
+
+  event: bye
+  data: {"reason":"too_many_streams"}
+  ```
+
+| Event | `data` | Meaning |
+|---|---|---|
+| `hello` | `{ cursor }` | First event of every stream; `cursor` is the user's current head (as in `GET /account`). |
+| `changes` | `{ space, cursor }` | New journal entries of the user were committed. `space` is currently always `"personal"`; `cursor` is the head at the time of the event. Bursts are coalesced: at most one event per 250 ms. |
+| `bye` | `{ reason }` | The server ends the stream right after this event. `too_many_streams`: the user opened another stream (see limits). `unauthorized`: the token is no longer valid (device revoked, user disabled, access token expired); reconnecting returns the matching `401`. Clients must accept unknown reasons. |
+
+- **Ping:** a comment line `: ping` every 25 s (`SYNCLET_EVENTS_PING_SECONDS` on the server).
+  Before each ping the server re-checks the token; a revoked device or disabled user's stream ends
+  at the latest at the next ping. A client that has seen nothing (no event, no ping) for about
+  60 s should treat the connection as dead and reconnect.
+- **Wake-up only.** An event is a hint, never data: on `hello` and on every `changes`, drain
+  `GET /sync/v1/changes?cursor=<stored cursor>` as usual (§5) and store the resulting cursor. The
+  event's `cursor` may only be used to skip a drain when it equals the stored cursor. Events can be
+  lost (proxy restarts, server restarts, network changes); because the client drains once after
+  every (re)connect, a lost event only delays a change, it never loses one. Changes made directly
+  on the server's disk are signalled once the server's indexer has noticed them (§5).
+- **Reconnect:** on any disconnect, reconnect with exponential backoff from 1 s up to 60 s (with
+  jitter), reset after a stream stayed open for a while. Honour a `retry:` field if the server ever
+  sends one. Do not reconnect on `401` (sign-in required) and back off to the maximum on
+  `404` (server without events), `429` or a response that is not `text/event-stream` (e.g. an HTML
+  page from a misconfigured proxy); keep polling `/changes` meanwhile.
+- **Limits:** at most 10 open streams per user (per server); opening an 11th closes the oldest
+  with `bye` `too_many_streams`. At most 30 stream opens per user per minute; more yield
+  `429 rate_limited` with `Retry-After`. One stream per signed-in account and device is enough.
+- **Proxies:** the stream must not be buffered or compressed. The bundled Caddy flushes
+  immediately and does not compress `/api/*`. Outer reverse proxies work unchanged as long as their
+  upstream read timeout exceeds 25 s (see README, "Behind another reverse proxy").
 
 ---
 
@@ -604,7 +658,6 @@ a folder id is `400 invalid_request` whether versions are on or off.
 
 ## 12. Not part of this contract (yet)
 
-- `GET /sync/v1/events` (Server-Sent Events change signal) – Phase 2; until then poll `/changes`.
 - APNs pushes – Phase 3 (`PUT /devices/current/push` is already accepted).
 - Office editing (`GET /sync/v1/items/:id/office`, `POST /sync/v1/items/new-office`), share links
   (`/api/shares`, `/api/public/shares`), admin routes (`/api/admin/*`) and SSO (`/api/auth/oidc/*`,

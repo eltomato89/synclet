@@ -53,6 +53,9 @@
 		reverse_proxy server:3000 {
 			# Exactly one address: the client IP as determined above (the server trusts XFF from Caddy).
 			header_up X-Forwarded-For {client_ip}
+			# Flush every write at once: required by the Server-Sent Events stream
+			# /api/sync/v1/events (text/event-stream), which must never be buffered. For the same
+			# reason there is no `encode` in this /api/* block (compression buffers the stream).
 			flush_interval -1
 			transport http {
 				read_timeout 0
@@ -70,6 +73,8 @@
 			~^http(s?)://([^/#]+)/?#$ ws${1}://${2}
 			default ""
 		}
+		# Static web app only. Never add `encode` to the /api/* block above: it would buffer the
+		# SSE stream /api/sync/v1/events.
 		encode zstd gzip
 		root * /srv/web
 		try_files {path} /index.html

@@ -355,6 +355,38 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /sync/v1/events:
+    get:
+      tags: [changes]
+      operationId: getEvents
+      summary: Change wake-ups as Server-Sent Events
+      description: |
+        A long-lived `text/event-stream` (SYNC_API.md "Events"). Events are wake-up signals only:
+        on `hello` (after every (re)connect) and on `changes`, drain `GET /sync/v1/changes`.
+
+        - `event: hello` – first event, `data` = `EventHello`.
+        - `event: changes` – the journal advanced, `data` = `EventChanges` (coalesced, at most one
+          per 250 ms).
+        - `event: bye` – the server ends the stream, `data` = `EventBye`.
+        - `: ping` comment every 25 s; the token is re-checked before each ping and the stream
+          ends (`bye`, `unauthorized`) when it is no longer valid.
+
+        At most 10 open streams per user (opening another closes the oldest with `bye`,
+        `too_many_streams`); at most 30 stream opens per user and minute.
+      responses:
+        '200':
+          description: The event stream (never ends on its own while the token stays valid).
+          headers:
+            Cache-Control:
+              schema: { type: string, const: 'no-cache, no-transform' }
+            X-Accel-Buffering:
+              schema: { type: string, const: 'no' }
+          content:
+            text/event-stream:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
   /sync/v1/items:
     post:
       tags: [items]
@@ -1160,6 +1192,29 @@ components:
       required: [cursor]
       properties:
         cursor: { $ref: '#/components/schemas/Cursor' }
+    EventHello:
+      description: '`data` of `event: hello` (`GET /sync/v1/events`).'
+      type: object
+      required: [cursor]
+      properties:
+        cursor: { $ref: '#/components/schemas/Cursor' }
+    EventChanges:
+      description: '`data` of `event: changes` (`GET /sync/v1/events`).'
+      type: object
+      required: [space, cursor]
+      properties:
+        space:
+          type: string
+          description: The space whose journal advanced; currently always `personal`.
+        cursor: { $ref: '#/components/schemas/Cursor' }
+    EventBye:
+      description: '`data` of `event: bye` (`GET /sync/v1/events`); the server closes the stream next.'
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          description: '`too_many_streams` (another stream of the user was opened) or `unauthorized` (token no longer valid: reconnect to learn the error code). Clients must accept other values.'
     SyncChange:
       oneOf:
         - type: object
