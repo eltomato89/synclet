@@ -1,10 +1,13 @@
 import type { ShareLinkWire } from '@synclet/shared';
 import { ArrowDownToLine, LockKeyhole, Upload } from 'lucide-react';
 import type { TFunction } from 'i18next';
+import { type ReactNode, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Badge } from '@/components/ui/badge';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
 import { errorKey } from '@/features/files/errors';
 import { ApiError } from '@/lib/api';
 import { absoluteUrl, copyText, shareStatus, useShareMutations } from './queries';
@@ -56,16 +59,53 @@ export function ShareBadges({ share }: { share: ShareLinkWire }) {
   );
 }
 
-export function useCopyLink() {
+/**
+ * Copy action for share links. Returns the click handler and a node to render: when the browser
+ * refuses to copy, that node is a small dialog with the URL pre-selected for copying by hand.
+ */
+export function useCopyLink(): [(share: Pick<ShareLinkWire, 'url'>) => void, ReactNode] {
   const { t } = useTranslation();
-  return (share: Pick<ShareLinkWire, 'url'>) => {
+  const [manual, setManual] = useState<{ url: string; open: boolean } | null>(null);
+  const copy = (share: Pick<ShareLinkWire, 'url'>) => {
     // A link whose token can't be decrypted (server secret changed) needs a new link first.
     if (!share.url) { notify.error(t('shares.errors.noUrl')); return; }
-    copyText(absoluteUrl(share.url)).then(
+    const url = absoluteUrl(share.url);
+    copyText(url).then(
       () => notify.success(t('shares.toast.copied')),
-      () => notify.error(t('shares.errors.copy')),
+      () => { notify.error(t('shares.errors.copy')); setManual({ url, open: true }); },
     );
   };
+  const node = manual && (
+    <ManualCopyDialog url={manual.url} open={manual.open} onOpenChange={(o) => { if (!o) setManual((m) => (m ? { ...m, open: false } : m)); }} />
+  );
+  return [copy, node];
+}
+
+/** Fallback when the clipboard is unavailable: the URL in a read-only field, already selected. */
+export function ManualCopyDialog({ url, open, onOpenChange }: { url: string; open: boolean; onOpenChange(open: boolean): void }) {
+  const { t } = useTranslation();
+  const field = useRef<HTMLInputElement>(null);
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        className="gap-4 sm:max-w-lg"
+        onOpenAutoFocus={(e) => { e.preventDefault(); field.current?.focus(); field.current?.select(); }}
+      >
+        <DialogHeader>
+          <DialogTitle className="text-lg font-semibold">{t('shares.manualCopy.title')}</DialogTitle>
+          <DialogDescription>{t('shares.manualCopy.body')}</DialogDescription>
+        </DialogHeader>
+        <Input
+          ref={field}
+          readOnly
+          value={url}
+          aria-label={t('shares.created.urlLabel')}
+          onFocus={(e) => e.currentTarget.select()}
+          className="text-sm md:text-sm"
+        />
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 export type ShareConfirmAction = { kind: 'rotate' | 'revoke'; share: ShareLinkWire };

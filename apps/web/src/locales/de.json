@@ -327,7 +327,8 @@
       "not_found": "Dieser Link oder das Element existiert nicht mehr.",
       "copy": "Der Link konnte nicht kopiert werden. Markiere ihn und kopiere ihn von Hand.",
       "noUrl": "Dieser Link kann nicht mehr angezeigt werden. Erzeuge einen neuen Link, um eine kopierbare Adresse zu bekommen.",
-      "noUrlShort": "Adresse nicht verfügbar"
+      "noUrlShort": "Adresse nicht verfügbar",
+      "copyManual": "Der Link konnte nicht automatisch kopiert werden. Er ist markiert: Drück Strg+C (⌘C am Mac)."
     },
     "columns": {
       "item": "Geteiltes Element",
@@ -355,6 +356,10 @@
         "all": "Keine Links"
       },
       "noneBody": "Widerrufene Links werden nicht aufgeführt."
+    },
+    "manualCopy": {
+      "title": "Link kopieren",
+      "body": "Dein Browser erlaubt hier kein Kopieren. Der Link ist markiert: Drück Strg+C (⌘C am Mac)."
     }
   }
 }

@@ -54,7 +54,11 @@ const PRESET_DAYS: Partial<Record<ExpiryChoice, number>> = { '1d': 1, '7d': 7, '
 export function expiryDate(v: Pick<ShareFormValues, 'expiry' | 'customDate'>, now: number = Date.now()): Date | null | undefined {
   if (v.expiry === 'none') return null;
   const days = PRESET_DAYS[v.expiry];
-  if (days) return new Date(now + days * 86_400_000);
+  if (days) {
+    // Like a picked date: the end of the local day, N days from today.
+    const d = new Date(now);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate() + days, 23, 59, 59, 999);
+  }
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v.customDate);
   if (!m) return undefined;
   const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 23, 59, 59, 999);

@@ -57,3 +57,14 @@ it('creates a folder link with upload and shows the copyable URL', async () => {
   expect(posts(spy)[0][1]).toMatchObject({ json: { itemId: 'd_1', password: 'secret1', expiresAt: null, allowDownload: true, allowUpload: true } });
   expect(await screen.findByDisplayValue(`${window.location.origin}/s/abcdefghijklmnopqrstuvwxyz`)).toBeInTheDocument();
 });
+
+it('selects the URL for manual copying when the browser refuses to copy', async () => {
+  setup();
+  Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+  (document as unknown as { execCommand: unknown }).execCommand = vi.fn(() => false);
+  fireEvent.click(await screen.findByRole('button', { name: 'Create link' }));
+  const field = await screen.findByDisplayValue<HTMLInputElement>(`${window.location.origin}/s/abcdefghijklmnopqrstuvwxyz`);
+  fireEvent.click(screen.getByRole('button', { name: 'Copy link' }));
+  await waitFor(() => expect(document.activeElement).toBe(field));
+  expect(field.value.slice(field.selectionStart ?? 0, field.selectionEnd ?? 0)).toBe(field.value);
+});

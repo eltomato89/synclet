@@ -133,9 +133,10 @@ function LinkList({ links, onEdit, onConfirm, onCreate, onDone }: {
   onDone(): void;
 }) {
   const { t, i18n } = useTranslation();
-  const copy = useCopyLink();
+  const [copy, manualCopy] = useCopyLink();
   return (
     <>
+      {manualCopy}
       <ul aria-label={t('shares.dialog.links')} className="-mx-1 flex max-h-[min(22rem,50dvh)] flex-col gap-1 overflow-y-auto px-1">
         {links.map((s) => (
           <li key={s.id} className="flex items-center gap-3 rounded-lg border px-3 py-2.5">
@@ -184,7 +185,8 @@ function CreatedLink({ share, rotated, onDone, onShowAll }: { share: ShareLinkWi
   const copy = () => {
     copyText(url).then(
       () => { setCopied(true); window.setTimeout(() => setCopied(false), 1600); },
-      () => { field.current?.select(); notify.error(t('shares.errors.copy')); },
+      // Nothing could be copied: hand the user the selected URL to copy by hand.
+      () => { field.current?.focus(); field.current?.select(); notify.error(t('shares.errors.copyManual')); },
     );
   };
   return (

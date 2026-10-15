@@ -58,20 +58,46 @@ export function shareStatus(share: Pick<ShareLinkWire, 'revokedAt' | 'expiresAt'
   return 'active';
 }
 
-/** Writes a link to the clipboard; falls back to a hidden textarea where the API is missing. */
-export async function copyText(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
+/**
+ * Copies with the legacy `execCommand('copy')`. The helper textarea goes into the dialog that
+ * holds the focus (a modal's focus trap would otherwise pull focus back and nothing gets copied),
+ * and the focus returns to where it was.
+ */
+export function execCopy(text: string): boolean {
+  const prev = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const host = prev?.closest<HTMLElement>('[role="dialog"], [role="alertdialog"]') ?? document.body;
   const ta = document.createElement('textarea');
   ta.value = text;
   ta.setAttribute('readonly', '');
-  ta.style.position = 'fixed';
-  ta.style.opacity = '0';
-  document.body.appendChild(ta);
-  ta.select();
-  const ok = document.execCommand('copy');
-  ta.remove();
-  if (!ok) throw new Error('copy failed');
+  ta.setAttribute('aria-hidden', 'true');
+  Object.assign(ta.style, { position: 'fixed', top: '0', left: '0', width: '1px', height: '1px', opacity: '0' });
+  host.appendChild(ta);
+  let ok = false;
+  try {
+    ta.focus({ preventScroll: true });
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    ok = document.execCommand('copy');
+  } catch {
+    ok = false;
+  } finally {
+    ta.remove();
+    prev?.focus({ preventScroll: true });
+  }
+  return ok;
+}
+
+/**
+ * Writes text to the clipboard. `navigator.clipboard` only exists in secure contexts (not on
+ * plain-http LAN installs) and can reject (permissions, unfocused document), so both paths are
+ * tried. Rejects only if neither worked; callers then let the user copy by hand.
+ */
+export async function copyText(text: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch { /* fall through to the legacy path */ }
+  }
+  if (!execCopy(text)) throw new Error('copy failed');
 }

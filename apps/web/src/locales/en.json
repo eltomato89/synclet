@@ -327,7 +327,8 @@
       "not_found": "This link or item doesn't exist anymore.",
       "copy": "The link couldn't be copied. Select it and copy it manually.",
       "noUrl": "This link can't be shown anymore. Create a new link to get a copyable address.",
-      "noUrlShort": "Address unavailable"
+      "noUrlShort": "Address unavailable",
+      "copyManual": "The link couldn't be copied automatically. It's selected: press Ctrl+C (⌘C on a Mac)."
     },
     "columns": {
       "item": "Shared item",
@@ -355,6 +356,10 @@
         "all": "No links"
       },
       "noneBody": "Revoked links aren't listed."
+    },
+    "manualCopy": {
+      "title": "Copy the link",
+      "body": "Your browser doesn't allow copying here. The link is selected: press Ctrl+C (⌘C on a Mac)."
     }
   }
 }

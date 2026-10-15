@@ -31,7 +31,7 @@ export function SharedPage() {
   const { t, i18n } = useTranslation();
   const locale = i18n.language;
   const shares = useShares();
-  const copy = useCopyLink();
+  const [copy, manualCopy] = useCopyLink();
   const [filter, setFilter] = useState<Filter>('active');
   const [edit, setEdit] = useState<{ share: ShareLinkWire; open: boolean; n: number } | null>(null);
   const [confirm, setConfirm] = useState<(ShareConfirmAction & { open: boolean }) | null>(null);
@@ -211,6 +211,7 @@ export function SharedPage() {
         onOpenChange={(o) => { if (!o) setConfirm((c) => (c ? { ...c, open: false } : c)); }}
         onRotated={onRotated}
       />
+      {manualCopy}
     </div>
   );
 }

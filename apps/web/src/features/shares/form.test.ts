@@ -41,7 +41,10 @@ describe('validateShareForm', () => {
 
 describe('payloads', () => {
   it('turns presets and custom dates into future timestamps', () => {
-    expect(expiryDate(v({ expiry: '7d' }), NOW)?.getTime()).toBe(NOW + 7 * 86_400_000);
+    // Presets end with the local day like picked dates: 15 Oct + 7 = 22 Oct, 23:59:59.999.
+    expect(expiryDate(v({ expiry: '7d' }), NOW)?.getTime()).toBe(new Date(2026, 9, 22, 23, 59, 59, 999).getTime());
+    expect(expiryDate(v({ expiry: '1d' }), NOW)?.getTime()).toBe(new Date(2026, 9, 16, 23, 59, 59, 999).getTime());
+    expect(toDateInput(expiryDate(v({ expiry: '30d' }), NOW)!)).toBe('2026-11-14');
     expect(expiryDate(v({ expiry: 'none' }), NOW)).toBeNull();
     const end = expiryDate(v({ expiry: 'custom', customDate: '2026-10-20' }), NOW)!;
     expect(toDateInput(end)).toBe('2026-10-20');
@@ -61,6 +64,6 @@ describe('payloads', () => {
     expect(patchPayload({ ...initialValues(existing), passwordOn: false }, ctx, NOW)).toEqual({ password: null });
     expect(patchPayload({ ...initialValues(existing), password: 'newpass', allowUpload: true }, ctx, NOW)).toEqual({ password: 'newpass', allowUpload: true });
     expect(patchPayload({ ...initialValues(existing), expiry: '1d' }, { ...ctx, expiryTouched: true }, NOW))
-      .toEqual({ expiresAt: new Date(NOW + 86_400_000).toISOString() });
+      .toEqual({ expiresAt: new Date(2026, 9, 16, 23, 59, 59, 999).toISOString() });
   });
 });
