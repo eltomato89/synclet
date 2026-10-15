@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger, OnApplicationBootstrap } from '@nestjs/comm
 import type { Item } from '@prisma/client';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
-import { lstat, mkdir, readdir, rm, rmdir, unlink, utimes } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, readFile, rm, rmdir, unlink, utimes } from 'node:fs/promises';
 import path from 'node:path';
 import { Transform, type Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -39,6 +39,17 @@ function guardBody(body: Readable) {
 }
 
 const STAGED_TRASH = /^\.synclet-trash-([0-9a-f]{32})$/;
+/** Written to /meta/staging/<trashId>.json before an entry is vacated, so a crash before commit can be undone. */
+interface TrashIntent { userId: string; username: string; itemId: string; originalRel: string; name: string; type: 'folder' | 'file' }
+
+async function sizeOf(abs: string): Promise<bigint> {
+  const st = await lstat(abs, { bigint: true });
+  if (!st.isDirectory()) return st.isFile() ? st.size : 0n;
+  let total = 0n;
+  for (const n of await readdir(abs)) total += await sizeOf(path.join(abs, n));
+  return total;
+}
+
 const uuidFromHex = (h: string) => `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 
 @Injectable()
@@ -343,7 +354,13 @@ export class FilesService implements OnApplicationBootstrap {
         // Already gone on the host (not indexed yet): the delete stands, there is nothing to trash.
         if ((await this.entryOnDisk(user, item)) === 'ok') {
           const from = this.abs(user, item.path);
-          await moveAcrossFs(from, staging); // rename; copy only if a nested mount is in between
+          await this.writeIntent(trashId, { userId: user.id, username: user.username, itemId: item.id, originalRel: item.path, name: item.name, type: item.type });
+          try {
+            await moveAcrossFs(from, staging); // rename; copy only if a nested mount is in between
+          } catch (e) {
+            await this.dropIntent(trashId);
+            throw e;
+          }
           staged = { from, storePath: path.join(this.config.metaRoot, 'trash', trashId, item.name) };
         }
         const gone = await this.store.tombstoneSubtree(tx, item);
@@ -366,16 +383,46 @@ export class FilesService implements OnApplicationBootstrap {
       if (st) {
         const occupied = await lstat(st.from).then(() => true, () => false);
         if (occupied) this.log.error(`cannot restore ${staging}: ${st.from} was re-created; leaving it staged`);
-        else await moveAcrossFs(staging, st.from).catch((err) => this.log.error(`cannot restore ${staging} -> ${st.from}: ${String(err)}`));
+        else {
+          await moveAcrossFs(staging, st.from).then(
+            () => this.dropIntent(trashId),
+            (err) => this.log.error(`cannot restore ${staging} -> ${st.from}: ${String(err)}; recovery will retry at start`),
+          );
+        }
       }
       throw e;
     }
     const done = staged as { storePath: string } | null;
     if (done) {
       // Committed: the delete stands even if /meta is briefly unavailable; recovery retries at start.
-      await this.finishTrash(staging, done.storePath).catch((e) =>
+      await this.finishTrash(staging, done.storePath).then(() => this.dropIntent(trashId), (e) =>
         this.log.error(`moving ${staging} to ${done.storePath} failed, left staged for recovery: ${(e as Error).message}`));
     }
+  }
+
+  private intentPath(trashId: string) { return path.join(this.config.metaRoot, 'staging', `${trashId}.json`); }
+
+  private async writeIntent(trashId: string, intent: TrashIntent): Promise<void> {
+    await mkdir(path.dirname(this.intentPath(trashId)), { recursive: true });
+    const fh = await open(this.intentPath(trashId), 'wx', 0o600);
+    try {
+      await fh.writeFile(JSON.stringify(intent));
+      await fh.sync();
+    } finally {
+      await fh.close();
+    }
+  }
+
+  private async readIntent(trashId: string): Promise<TrashIntent | null> {
+    try {
+      return JSON.parse(await readFile(this.intentPath(trashId), 'utf8')) as TrashIntent;
+    } catch {
+      return null;
+    }
+  }
+
+  private async dropIntent(trashId: string): Promise<void> {
+    await rm(this.intentPath(trashId), { force: true });
   }
 
   /** Moves a staged entry into its trash location; an existing storePath means a completed copy. */
@@ -389,32 +436,80 @@ export class FilesService implements OnApplicationBootstrap {
   }
 
   /**
-   * Finishes trash moves interrupted by a crash: every `.synclet-trash-<id>` in a user root whose
-   * TrashEntry exists is moved to its storePath. Anything without a TrashEntry (crash before
-   * commit) is logged and left alone. Returns the number of recovered entries.
+   * Finishes trash moves interrupted by a crash. For every `.synclet-trash-<id>` in a user root:
+   * - TrashEntry exists (crash after commit): move it into its storePath.
+   * - only the intent file exists (crash before commit, so the delete never happened): move it
+   *   back to its original path if that is free, otherwise into /meta/trash/<id>/ with a new
+   *   TrashEntry; the indexer reconciles the rows either way.
+   * - neither: log and leave it untouched.
+   * Returns the number of staged entries handled.
    */
   async recoverStagedTrash(): Promise<number> {
-    let recovered = 0;
+    let handled = 0;
     for (const u of await this.prisma.user.findMany({ select: { id: true, username: true } })) {
       const root = userRoot(this.config.dataRoot, u.username);
       const names = await readdir(root).catch(() => [] as string[]);
       for (const name of names.filter((n) => n.startsWith(TRASH_STAGING_PREFIX))) {
         const abs = path.join(root, name);
         const m = STAGED_TRASH.exec(name);
-        const entry = m ? await this.prisma.trashEntry.findFirst({ where: { id: uuidFromHex(m[1]), ownerId: u.id } }) : null;
-        if (!entry) {
-          this.log.warn(`staged trash ${abs} has no trash entry; leaving it untouched`);
+        if (!m) {
+          this.log.warn(`unexpected staging entry ${abs}; leaving it untouched`);
           continue;
         }
+        const trashId = uuidFromHex(m[1]);
         try {
-          await this.finishTrash(abs, entry.storePath);
-          recovered++;
+          const entry = await this.prisma.trashEntry.findFirst({ where: { id: trashId, ownerId: u.id } });
+          const intent = entry ? null : await this.readIntent(trashId);
+          if (entry) {
+            await this.finishTrash(abs, entry.storePath);
+          } else if (intent && intent.userId === u.id) {
+            await this.undoStaging(u, abs, trashId, intent);
+          } else {
+            this.log.warn(`staged trash ${abs} has neither a trash entry nor an intent; leaving it untouched`);
+            continue;
+          }
+          await this.dropIntent(trashId);
+          handled++;
         } catch (e) {
           this.log.error(`cannot recover staged trash ${abs}: ${(e as Error).message}`);
         }
       }
     }
-    return recovered;
+    return handled;
+  }
+
+  /** The delete never committed: put the entry back, or into the trash if its place is taken. */
+  private async undoStaging(user: IndexUser, staged: string, trashId: string, intent: TrashIntent): Promise<void> {
+    const restored = await this.prisma.$transaction(async (tx) => {
+      await this.journal.lockUser(tx, user.id); // serialize with a concurrently starting indexer
+      try {
+        await this.assertRealDir(user, parentOf(intent.originalRel));
+      } catch {
+        return false;
+      }
+      const dst = this.abs(user, intent.originalRel);
+      try {
+        await moveNoReplace(staged, dst);
+      } catch (e) {
+        if (isEexist(e)) return false;
+        if (errno(e) !== 'EXDEV') throw e;
+        await moveAcrossFs(staged, dst);
+      }
+      return true;
+    }, TX_OPTS);
+    if (restored) {
+      this.log.warn(`restored ${intent.originalRel} of ${user.username} from an interrupted delete`);
+      return;
+    }
+    const storePath = path.join(this.config.metaRoot, 'trash', trashId, intent.name);
+    await this.prisma.trashEntry.create({
+      data: {
+        id: trashId, ownerId: user.id, itemId: intent.itemId, type: intent.type, name: intent.name, originalPath: intent.originalRel,
+        size: await sizeOf(staged), storePath, manifest: [{ id: intent.itemId, type: intent.type, path: intent.originalRel }],
+      },
+    });
+    await this.finishTrash(staged, storePath);
+    this.log.warn(`moved ${intent.originalRel} of ${user.username} from an interrupted delete to the trash (original path taken)`);
   }
 
   async openRead(user: IndexUser, itemId: string): Promise<{ item: Item; abs: string }> {

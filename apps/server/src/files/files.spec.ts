@@ -275,12 +275,16 @@ describe('FilesService', () => {
     await ctx.prisma.trashEntry.create({
       data: { id: trashId, ownerId: user.id, itemId: a.id, type: 'folder', name: 'A', originalPath: 'A', size: 1n, storePath, manifest: [] },
     });
-    // A staged entry without TrashEntry (crash before commit) must survive untouched.
+    const intent = path.join(ctx.config.metaRoot, 'staging', `${trashId}.json`);
+    await mkdir(path.dirname(intent), { recursive: true });
+    await writeFile(intent, JSON.stringify({ userId: user.id, username: user.username, itemId: a.id, originalRel: 'A', name: 'A', type: 'folder' }));
+    // A staged entry with neither TrashEntry nor intent must survive untouched.
     const orphan = path.join(root, trashStagingName('00000000-0000-4000-8000-000000000001'));
     await writeFile(orphan, 'orphan');
 
     expect(await files.recoverStagedTrash()).toBe(1);
     expect(await readFile(path.join(storePath, 'x.txt'), 'utf8')).toBe('x');
+    await expect(stat(intent)).rejects.toMatchObject({ code: 'ENOENT' });
     expect(await readdir(root)).toEqual([path.basename(orphan)]);
     expect(await visible()).toEqual([path.basename(orphan)]); // ignored by the indexer, see names.spec
     expect(await ctx.app.get(IndexerService).fullScan(user)).toMatchObject({ created: 0 });
@@ -298,5 +302,49 @@ describe('FilesService', () => {
     const v3 = await files.replaceContent(user, f.id, body('client'), { ifMatchVersion: fresh.version });
     await files.replaceContent(user, f.id, body('again'), { ifMatchVersion: v3.version });
     expect(await readFile(path.join(root, 'a.txt'), 'utf8')).toBe('again');
+  });
+  const stageWithoutCommit = async (rel: string, item: { id: string; type: string; name: string }, trashId: string) => {
+    const staged = path.join(root, trashStagingName(trashId));
+    const intent = path.join(ctx.config.metaRoot, 'staging', `${trashId}.json`);
+    await mkdir(path.dirname(intent), { recursive: true });
+    await writeFile(intent, JSON.stringify({ userId: user.id, username: user.username, itemId: item.id, originalRel: rel, name: item.name, type: item.type }));
+    await rename(path.join(root, ...rel.split('/')), staged);
+    return { staged, intent };
+  };
+
+  it('remove leaves no intent file behind', async () => {
+    const f = await files.upload(user, null, 'a.txt', body('x'), {});
+    await files.remove(user, f.id);
+    expect(await readdir(path.join(ctx.config.metaRoot, 'staging'))).toEqual([]);
+  });
+
+  it('recoverStagedTrash restores an entry staged by a delete that never committed', async () => {
+    const a = await files.createFolder(user, null, 'A');
+    const x = await files.upload(user, a.id, 'x.txt', body('x'), {});
+    const { staged, intent } = await stageWithoutCommit('A/x.txt', x, '11111111-2222-4333-8444-555555555555');
+    expect(await visible(path.join(root, 'A'))).toEqual([]);
+    expect(await files.recoverStagedTrash()).toBe(1);
+    expect(await readFile(path.join(root, 'A', 'x.txt'), 'utf8')).toBe('x');
+    await expect(stat(staged)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(stat(intent)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await ctx.prisma.trashEntry.count()).toBe(0);
+    expect(await ctx.app.get(IndexerService).fullScan(user)).toMatchObject({ created: 0, updated: 0, moved: 0, deleted: 0 });
+    expect((await ctx.prisma.item.findUniqueOrThrow({ where: { id: x.id } })).deletedAt).toBeNull();
+  });
+
+  it('recoverStagedTrash moves an uncommitted staged entry to the trash when its path is taken', async () => {
+    const x = await files.upload(user, null, 'x.txt', body('old'), {});
+    const trashId = '11111111-2222-4333-8444-666666666666';
+    const { staged, intent } = await stageWithoutCommit('x.txt', x, trashId);
+    await writeFile(path.join(root, 'x.txt'), 'new on host');
+    expect(await files.recoverStagedTrash()).toBe(1);
+    expect(await readFile(path.join(root, 'x.txt'), 'utf8')).toBe('new on host');
+    const entry = await ctx.prisma.trashEntry.findUniqueOrThrow({ where: { id: trashId } });
+    expect(entry).toMatchObject({ itemId: x.id, originalPath: 'x.txt', name: 'x.txt', size: 3n });
+    expect(entry.storePath).toBe(path.join(ctx.config.metaRoot, 'trash', trashId, 'x.txt'));
+    expect(await readFile(entry.storePath, 'utf8')).toBe('old');
+    await expect(stat(staged)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(stat(intent)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect(await visible()).toEqual(['x.txt']);
   });
 });
