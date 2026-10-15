@@ -1,13 +1,15 @@
 import SwiftUI
 
-/// Settings window. Tabs: "General" (login item) and "Accounts"; T7 adds an offline/pinning tab.
+/// Settings window. Tabs: "General" (login item), "Accounts" and "Offline" (pinning).
 struct SettingsView: View {
     enum Tab: Hashable {
         case general
         case accounts
+        case offline
     }
 
     let accounts: AccountsModel
+    let pinning: PinningModel
     @Bindable var loginItem: LoginItemController
     let actions: AppActions
     @State var selection: Tab = .accounts
@@ -20,6 +22,9 @@ struct SettingsView: View {
             AccountsSettingsView(accounts: accounts, actions: actions)
                 .tabItem { Label("Accounts", systemImage: "person.crop.circle") }
                 .tag(Tab.accounts)
+            PinningSettingsView(model: pinning)
+                .tabItem { Label("Offline", systemImage: "icloud.and.arrow.down") }
+                .tag(Tab.offline)
         }
         .frame(width: 520, height: 380)
     }

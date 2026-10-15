@@ -7,6 +7,8 @@ import UniformTypeIdentifiers
 /// - A server item whose id is a space's `rootId` is presented as that space folder.
 /// - `itemVersion`: content = `contentEtag` (else `etag`), metadata = `etag` + name + parent.
 /// - Trash is not supported.
+/// - `contentPolicy`: `.inherited` unless pinned offline (set via ``withContentPolicy(_:)``
+///   from ``PinPolicy``).
 public final class FileProviderItem: NSObject, NSFileProviderItem, @unchecked Sendable {
     /// Where the item comes from.
     public enum Source: Sendable, Hashable {
@@ -26,11 +28,14 @@ public final class FileProviderItem: NSObject, NSFileProviderItem, @unchecked Se
     public let documentSize: NSNumber?
     public let creationDate: Date?
     public let contentModificationDate: Date?
+    /// Offline pinning (spec §2.5): `.downloadEagerlyAndKeepDownloaded` below a pin.
+    public let contentPolicy: NSFileProviderContentPolicy
 
     private init(source: Source, identifier: NSFileProviderItemIdentifier, parent: NSFileProviderItemIdentifier,
                  filename: String, contentType: UTType, capabilities: NSFileProviderItemCapabilities,
                  flags: NSFileProviderFileSystemFlags, version: NSFileProviderItemVersion,
-                 documentSize: NSNumber? = nil, creationDate: Date? = nil, modificationDate: Date? = nil) {
+                 documentSize: NSNumber? = nil, creationDate: Date? = nil, modificationDate: Date? = nil,
+                 contentPolicy: NSFileProviderContentPolicy = .inherited) {
         self.source = source
         self.itemIdentifier = identifier
         self.parentItemIdentifier = parent
@@ -42,6 +47,16 @@ public final class FileProviderItem: NSObject, NSFileProviderItem, @unchecked Se
         self.documentSize = documentSize
         self.creationDate = creationDate
         self.contentModificationDate = modificationDate
+        self.contentPolicy = contentPolicy
+    }
+
+    /// The same item with another content policy.
+    public func withContentPolicy(_ policy: NSFileProviderContentPolicy) -> FileProviderItem {
+        guard policy != contentPolicy else { return self }
+        return FileProviderItem(source: source, identifier: itemIdentifier, parent: parentItemIdentifier, filename: filename,
+                                contentType: contentType, capabilities: capabilities, flags: fileSystemFlags,
+                                version: itemVersion, documentSize: documentSize, creationDate: creationDate,
+                                modificationDate: contentModificationDate, contentPolicy: policy)
     }
 
     /// A server item, placed by `layout` (a space root becomes its space folder).

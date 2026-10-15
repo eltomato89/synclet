@@ -18,6 +18,9 @@ Sources/SyncletKit/
   Transfer/      TransferEngine (uploads: ≤ 32 MiB single request, above tus; replace via PUT),
                  TusUploader (tus 1.0, 16 MiB chunks), UploadStateStore (resume state),
                  RangeDownloader (streamed, resumable downloads)
+  Pinning/       PinStore (offline pins per account/space), PinPolicy (content policy decision),
+                 ParentMap (folder → parent, first-level ancestor), PinResolver (policy per item,
+                 re-reporting subtrees when pins change)
   Credentials/   CredentialStore (device tokens in the shared keychain), SecureStorage
   Account/       AccountManager (add/remove accounts and domains), AccountStore (JSON in the
                  app group), InstallationID, ServerURL

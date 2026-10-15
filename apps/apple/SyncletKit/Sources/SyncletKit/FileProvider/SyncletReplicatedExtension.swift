@@ -29,16 +29,35 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
         public var transferStateDirectory: URL?
         /// Uploads above this size use tus (SYNC_API.md §7).
         public var uploadThreshold: Int
+        /// Offline pins (spec §2.5); `nil` ⇒ every item `.inherited`.
+        public var pinning: PinningContext?
 
         public init(client: SyncAPIClient, deviceName: String, layout: SpaceLayout,
                     cursorSink: (@Sendable (_ spaceID: String, _ cursor: String) -> Void)? = nil,
-                    transferStateDirectory: URL? = nil, uploadThreshold: Int = TransferEngine.defaultThreshold) {
+                    transferStateDirectory: URL? = nil, uploadThreshold: Int = TransferEngine.defaultThreshold,
+                    pinning: PinningContext? = nil) {
             self.client = client
             self.deviceName = deviceName
             self.layout = layout
             self.cursorSink = cursorSink
             self.transferStateDirectory = transferStateDirectory
             self.uploadThreshold = uploadThreshold
+            self.pinning = pinning
+        }
+
+        /// `item` with its content policy (``PinPolicy``). A failed ancestor lookup leaves
+        /// `.inherited`: the next enumeration corrects it, and the operation itself succeeds.
+        func withPolicy(_ item: FileProviderItem) async -> FileProviderItem {
+            guard let pinning else { return item }
+            let resolver = pinning.resolver(layout: layout, client: client)
+            if let space = item.space { return item.withContentPolicy(resolver.spacePolicy(space)) }
+            guard let syncItem = item.syncItem else { return item }
+            do {
+                return try await resolver.item(syncItem)
+            } catch {
+                Log.pinning.error("content policy of \(syncItem.id, privacy: .public) unknown: \(String(describing: error), privacy: .public)")
+                return item
+            }
         }
     }
 
@@ -93,7 +112,8 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
                                try? accounts.saveSyncState(SpaceSyncState(cursor: cursor), key: key, spaceId: spaceID)
                            },
                            transferStateDirectory: accounts.accountDirectory(key: key)
-                               .appending(path: "uploads", directoryHint: .isDirectory))
+                               .appending(path: "uploads", directoryHint: .isDirectory),
+                           pinning: .account(directory: accounts.accountDirectory(key: key)))
         }
     }
 
@@ -165,10 +185,10 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
         let context = try context()
         if SpaceLayout.spaceID(from: identifier) != nil {
             guard let item = context.layout.virtualItem(for: identifier) else { throw NSFileProviderError(.noSuchItem) }
-            return item
+            return await context.withPolicy(item)
         }
         let id = try serverID(identifier, layout: context.layout)
-        return FileProviderItem(try await context.client.item(id: id), layout: context.layout)
+        return await context.withPolicy(FileProviderItem(try await context.client.item(id: id), layout: context.layout))
     }
 
     open func enumerator(for containerItemIdentifier: NSFileProviderItemIdentifier,
@@ -178,10 +198,11 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
         let fallback = context.layout
         let layout: @Sendable () -> SpaceLayout = { [contextProvider] in contextProvider()?.layout ?? fallback }
         if containerItemIdentifier == .rootContainer {
-            return TopLevelEnumerator(layout: layout)
+            let store = context.pinning?.store
+            return TopLevelEnumerator(layout: layout, pins: { store?.allPins(spaces: layout().spaces.map(\.id)) ?? [:] })
         }
         return FileProviderEnumerator(containerIdentifier: containerItemIdentifier, client: context.client,
-                                      layout: layout, cursorSink: context.cursorSink)
+                                      layout: layout, cursorSink: context.cursorSink, pinning: context.pinning)
     }
 
     // MARK: - Contents
@@ -197,7 +218,7 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
                 let context = try context()
                 let id = try serverID(itemIdentifier, layout: context.layout)
                 let result = try await download(id, client: context.client, progress: progressBox.value)
-                done.value(result.url, FileProviderItem(result.item, layout: context.layout), nil)
+                done.value(result.url, await context.withPolicy(FileProviderItem(result.item, layout: context.layout)), nil)
             } catch {
                 done.value(nil, nil, ErrorMapping.fileProviderError(error))
             }
@@ -257,7 +278,7 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
                                                context: context, progress: progressBox.value,
                                                resumeKey: Self.resumeKey(template.value.itemIdentifier,
                                                                          contentVersion: template.value.itemVersion?.contentVersion))
-                done.value(FileProviderItem(created, layout: context.layout), [], false, nil)
+                done.value(await context.withPolicy(FileProviderItem(created, layout: context.layout)), [], false, nil)
             } catch {
                 done.value(nil, [], false, ErrorMapping.fileProviderError(error))
             }
@@ -328,9 +349,10 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
         let progressBox = UncheckedBox(progress)
         return run(progress) { [self] in
             do {
+                let context = try context()
                 let result = try await modify(item: itemBox.value, baseVersion: versionBox.value, changedFields: changedFields,
-                                              contents: newContents, context: context(), progress: progressBox.value)
-                done.value(result.item, [], result.shouldFetchContent, nil)
+                                              contents: newContents, context: context, progress: progressBox.value)
+                done.value(await context.withPolicy(result.item), [], result.shouldFetchContent, nil)
             } catch {
                 done.value(nil, [], false, ErrorMapping.fileProviderError(error))
             }

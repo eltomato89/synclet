@@ -36,6 +36,10 @@ public enum SyncAnchorCodec {
 ///   re-enumeration). The working set gets every change; a single container only the
 ///   upserts of its direct children and all deletions. Space roots are never reported
 ///   as ordinary items.
+/// - Pinning (``PinningContext``, Strategy B): every reported item carries its
+///   ``PinPolicy`` content policy. The working set additionally re-reports subtrees whose
+///   policy changed (pins changed since last applied, a folder moved into or out of a
+///   pinned folder), drops pins of deleted folders, and announces pinned content.
 public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @unchecked Sendable {
     /// Default and maximum page size of the API.
     public static let defaultPageSize = 500
@@ -45,6 +49,7 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
     private let client: SyncAPIClient
     private let layoutProvider: @Sendable () -> SpaceLayout
     private let cursorSink: (@Sendable (_ spaceID: String, _ cursor: String) -> Void)?
+    private let pinning: PinningContext?
     private let lock = NSLock()
     private var firstPageCursor: String?
     private var tasks: [UUID: Task<Void, Never>] = [:]
@@ -52,13 +57,16 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
     /// - Parameters:
     ///   - layout: current space layout (read on every call; spaces may change).
     ///   - cursorSink: called with each space's cursor after a change page was reported.
+    ///   - pinning: offline pins of the account (`nil` ⇒ every item `.inherited`).
     public init(containerIdentifier: NSFileProviderItemIdentifier, client: SyncAPIClient,
                 layout: @escaping @Sendable () -> SpaceLayout,
-                cursorSink: (@Sendable (_ spaceID: String, _ cursor: String) -> Void)? = nil) {
+                cursorSink: (@Sendable (_ spaceID: String, _ cursor: String) -> Void)? = nil,
+                pinning: PinningContext? = nil) {
         self.containerIdentifier = containerIdentifier
         self.client = client
         self.layoutProvider = layout
         self.cursorSink = cursorSink
+        self.pinning = pinning
     }
 
     /// Variant with a fixed layout.
@@ -128,13 +136,16 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
         }
         let token = Self.pageToken(from: page)
         let limit = Self.pageSize(suggested: observer.suggestedPageSize)
+        let resolver = pinning?.resolver(layout: layout, client: client)
         track { [client, weak self] in
             do {
                 let result = try await client.children(of: containerID, pageToken: token, limit: limit)
                 if token == nil {
                     self?.lock.withLock { self?.firstPageCursor = result.cursor }
                 }
-                box.value.didEnumerate(result.items.map { FileProviderItem($0, layout: layout) })
+                let items = try await resolver?.items(result.items)
+                    ?? result.items.map { FileProviderItem($0, layout: layout) }
+                box.value.didEnumerate(items)
                 let next = result.nextPageToken.map { NSFileProviderPage(Data($0.utf8)) }
                 box.value.finishEnumerating(upTo: next)
             } catch {
@@ -170,7 +181,8 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
         let layout = layoutProvider()
         let limit = Self.pageSize(suggested: observer.suggestedBatchSize)
         let filterParent = isWorkingSet ? nil : layout.serverID(for: containerIdentifier)
-        track { [client, cursorSink] in
+        let isWorkingSet = isWorkingSet
+        track { [client, cursorSink, pinning] in
             do {
                 var next: [String: String] = [:]
                 var moreComing = false
@@ -191,7 +203,12 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
                     next[space.id] = page.cursor
                     moreComing = moreComing || page.hasMore
                 }
-                if !updated.isEmpty { box.value.didUpdate(updated.map { FileProviderItem($0, layout: layout) }) }
+                if let pinning {
+                    try await Self.reportPinned(updated: updated, deleted: deleted, pinning: pinning, layout: layout,
+                                                client: client, isWorkingSet: isWorkingSet) { box.value.didUpdate($0) }
+                } else if !updated.isEmpty {
+                    box.value.didUpdate(updated.map { FileProviderItem($0, layout: layout) })
+                }
                 if !deleted.isEmpty { box.value.didDeleteItems(withIdentifiers: deleted) }
                 box.value.finishEnumeratingChanges(upTo: SyncAnchorCodec.encode(next), moreComing: moreComing)
                 for (spaceID, cursor) in next { cursorSink?(spaceID, cursor) }
@@ -202,6 +219,57 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
                 box.value.finishEnumeratingWithError(ErrorMapping.fileProviderError(error))
             }
         }
+    }
+
+    /// Reports the upserts of a change batch with their content policy. In the working set
+    /// also: forget deleted folders (and their pins), re-report the subtree of a folder that
+    /// moved into or out of a pin, re-apply changed pins, and announce pinned content.
+    static func reportPinned(updated: [SyncItem], deleted: [NSFileProviderItemIdentifier], pinning: PinningContext,
+                             layout: SpaceLayout, client: SyncAPIClient, isWorkingSet: Bool,
+                             report: ([FileProviderItem]) -> Void) async throws {
+        let map = pinning.parentMap
+        let goneIDs = deleted.compactMap { layout.serverID(for: $0) }
+        // Folders that changed their parent (old parent known): candidates for a subtree re-report.
+        let moved: [(item: SyncItem, oldParent: String)] = isWorkingSet ? updated.compactMap { item in
+            guard item.isFolder, let old = map.parent(of: item.id), old != item.parentId else { return nil }
+            return (item, old)
+        } : []
+        map.remove(goneIDs)
+        if isWorkingSet {
+            for id in goneIDs {
+                do {
+                    if try pinning.store.forget(folder: id, spaces: layout.spaces.map(\.id)) {
+                        Log.pinning.info("pinned folder \(id, privacy: .public) was deleted: pin dropped")
+                    }
+                } catch {
+                    Log.pinning.error("dropping the pin of \(id, privacy: .public) failed: \(String(describing: error), privacy: .public)")
+                }
+            }
+        }
+        let resolver = pinning.resolver(layout: layout, client: client)
+        var announce = false
+        func reportAndNote(_ items: [FileProviderItem]) {
+            if PinPolicy.keepDownloaded != .inherited, items.contains(where: { $0.contentPolicy == PinPolicy.keepDownloaded }) {
+                announce = true
+            }
+            report(items)
+        }
+        let items = try await resolver.items(updated)
+        if !items.isEmpty { reportAndNote(items) }
+        guard isWorkingSet else { return }
+
+        if resolver.hasPins {
+            let policies = Dictionary(items.map { ($0.itemIdentifier, $0.contentPolicy) }, uniquingKeysWith: { $1 })
+            for (folder, oldParent) in moved {
+                let newPolicy = policies[layout.providerIdentifier(forServerID: folder.id)] ?? .inherited
+                let oldPolicy = try await resolver.policy(itemId: folder.id, parentId: oldParent, item: folder)
+                guard newPolicy != oldPolicy else { continue }
+                Log.pinning.info("folder \(folder.id, privacy: .public) moved across a pin: re-reporting its subtree")
+                try await resolver.walk(from: folder.id, policy: newPolicy, pins: PinSet(), report: reportAndNote)
+            }
+        }
+        try await resolver.reapplyChangedPins(store: pinning.store, gone: Set(goneIDs), report: reportAndNote)
+        if announce { pinning.notifyPinnedContent() }
     }
 
     /// Splits changes into upserts and deletions (optionally only the direct children of
@@ -231,9 +299,22 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
 /// container) reports vanished spaces as deleted and every current space as updated.
 public final class TopLevelEnumerator: NSObject, NSFileProviderEnumerator, Sendable {
     private let layoutProvider: @Sendable () -> SpaceLayout
+    private let pinsProvider: @Sendable () -> [String: PinSet]
 
-    public init(layout: @escaping @Sendable () -> SpaceLayout) {
+    /// - Parameter pins: offline pins per space id (a fully pinned space folder is kept offline).
+    public init(layout: @escaping @Sendable () -> SpaceLayout,
+                pins: @escaping @Sendable () -> [String: PinSet] = { [:] }) {
         self.layoutProvider = layout
+        self.pinsProvider = pins
+    }
+
+    /// The space folders with their content policy.
+    private func items(_ layout: SpaceLayout) -> [FileProviderItem] {
+        let pins = pinsProvider()
+        return layout.topLevelItems().map { item in
+            guard let space = item.space else { return item }
+            return item.withContentPolicy(PinPolicy.contentPolicy(forSpace: space.id, pins: pins[space.id] ?? PinSet()))
+        }
     }
 
     public convenience init(layout: SpaceLayout) {
@@ -247,7 +328,7 @@ public final class TopLevelEnumerator: NSObject, NSFileProviderEnumerator, Senda
     }
 
     public func enumerateItems(for observer: any NSFileProviderEnumerationObserver, startingAt page: NSFileProviderPage) {
-        observer.didEnumerate(layoutProvider().topLevelItems())
+        observer.didEnumerate(items(layoutProvider()))
         observer.finishEnumerating(upTo: nil)
     }
 
@@ -264,7 +345,7 @@ public final class TopLevelEnumerator: NSObject, NSFileProviderEnumerator, Senda
         let current = Set(layout.spaces.map(\.id))
         let gone = previous.filter { !current.contains($0) }
             .map { NSFileProviderItemIdentifier(SpaceLayout.identifierPrefix + $0) }
-        let items = layout.topLevelItems()
+        let items = self.items(layout)
         if !items.isEmpty { observer.didUpdate(items) }
         if !gone.isEmpty { observer.didDeleteItems(withIdentifiers: gone) }
         observer.finishEnumeratingChanges(upTo: Self.anchor(for: layout), moreComing: false)
