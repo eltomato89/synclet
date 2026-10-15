@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
+import type { Dirent } from 'node:fs';
 import { lstat, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { APP_CONFIG, AppConfig } from '../config';
@@ -15,6 +16,7 @@ import { WatcherService } from './watcher.service';
 
 const DAY = 24 * 3600 * 1000;
 const SESSION_RETENTION_DAYS = 30;
+const TEMP_MAX_AGE_MS = 3600 * 1000;
 
 @Injectable()
 export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy {
@@ -73,23 +75,32 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     await this.files.recoverStagedTrash().catch((e) => this.log.error(`trash recovery failed: ${(e as Error).message}`));
   }
 
-  /** At startup no upload is in flight, so every temp file is a leftover of a crash. */
+  /**
+   * Removes `.synclet-tmp-*` files and directories (any depth, older than one hour by mtime) left
+   * by crashes. Symlinks are never followed; `.synclet-trash-*` is never touched.
+   */
   async startupCleanup(): Promise<number> {
+    const cutoff = Date.now() - TEMP_MAX_AGE_MS;
     let removed = 0;
-    for (const u of await this.users().catch(() => [])) {
-      const root = userRoot(this.config.dataRoot, u.username);
-      const names = await readdir(root).catch(() => [] as string[]);
-      for (const n of names.filter(isTempName)) {
+    const walk = async (dir: string, owner: string): Promise<void> => {
+      let entries: Dirent[];
+      try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        const abs = path.join(dir, e.name);
         try {
-          const abs = path.join(root, n);
-          if (!(await lstat(abs)).isFile()) continue; // never touch directories or symlinks
-          await rm(abs, { force: true });
-          removed++;
-        } catch (e) {
-          this.log.warn(`startup cleanup: cannot remove ${n} in ${u.username}: ${(e as Error).message}`);
+          if (isTempName(e.name)) {
+            const st = await lstat(abs);
+            if (st.isSymbolicLink() || st.mtimeMs > cutoff) continue;
+            if (st.isDirectory() || st.isFile()) { await rm(abs, { recursive: true, force: true }); removed++; }
+          } else if (e.isDirectory() && !e.name.startsWith('.synclet-trash-')) {
+            await walk(abs, owner); // Dirent from readdir never follows symlinks
+          }
+        } catch (err) {
+          this.log.warn(`startup cleanup: cannot remove ${abs} (${owner}): ${(err as Error).message}`);
         }
       }
-    }
+    };
+    for (const u of await this.users().catch(() => [])) await walk(userRoot(this.config.dataRoot, u.username), u.username);
     return removed;
   }
 

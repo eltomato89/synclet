@@ -7,6 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthGuard } from './auth.guard';
 import { AuthService, REFRESH_COOKIE, REFRESH_TTL_MS } from './auth.service';
 import { CurrentUser } from './current-user.decorator';
+import { RateLimits } from './rate-limit';
 import { UsersService } from './users.service';
 
 export function setRefreshCookie(reply: FastifyReply, token: string, secure: boolean) {
@@ -17,12 +18,16 @@ const LoginBody = z.object({ login: z.string().min(1), password: z.string().min(
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService, private readonly prisma: PrismaService, private readonly users: UsersService) {}
+  constructor(private readonly auth: AuthService, private readonly prisma: PrismaService, private readonly users: UsersService, private readonly limits: RateLimits) {}
 
   @Post('login')
   @HttpCode(200)
   async login(@Body(new ZodPipe(LoginBody)) body: z.infer<typeof LoginBody>, @Req() req: FastifyRequest, @Res({ passthrough: true }) reply: FastifyReply) {
+    this.limits.takeIp(req.ip, reply);
+    const key = body.login.trim().toLowerCase();
+    if (!this.limits.login.take(key)) throw this.limits.limited(this.limits.login, key, reply);
     const { access, refreshToken } = await this.auth.login(body.login, body.password, req.headers['user-agent']);
+    this.limits.login.reset(key);
     setRefreshCookie(reply, refreshToken, this.auth.config.secureCookies);
     return access;
   }

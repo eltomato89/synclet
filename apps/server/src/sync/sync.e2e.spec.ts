@@ -200,6 +200,7 @@ describe('Sync API v1', () => {
     expect(full.headers['content-length']).toBe('18');
     expect(full.headers['x-content-type-options']).toBe('nosniff');
     expect(full.headers['content-security-policy']).toContain('sandbox');
+    expect(full.headers['cache-control']).toBe('private, no-store');
     expect(full.headers['content-disposition']).toBeUndefined();
     expect((await api('GET', `/items/${f.id}/content`, { headers: { 'if-none-match': 'W/"v0", "v1"' } })).statusCode).toBe(304);
     expect((await api('GET', `/items/${f.id}/content`, { headers: { 'if-none-match': '"v0"' } })).statusCode).toBe(200);
