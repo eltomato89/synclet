@@ -50,6 +50,19 @@ async function sizeOf(abs: string): Promise<bigint> {
   return total;
 }
 
+/**
+ * One row of a TrashEntry manifest: enough to restore the subtree with its original IDs even
+ * after the tombstones were purged. Old entries carry only `{ id, type, path }`.
+ */
+export type TrashManifestEntry = {
+  id: string; type: 'folder' | 'file'; path: string;
+  name?: string; mtime?: string; size?: number; contentHash?: string | null;
+};
+
+function manifestEntry(i: Item): TrashManifestEntry {
+  return { id: i.id, type: i.type, path: i.path, name: i.name, mtime: i.mtime.toISOString(), size: Number(i.size), contentHash: i.contentHash };
+}
+
 const uuidFromHex = (h: string) => `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 
 @Injectable()
@@ -74,7 +87,7 @@ export class FilesService implements OnModuleDestroy {
    * ancestor (e.g. `Docs -> ../bob` swapped in after indexing), nothing resolving outside the root.
    * Called under the user lock right before every disk mutation, so nothing is touched otherwise.
    */
-  private async assertRealDir(user: IndexUser, rel: string): Promise<void> {
+  async assertRealDir(user: IndexUser, rel: string): Promise<void> {
     const root = this.root(user);
     let cur = root;
     for (const seg of rel === '' ? [] : rel.split('/')) {
@@ -363,11 +376,12 @@ export class FilesService implements OnModuleDestroy {
         }
         const gone = await this.store.tombstoneSubtree(tx, item);
         if (staged) {
+          const deletedAt = new Date();
           await tx.trashEntry.create({
             data: {
               id: trashId, ownerId: user.id, itemId: item.id, type: item.type, name: item.name, originalPath: item.path,
               size: gone.reduce((s, i) => s + i.size, 0n), storePath: (staged as { storePath: string }).storePath,
-              manifest: gone.map((i) => ({ id: i.id, type: i.type, path: i.path })),
+              manifest: gone.map(manifestEntry), deletedAt, expiresAt: this.trashExpiry(deletedAt),
             },
           });
         }
@@ -398,6 +412,12 @@ export class FilesService implements OnModuleDestroy {
         this.log.error(`moving ${staging} to ${done.storePath} failed, left staged for recovery: ${(e as Error).message}`));
       this.trashQueue = this.trashQueue.then(job, job);
     }
+  }
+
+  /** When a trash entry deleted at `deletedAt` expires (null = kept until deleted by hand). */
+  trashExpiry(deletedAt: Date): Date | null {
+    const days = this.config.trashRetentionDays;
+    return days > 0 ? new Date(deletedAt.getTime() + days * 24 * 3600 * 1000) : null;
   }
 
   /** Resolves once all background trash moves queued so far have finished (they never reject). */
@@ -510,10 +530,12 @@ export class FilesService implements OnModuleDestroy {
       return;
     }
     const storePath = path.join(this.config.metaRoot, 'trash', trashId, intent.name);
+    const deletedAt = new Date();
     await this.prisma.trashEntry.create({
       data: {
         id: trashId, ownerId: user.id, itemId: intent.itemId, type: intent.type, name: intent.name, originalPath: intent.originalRel,
-        size: await sizeOf(staged), storePath, manifest: [{ id: intent.itemId, type: intent.type, path: intent.originalRel }],
+        size: await sizeOf(staged), storePath, manifest: [{ id: intent.itemId, type: intent.type, path: intent.originalRel, name: intent.name }],
+        deletedAt, expiresAt: this.trashExpiry(deletedAt),
       },
     });
     await this.finishTrash(staged, storePath);

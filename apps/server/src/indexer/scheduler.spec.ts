@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createTestApp, createTestUser, TestContext } from '../../test/context';
 import { trashStagingName } from '../common/names';
 import { FilesService } from '../files/files.service';
+import { TrashService } from '../trash/trash.service';
 import { IndexerService } from './indexer.service';
 import { SchedulerService } from './scheduler.service';
 import { WatcherService } from './watcher.service';
@@ -172,6 +173,12 @@ describe('SchedulerService', () => {
       s.onModuleDestroy();
       ctx.config.background = false;
     }
+  });
+
+  it('maintenance expires old trash entries', async () => {
+    const expire = jest.spyOn(ctx.app.get(TrashService), 'expire').mockResolvedValue(0);
+    await ctx.app.get(SchedulerService).maintenance();
+    expect(expire).toHaveBeenCalledTimes(1);
   });
 
   it('maintenance purges sessions expired or revoked more than 30 days ago', async () => {
