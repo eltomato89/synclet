@@ -92,7 +92,9 @@ export class SyncController {
     return {
       userId: u.id, email: u.email, displayName: u.displayName,
       organizationId: `${serverId}:${u.id}`, organizationName: 'Synclet', slug: u.username,
-      canWrite: true, areas: { personal: true, shared: false, customers: false, projects: false },
+      canWrite: true,
+      spaces: [{ id: 'personal', kind: 'personal', name: 'Meine Dateien', rootId: ROOT_ID, canWrite: true }],
+      areas: { personal: true, shared: false, customers: false, projects: false },
       quotaBytes: 0, usedBytes: Number(used._sum.size ?? 0n), maxUploadBytes: this.config.maxUploadBytes,
       cursor: await this.journal.currentCursor(user.id),
     };

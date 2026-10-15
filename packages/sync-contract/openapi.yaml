@@ -1029,6 +1029,7 @@ components:
         - office_disabled
         - sso_not_allowed
         - password_login_disabled
+        - insufficient_storage
     Error:
       type: object
       required: [statusCode, message, code]
@@ -1083,7 +1084,7 @@ components:
         preview: { $ref: '#/components/schemas/PreviewInfo' }
     SyncAccount:
       type: object
-      required: [userId, email, displayName, organizationId, organizationName, slug, canWrite, areas, quotaBytes, usedBytes, maxUploadBytes, cursor]
+      required: [userId, email, displayName, organizationId, organizationName, slug, canWrite, spaces, areas, quotaBytes, usedBytes, maxUploadBytes, cursor]
       properties:
         userId: { type: string, format: uuid }
         email: { type: [string, 'null'] }
@@ -1092,6 +1093,10 @@ components:
         organizationName: { type: string, const: Synclet }
         slug: { type: string, description: The username (= folder name on the server). }
         canWrite: { type: boolean }
+        spaces:
+          type: array
+          description: Top-level spaces. Phase 2 servers return exactly the personal space. Clients keep sync state per space and show an unknown `kind` as an ordinary folder.
+          items: { $ref: '#/components/schemas/SyncSpace' }
         areas:
           type: object
           required: [personal, shared, customers, projects]
@@ -1104,6 +1109,15 @@ components:
         usedBytes: { type: integer, minimum: 0 }
         maxUploadBytes: { type: integer, minimum: 0 }
         cursor: { $ref: '#/components/schemas/Cursor' }
+    SyncSpace:
+      type: object
+      required: [id, kind, name, rootId, canWrite]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [personal, shared, external] }
+        name: { type: string }
+        rootId: { type: string, description: The space's root folder id (`root` for the personal space). }
+        canWrite: { type: boolean }
     ServerCapabilities:
       type: object
       required: [versions, office]

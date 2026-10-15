@@ -1,8 +1,10 @@
 import { Logger } from '@nestjs/common';
+import fsp from 'node:fs/promises';
 import { mkdir, readdir, readFile, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { createTestApp, createTestUser, itIfCaseSensitive, TestContext } from '../../test/context';
+import { SyncError } from '../common/sync-error';
 import { IndexUser } from '../common/types';
 import { IndexerService } from '../indexer/indexer.service';
 import { JournalService } from '../journal/journal.service';
@@ -430,5 +432,54 @@ describe('FilesService', () => {
     expect(await readFile(entry.storePath, 'utf8')).toBe('mine');
     expect(await readFile(path.join(root, 'a.txt'), 'utf8')).toBe('host');
     expect(await readdir(path.join(ctx.config.metaRoot, 'staging'))).toEqual([]);
+  });
+
+  describe('full disk (507)', () => {
+    afterEach(() => { jest.restoreAllMocks(); });
+    const full = () => Object.assign(new Error('no space left on device'), { code: 'ENOSPC' });
+
+    it('upload: ENOSPC on publish gives insufficient_storage and leaves no temp file, row or journal entry', async () => {
+      const before = await ctx.prisma.fileChange.count();
+      jest.spyOn(fsp, 'link').mockRejectedValueOnce(full());
+      await expect(files.upload(user, null, 'a.txt', body('x'), {})).rejects.toMatchObject({ status: 507, code: 'insufficient_storage' });
+      expect(await readdir(root)).toEqual([]);
+      expect(await ctx.prisma.item.count()).toBe(0);
+      expect(await ctx.prisma.fileChange.count()).toBe(before);
+    });
+
+    it('upload: ENOSPC while receiving the body gives insufficient_storage and removes the temp file', async () => {
+      const stream = new PassThrough();
+      const p = files.upload(user, null, 'big.bin', stream, {});
+      stream.write(Buffer.alloc(16));
+      stream.destroy(full());
+      await expect(p).rejects.toMatchObject({ status: 507, code: 'insufficient_storage' });
+      expect(await readdir(root)).toEqual([]);
+      expect(await ctx.prisma.item.count()).toBe(0);
+    });
+
+    it('replace: ENOSPC on the final rename gives insufficient_storage; the file, row and journal stay unchanged', async () => {
+      const f = await files.upload(user, null, 'a.txt', body('old'), {});
+      const journalBefore = await ctx.prisma.fileChange.count();
+      const real = fsp.rename;
+      jest.spyOn(fsp, 'rename').mockImplementation(async (from, to) => {
+        if (String(to) === path.join(root, 'a.txt')) throw full();
+        return real(from, to);
+      });
+      await expect(files.replaceContent(user, f.id, body('new'), { ifMatchVersion: f.version })).rejects.toMatchObject({ status: 507, code: 'insufficient_storage' });
+      jest.restoreAllMocks();
+      expect(await readFile(path.join(root, 'a.txt'), 'utf8')).toBe('old');
+      expect(await readdir(root)).toEqual(['a.txt']);
+      expect(await ctx.prisma.item.findUniqueOrThrow({ where: { id: f.id } })).toMatchObject({ version: f.version });
+      expect(await ctx.prisma.fileChange.count()).toBe(journalBefore);
+    });
+
+    it('EIO stays a plain error (500)', async () => {
+      const eio = Object.assign(new Error('io error'), { code: 'EIO' });
+      jest.spyOn(fsp, 'link').mockRejectedValueOnce(eio);
+      const err = await files.upload(user, null, 'a.txt', body('x'), {}).catch((e) => e);
+      expect(err).toBe(eio);
+      expect(err).not.toBeInstanceOf(SyncError);
+      expect(await readdir(root)).toEqual([]);
+    });
   });
 });
