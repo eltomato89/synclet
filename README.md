@@ -1,0 +1,98 @@
+# Synclet
+
+Synclet is a self-hosted, Dropbox-like file server. Your folder stays a normal folder: Synclet indexes and serves the files you already have on disk, and never stores anything inside them besides your own content. Edit files on the host or through Synclet, and both see the same thing. Leave at any time and your folder is exactly as you want it.
+
+## Quickstart
+
+```bash
+cp deploy/.env.example deploy/.env
+# edit deploy/.env: set SYNCLET_DATA (your files folder), SYNCLET_META, PUID/PGID, POSTGRES_PASSWORD
+docker compose -f deploy/compose.yml --env-file deploy/.env up -d --build
+```
+
+Open `http://localhost:8080` (or your `SYNCLET_PORT`) and complete the setup wizard. The username you choose is the folder name below `SYNCLET_DATA`; an existing folder with that name is adopted and its files appear immediately.
+
+`SYNCLET_META` is required: the folder must exist, be writable by `PUID:PGID` and live outside `SYNCLET_DATA`. `POSTGRES_PASSWORD` is required too and must contain only URL-safe characters (`[A-Za-z0-9._~-]`); generate one with `openssl rand -hex 24`.
+
+## What is written where
+
+| Location | Content |
+| --- | --- |
+| `SYNCLET_DATA` (`/data`) | Only your files, plus the transient entries listed below. No hidden dirs, no xattrs, no metadata files. |
+| `SYNCLET_META` (`/meta`) | Trash (`/meta/trash/<id>/`), delete intents (`/meta/staging/`); later thumbnails and versions. |
+| PostgreSQL | File index, sync journal, users, devices. |
+
+### What Synclet may write into your folder
+
+Besides the files you upload, rename, move or delete through Synclet, only two kinds of short-lived entries ever appear in a user folder:
+
+- `.synclet-tmp-<id>`: an upload or replacement in progress. It is renamed onto the final name when complete. Leftovers from a crash are removed at the next start.
+- `.synclet-trash-<id>`: an item you just deleted, while it is being moved into the trash in `SYNCLET_META`. It disappears when the move finishes. After a crash, the next start completes the move (or puts the item back if the delete never committed).
+
+Both are ignored by the indexer and never synced. These names are reserved: you cannot create files or folders with these prefixes through the app or the sync API. A file you create yourself on the host named `.synclet-tmp-<letters/digits>` directly in a user folder is treated as a crash leftover and removed at startup.
+
+Other names are never indexed or synced either: `.DS_Store`, `.Spotlight-V100`, `.Trashes`, `.fseventsd`, `.TemporaryItems`, `.localized`, `Thumbs.db`, `desktop.ini`, `$RECYCLE.BIN`, `@eaDir`, `#recycle`, `lost+found`, AppleDouble files (`._*`), Office lock and temp files (`~$*`, `~WRL*.tmp`, `.~lock.*#`). Symlinks are never followed, including a user folder that is itself a symlink.
+
+### Deleting needs disk space in `SYNCLET_META`
+
+`SYNCLET_DATA` and `SYNCLET_META` are separate mounts, so deleting through Synclet **copies** the item into `SYNCLET_META` and then removes the original. You need free space there equal to the size of what you delete. The trash is not emptied automatically yet. The delete itself is answered at once, and the copy runs in the background (you see the `.synclet-trash-<id>` entry in the meantime).
+
+## Configuration
+
+All settings go into `deploy/.env` (read by `docker compose --env-file deploy/.env`). Leave a value empty to use the default. Changes take effect after `docker compose ... up -d` (which recreates the server container).
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `SYNCLET_DATA` | (required) | Host folder with your files. Each user gets a subfolder named like the username. |
+| `SYNCLET_META` | (required) | Host folder for trash and other metadata. Must exist, be writable by `PUID:PGID` and live outside `SYNCLET_DATA`. |
+| `POSTGRES_PASSWORD` | (required) | Database password; URL-safe characters only (`openssl rand -hex 24`). |
+| `PUID` / `PGID` | `1000` / `1000` | User and group the server runs as; must own your files (`id -u` / `id -g`). |
+| `SYNCLET_PORT` | `8080` | Host port for HTTP. |
+| `SYNCLET_TLS_PORT` | `8443` | Host port for HTTPS. |
+| `SYNCLET_SITE_ADDRESS` | `:80` | Caddy site address. Set to your domain (with ports 80/443) for automatic Let's Encrypt certificates. |
+| `SYNCLET_PUBLIC_URL` | (empty) | Public URL, e.g. `https://files.example.com`. Currently only decides the default of `SYNCLET_SECURE_COOKIES`. |
+| `SYNCLET_SECURE_COOKIES` | on if `SYNCLET_PUBLIC_URL` starts with `https://` | Forces the `Secure` flag of the login cookie on (`on`) or off (`off`). |
+| `SYNCLET_WATCH` | `on` | `off` disables the file watcher and relies on periodic scans (NFS/SMB). |
+| `SYNCLET_SCAN_INTERVAL` | `900` (`120` with `SYNCLET_WATCH=off`) | Seconds between full scans of all user folders. |
+| `SYNCLET_MAX_UPLOAD_BYTES` | `53687091200` (50 GiB) | Largest accepted upload. |
+| `SYNCLET_MASS_DELETE_THRESHOLD` | `25` | Safety guard: if a user folder suddenly looks empty while more than this many top-level items are indexed, Synclet refuses to delete them from the index (and from every client) and logs an error. `0` turns the guard off. If you really emptied the folder, set it to `0`, restart the server, then set it back. An unmounted data volume is always refused. |
+| `SYNCLET_TOMBSTONE_WINDOW` | `3600` | Seconds within which an item that vanished and reappears elsewhere is still recognised as a move (keeps its ID). |
+| `SYNCLET_JOURNAL_RETENTION_DAYS` | `30` | Days of change history kept for sync clients. A client offline for longer does a full resync. |
+
+## Known limitations
+
+- **macOS (Docker Desktop):** renames and moves made in Finder or other host apps show up inside the container with new inode numbers. Synclet then sees a delete plus a create instead of a move: the item gets a new ID and clients download it again. Linux hosts keep IDs across host-side renames and moves.
+- **NFS/SMB sources** do not deliver change events reliably: set `SYNCLET_WATCH=off` to scan periodically instead (every 2 minutes). Inode numbers may not be stable there either, so item IDs may change when files are moved externally.
+- **Deletes on the host bypass the trash.** Only deletes made through Synclet go to the trash in `SYNCLET_META`. A file you delete on the host is gone, and the delete is synced to all clients.
+- inotify: on large folders raise `fs.inotify.max_user_watches` (for example `sysctl fs.inotify.max_user_watches=524288`).
+
+## Security notes
+
+- Resetting a user's password (or disabling the user) in the admin API signs out all of that user's **web sessions**. **Sync devices are not revoked** by a password reset, by design: devices are revoked explicitly in the device list (`DELETE /api/sync/v1/devices/<id>`). If you suspect a device token was stolen, revoke the device as well. Disabling a user blocks all of their device tokens.
+
+## Leaving Synclet
+
+`docker compose -f deploy/compose.yml --env-file deploy/.env down -v` removes the containers and the Postgres/Caddy volumes. Your `SYNCLET_DATA` folder is untouched (trash in `SYNCLET_META` stays too).
+
+## Architecture
+
+Three containers: `postgres` (index and journal), `server` (NestJS/Fastify API, indexer, file access) and `caddy` (reverse proxy for `/api/*` plus the static web app). The spec lists the web app as a separate service; it is served from the Caddy image instead, which is leaner and equivalent. For automatic Let's Encrypt certificates set `SYNCLET_SITE_ADDRESS=<your domain>`, `SYNCLET_PORT=80` and `SYNCLET_TLS_PORT=443` (all three are required, plus public DNS and reachable ports 80/443). With the defaults (`:80`, ports 8080/8443) no certificates are issued; use that behind an existing reverse proxy.
+
+## Development
+
+```bash
+pnpm install
+pnpm dev:db                      # Postgres on localhost:5434
+cd apps/server && pnpm prisma generate
+# create a test database once:
+docker compose -f deploy/compose.dev.yml exec postgres psql -U synclet -c 'CREATE DATABASE synclet_test'
+pnpm test
+```
+
+## Roadmap
+
+See the design spec: [docs/superpowers/specs/2026-10-15-synclet-design.md](docs/superpowers/specs/2026-10-15-synclet-design.md).
+
+## License
+
+TBD by the maintainer before the first public release.

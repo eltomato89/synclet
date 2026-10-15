@@ -1,0 +1,12 @@
+{
+  "name": "@synclet/shared",
+  "version": "0.1.0",
+  "private": true,
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p .",
+    "prepare": "tsc -p .",
+    "typecheck": "tsc -p . --noEmit"
+  },
+  "devDependencies": { "typescript": "^5.9.0" }
+}

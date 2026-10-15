@@ -1,0 +1,242 @@
+/*
+ * Synclet design tokens
+ * =====================
+ * Direction: "a quiet harbour for your files". Self-hosted storage for people who care where
+ * their data lives. Calm, cool neutrals with a faint sea-glass tint; one confident accent
+ * (Fjord, a deep teal-blue) used only for primary actions, focus, selection and the storage
+ * meter. The app is framed: the sidebar sits directly on the Fog canvas, content lives on an
+ * inset Paper panel with a 1px Line border. Surfaces never carry shadows; only overlays
+ * (menus, dialogs, sheets, toasts) do.
+ * The one memorable element is the Synclet mark (two arcs + two dots: two devices in sync),
+ * echoed as faint concentric rings behind the setup and login screens.
+ *
+ * Colour         light                                 dark
+ *   Fog    canvas      oklch(.972 .004 196) ~#f3f6f6   oklch(.172 .008 200) ~#111819
+ *   Paper  surface     oklch(1 0 0)          #ffffff   oklch(.205 .009 200) ~#191f20
+ *   Ink    text        oklch(.22 .014 200)  ~#151d1f   oklch(.95 .005 196)  ~#eef1f1
+ *   Slate  muted text  oklch(.52 .014 200)  ~#5f6a6c   oklch(.70 .012 200)  ~#a2abad
+ *   Line   borders     oklch(.915 .006 196) ~#e2e7e7   white at 9%
+ *   Fjord  accent      oklch(.53 .105 198)  ~#00768a   oklch(.76 .105 195)  ~#5cc3d2
+ *
+ * Type: Inter Variable (bundled via @fontsource-variable/inter, no CDN).
+ *   Character variants cv05 (l with tail) + cv08 (serifed I) so file names like "Il1.txt"
+ *   stay unambiguous. Tabular figures (`tabular-nums`) for sizes and dates.
+ *   Scale (px / line-height): xs 12/16 meta, sm 13/20 UI default, base 14/22 body and inputs,
+ *   lg 16/24 section titles, xl 20/28 page titles, 2xl 26/32 auth headings.
+ *   Weights: 400 body, 500 UI labels and nav, 600 headings and the wordmark. Headings use
+ *   slight negative tracking.
+ *
+ * Radius (follows hierarchy, not one value everywhere), --radius = 8px:
+ *   sm 4.8px chips, md 6.4px buttons/inputs/nav items, lg 8px menus,
+ *   xl 11.2px panels/cards, 2xl 14.4px dialogs/sheets.
+ *
+ * Layout: 4px grid. Sidebar 240px. Topbar 52px. Content padding 24px (16px below md).
+ * Motion: 120-160ms ease-out on state changes only; prefers-reduced-motion is respected.
+ */
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/inter";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme {
+  --text-xs: 0.75rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.25rem;
+  --text-base: 0.875rem;
+  --text-base--line-height: 1.375rem;
+  --text-lg: 1rem;
+  --text-lg--line-height: 1.5rem;
+  --text-xl: 1.25rem;
+  --text-xl--line-height: 1.75rem;
+  --text-2xl: 1.625rem;
+  --text-2xl--line-height: 2rem;
+
+  /* Overlay shadows, tinted with Ink instead of pure black. */
+  --shadow-md: 0 1px 2px oklch(0.22 0.014 200 / 0.06), 0 6px 16px -4px oklch(0.22 0.014 200 / 0.12);
+  --shadow-lg: 0 1px 2px oklch(0.22 0.014 200 / 0.08), 0 16px 40px -8px oklch(0.22 0.014 200 / 0.2);
+}
+
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
+
+  --color-canvas: var(--canvas);
+  --color-accent-soft: var(--accent-soft);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  --radius: 0.5rem;
+
+  --canvas: oklch(0.972 0.004 196);            /* Fog */
+  --background: oklch(1 0 0);                  /* Paper */
+  --foreground: oklch(0.22 0.014 200);         /* Ink */
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.22 0.014 200);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.22 0.014 200);
+  --primary: oklch(0.53 0.105 198);            /* Fjord */
+  --primary-foreground: oklch(0.99 0.004 196);
+  --secondary: oklch(0.955 0.006 196);
+  --secondary-foreground: oklch(0.22 0.014 200);
+  --muted: oklch(0.955 0.006 196);
+  --muted-foreground: oklch(0.52 0.014 200);   /* Slate */
+  --accent: oklch(0.948 0.008 196);            /* hovered rows and menu items */
+  --accent-foreground: oklch(0.22 0.014 200);
+  --accent-soft: oklch(0.95 0.028 198);        /* selected item tint */
+  --destructive: oklch(0.56 0.19 25);
+  --border: oklch(0.915 0.006 196);            /* Line */
+  --input: oklch(0.885 0.008 196);
+  --ring: oklch(0.53 0.105 198 / 0.55);
+  --chart-1: oklch(0.53 0.105 198);
+  --chart-2: oklch(0.65 0.09 170);
+  --chart-3: oklch(0.6 0.08 240);
+  --chart-4: oklch(0.72 0.11 80);
+  --chart-5: oklch(0.6 0.13 30);
+  --sidebar: var(--canvas);
+  --sidebar-foreground: oklch(0.36 0.014 200);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: oklch(0.93 0.009 196);
+  --sidebar-accent-foreground: oklch(0.22 0.014 200);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+
+  /* File-type tints (FileIcon). Muted, cool-leaning hues so a full folder reads calm. */
+  --ft-folder: oklch(0.6 0.09 205);
+  --ft-image: oklch(0.6 0.13 340);
+  --ft-video: oklch(0.55 0.14 295);
+  --ft-audio: oklch(0.6 0.12 255);
+  --ft-pdf: oklch(0.58 0.17 27);
+  --ft-code: oklch(0.52 0.05 230);
+  --ft-archive: oklch(0.64 0.11 70);
+  --ft-spreadsheet: oklch(0.57 0.12 155);
+  --ft-presentation: oklch(0.64 0.14 45);
+  --ft-document: oklch(0.55 0.13 250);
+  --ft-generic: oklch(0.6 0.012 200);
+}
+
+.dark {
+  --canvas: oklch(0.172 0.008 200);
+  --background: oklch(0.205 0.009 200);
+  --foreground: oklch(0.95 0.005 196);
+  --card: oklch(0.205 0.009 200);
+  --card-foreground: oklch(0.95 0.005 196);
+  --popover: oklch(0.235 0.01 200);
+  --popover-foreground: oklch(0.95 0.005 196);
+  --primary: oklch(0.76 0.105 195);
+  --primary-foreground: oklch(0.2 0.03 200);
+  --secondary: oklch(0.26 0.01 200);
+  --secondary-foreground: oklch(0.95 0.005 196);
+  --muted: oklch(0.26 0.01 200);
+  --muted-foreground: oklch(0.7 0.012 200);
+  --accent: oklch(0.265 0.011 200);
+  --accent-foreground: oklch(0.95 0.005 196);
+  --accent-soft: oklch(0.3 0.04 198);
+  --destructive: oklch(0.7 0.17 24);
+  --border: oklch(1 0 0 / 9%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.76 0.105 195 / 0.5);
+  --chart-1: oklch(0.76 0.105 195);
+  --chart-2: oklch(0.72 0.09 170);
+  --chart-3: oklch(0.7 0.08 240);
+  --chart-4: oklch(0.78 0.11 80);
+  --chart-5: oklch(0.7 0.13 30);
+  --sidebar: var(--canvas);
+  --sidebar-foreground: oklch(0.8 0.008 196);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: oklch(0.235 0.01 200);
+  --sidebar-accent-foreground: oklch(0.95 0.005 196);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+
+  --ft-folder: oklch(0.74 0.09 205);
+  --ft-image: oklch(0.74 0.12 340);
+  --ft-video: oklch(0.72 0.12 295);
+  --ft-audio: oklch(0.74 0.1 255);
+  --ft-pdf: oklch(0.72 0.14 27);
+  --ft-code: oklch(0.74 0.05 230);
+  --ft-archive: oklch(0.78 0.1 75);
+  --ft-spreadsheet: oklch(0.74 0.11 155);
+  --ft-presentation: oklch(0.76 0.12 50);
+  --ft-document: oklch(0.72 0.11 250);
+  --ft-generic: oklch(0.7 0.012 200);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+    font-feature-settings: "cv05", "cv08";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-canvas text-sm text-foreground;
+  }
+  h1, h2, h3 {
+    letter-spacing: -0.014em;
+  }
+  ::selection {
+    background: color-mix(in oklch, var(--primary) 24%, transparent);
+  }
+  button:not(:disabled), [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

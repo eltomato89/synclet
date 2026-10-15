@@ -1,0 +1,18 @@
+packages:
+  - apps/server
+  - apps/web
+  - packages/*
+  - e2e
+allowBuilds:
+  '@parcel/watcher': true
+  '@prisma/client': true
+  '@prisma/engines': true
+  argon2: true
+  prisma: true
+onlyBuiltDependencies:
+  - "@prisma/client"
+  - "@prisma/engines"
+  - prisma
+  - argon2
+  - "@parcel/watcher"
+  - esbuild
