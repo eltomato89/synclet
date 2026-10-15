@@ -3,7 +3,10 @@ import type { DerivativeJob } from '@prisma/client';
 import { APP_CONFIG, AppConfig } from '../config';
 import { HashBackfill } from '../derivatives/hash';
 import { JobsService } from '../derivatives/jobs.service';
+import { extractText } from '../derivatives/text-extract';
+import { TextIndexer } from '../derivatives/text-index';
 import { BadInputError, Thumbnailer } from '../derivatives/thumbnails';
+import { ToolFailedError, ToolOptions } from '../derivatives/tools';
 
 const IDLE_MS = 2000;
 /** enqueueMissing runs at least this often even without a change signal. */
@@ -11,7 +14,7 @@ export const ENQUEUE_EVERY_MS = 5 * 60_000;
 
 /**
  * Background worker loop: hash backfill → enqueue missing jobs → process claimed thumbnail jobs
- * concurrently. Loops immediately while there is work, otherwise sleeps IDLE_MS. `stop()` lets
+ * concurrently, then claimed text-extraction jobs. Loops immediately while there is work, otherwise sleeps IDLE_MS. `stop()` lets
  * in-flight jobs finish and hands unstarted claims back.
  *
  * enqueueMissing scans all hashed items, so it only runs when there may be new work: after the
@@ -28,12 +31,15 @@ export class WorkerRunner {
   private enqueueAgain = false;
   /** Clock seam for tests. */
   now: () => number = () => Date.now();
+  /** Tool overrides for text extraction (tests). */
+  textToolOptions: ToolOptions = {};
 
   constructor(
     @Inject(APP_CONFIG) private readonly config: AppConfig,
     private readonly hash: HashBackfill,
     private readonly jobs: JobsService,
     private readonly thumbs: Thumbnailer,
+    private readonly texts: TextIndexer,
   ) {}
 
   /** Resolves once `stop()` has been called and in-flight work is finished. */
@@ -64,7 +70,10 @@ export class WorkerRunner {
     if (this.stopping) return true;
     const claimed = await this.jobs.claim('thumb', Math.max(1, this.config.workerConcurrency));
     const outcomes = await Promise.all(claimed.map((job) => this.processThumb(job)));
-    // Task 6 adds the `text` jobs here.
+    if (!this.stopping) {
+      const textJobs = await this.jobs.claim('text', Math.max(1, this.config.workerConcurrency));
+      outcomes.push(...(await Promise.all(textJobs.map((job) => this.processText(job)))));
+    }
     // Deferred/dropped/released jobs are no work: counting them would spin the loop without a pause.
     return hashed > 0 || enqueued > 0 || outcomes.includes('processed');
   }
@@ -100,6 +109,37 @@ export class WorkerRunner {
         await this.jobs.complete(job.sha, job.kind, 'failed', undefined, msg).catch(() => undefined);
       } else {
         this.log.warn(`thumbnail ${job.sha.slice(0, 12)} attempt ${job.attempts} failed: ${msg}`);
+        await this.jobs.retryOrFail(job.sha, job.kind, msg).catch(() => undefined);
+      }
+    }
+    return 'processed';
+  }
+
+  /**
+   * Extracts the searchable text of `job.sha` into ItemText. Unusable input (tool exit code) fails
+   * the job; a missing tool, a timeout or a DB error is retried.
+   */
+  async processText(job: DerivativeJob): Promise<'processed' | 'deferred' | 'released'> {
+    if (this.stopping) {
+      await this.jobs.release(job.sha, job.kind);
+      return 'released';
+    }
+    try {
+      const src = await this.jobs.sourceFor(job.sha, 'text');
+      if (!src) {
+        await this.jobs.deferOrDrop(job.sha, job.kind);
+        return 'deferred';
+      }
+      const text = await extractText(src.abs, src.name, Number(src.size), this.textToolOptions);
+      await this.texts.store(job.sha, text);
+      await this.jobs.complete(job.sha, job.kind, text === null ? 'unsupported' : 'done', { chars: text?.length ?? 0 });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (e instanceof ToolFailedError) {
+        this.log.warn(`text ${job.sha.slice(0, 12)} failed: ${msg}`);
+        await this.jobs.complete(job.sha, job.kind, 'failed', undefined, msg).catch(() => undefined);
+      } else {
+        this.log.warn(`text ${job.sha.slice(0, 12)} attempt ${job.attempts} failed: ${msg}`);
         await this.jobs.retryOrFail(job.sha, job.kind, msg).catch(() => undefined);
       }
     }
