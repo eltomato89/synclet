@@ -22,10 +22,14 @@ public enum StreamDisconnectReason: Sendable, Hashable {
     case idleTimeout
     /// Network error (offline, connection refused, timeout …).
     case network(URLError.Code)
+    /// The device token could not be read (keychain error, no token stored) – normal
+    /// backoff; not a sign-in failure (the account list shows a missing token itself).
+    case tokenUnavailable
     /// Any other HTTP error (5xx, 400 …) – normal backoff.
     case http(status: Int)
-    /// 404, 429 or a response that is not `text/event-stream` (an HTML page of a
-    /// misconfigured proxy, a server without events) – reconnect at the maximum delay.
+    /// 404, 429, a 401/403 without a Sync API error body (a proxy's page), a response that
+    /// is not `text/event-stream` (an HTML page of a misconfigured proxy, a server without
+    /// events) or an over-long line (status 200) – reconnect at the maximum delay.
     case unavailable(status: Int)
 }
 
@@ -41,14 +45,18 @@ public struct EventStreamTiming: Sendable, Hashable {
     public var healthyAfter: Double
     /// No bytes (event or `: ping`, sent every 25 s) for this long ⇒ the connection is dead.
     public var idleTimeout: Duration
+    /// Limit of one SSE line / one event's data; beyond it the connection is reset.
+    public var maxLineBytes: Int
 
     public init(initialDelay: Double = 1, maxDelay: Double = 60, jitter: Double = 0.2,
-                healthyAfter: Double = 60, idleTimeout: Duration = .seconds(60)) {
+                healthyAfter: Double = 60, idleTimeout: Duration = .seconds(60),
+                maxLineBytes: Int = SSEParser.defaultMaxLineBytes) {
         self.initialDelay = initialDelay
         self.maxDelay = maxDelay
         self.jitter = jitter
         self.healthyAfter = healthyAfter
         self.idleTimeout = idleTimeout
+        self.maxLineBytes = maxLineBytes
     }
 }
 
@@ -61,8 +69,12 @@ public struct EventStreamTiming: Sendable, Hashable {
 ///   bound of the next delay.
 /// - 404, 429 (or its `Retry-After`, if longer) and responses that are not
 ///   `text/event-stream` back off at the maximum delay right away and log once.
-/// - 401/403 (or a token closure that throws) end the stream with the ``SyncAPIError``
-///   (`unauthorized`, `deviceRevoked`, `forbidden`) – sign-in required, no reconnect.
+/// - 401/403 with a Sync API error body (`{"code": …}`) end the stream with the
+///   ``SyncAPIError`` (`unauthorized`, `deviceRevoked`, `forbidden`) – sign-in required, no
+///   reconnect. A 401/403 without such a body (a proxy) backs off at the maximum delay; a
+///   token closure that throws is reported as ``StreamDisconnectReason/tokenUnavailable``
+///   and retried with the normal backoff.
+/// - A `retry:` above the maximum delay is capped at the maximum delay.
 /// - Cancelling the consuming task (or dropping the stream) closes the connection.
 public final class EventStream: Sendable {
     public let url: URL
@@ -169,7 +181,7 @@ public final class EventStream: Sendable {
             attempt = min(attempt + 1, Self.maxExponent)
         }
         if let retryAfter { delay = max(delay, retryAfter) }
-        if let serverRetry { delay = max(delay, Double(serverRetry) / 1000) }
+        if let serverRetry { delay = max(delay, min(Double(serverRetry) / 1000, timing.maxDelay)) }
         return delay
     }
 
@@ -189,10 +201,11 @@ public final class EventStream: Sendable {
             bearer = try await token()
         } catch is CancellationError {
             return .cancelled
-        } catch let error as SyncAPIError {
-            return .authenticationFailed(error)
         } catch {
-            return .authenticationFailed(.unauthorized(message: String(describing: error)))
+            // Keychain error or no token: transient here – a sign-in is only required when the
+            // server says so (a missing token is shown by the account list on its own).
+            Self.log.error("event stream: no device token (\(String(describing: error), privacy: .public))")
+            return .disconnected(.tokenUnavailable, openFor: nil, retryAfter: nil, serverRetry: nil)
         }
         if Task.isCancelled { return .cancelled }
 
@@ -220,6 +233,10 @@ public final class EventStream: Sendable {
             break
         case 401, 403:
             let body = await Self.readBody(bytes)
+            // Only the server's own rejection (Sync API error JSON) means "sign in again".
+            guard let error = try? JSONDecoder().decode(SyncErrorBody.self, from: body), error.code != nil else {
+                return .disconnected(.unavailable(status: http.statusCode), openFor: nil, retryAfter: nil, serverRetry: nil)
+            }
             return .authenticationFailed(SyncAPIClient.error(http, data: body))
         case 404:
             return .disconnected(.unavailable(status: 404), openFor: nil, retryAfter: nil, serverRetry: nil)
@@ -243,7 +260,7 @@ public final class EventStream: Sendable {
     private func transportOutcome(_ error: Error) -> Outcome {
         if Task.isCancelled || error is CancellationError { return .cancelled }
         if let urlError = error as? URLError {
-            if urlError.code == .cancelled { return .cancelled }
+            // A `.cancelled` we did not cause (session/system) is a disconnect like any other.
             return .disconnected(.network(urlError.code), openFor: nil, retryAfter: nil, serverRetry: nil)
         }
         return .disconnected(.network(.unknown), openFor: nil, retryAfter: nil, serverRetry: nil)
@@ -256,20 +273,24 @@ public final class EventStream: Sendable {
         let clock: @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
         let activity = Activity(now: clock())
         let idle = timing.idleTimeout.seconds
+        let maxLineBytes = timing.maxLineBytes
         let result: (StreamDisconnectReason?, Int?) = await withTaskGroup(of: (StreamDisconnectReason?, Int?).self) { group in
             group.addTask {
-                var parser = SSEParser()
+                var parser = SSEParser(maxLineBytes: maxLineBytes)
                 var chunk = Data()
                 do {
                     for try await byte in bytes {
-                        activity.touch(clock())
                         chunk.append(byte)
                         // Feed at every line end (LF or CR) so an event is handled as soon as it is complete.
                         guard byte == 0x0A || byte == 0x0D || chunk.count >= 4096 else { continue }
+                        // Liveness per line / 4 KiB (a ping is a line), not per byte.
+                        activity.touch(clock())
                         for event in parser.feed(chunk) {
                             if let bye = Self.handle(event, continuation) { return (.bye(bye), parser.retry) }
                         }
                         chunk.removeAll(keepingCapacity: true)
+                        // A line without end (broken proxy): reset the connection.
+                        if parser.lineTooLong { return (.unavailable(status: 200), parser.retry) }
                     }
                     if !chunk.isEmpty {
                         for event in parser.feed(chunk) {
@@ -280,7 +301,7 @@ public final class EventStream: Sendable {
                 } catch {
                     if Task.isCancelled { return (nil, nil) }
                     if let urlError = error as? URLError {
-                        return urlError.code == .cancelled ? (nil, nil) : (.network(urlError.code), parser.retry)
+                        return (.network(urlError.code), parser.retry)
                     }
                     return (.network(.unknown), parser.retry)
                 }

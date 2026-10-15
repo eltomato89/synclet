@@ -26,7 +26,21 @@ public struct SSEEvent: Sendable, Hashable {
 /// a CRLF or the BOM). Lines end with CRLF, LF or CR; `:` lines are comments; several
 /// `data:` lines are joined with `\n`; a block without data dispatches nothing. An
 /// unterminated block at the end of the stream is discarded, as the standard says.
+///
+/// A line or an event's data longer than ``maxLineBytes`` is dropped and sets
+/// ``lineTooLong`` (a broken proxy must not grow the buffer without limit); the consumer
+/// should then end the connection.
 public struct SSEParser: Sendable {
+    /// Default limit of one line and of one event's data (1 MiB).
+    public static let defaultMaxLineBytes = 1 << 20
+
+    /// Limit of one line and of one event's data, in bytes.
+    public let maxLineBytes: Int
+    /// A line or an event's data exceeded ``maxLineBytes`` (sticky).
+    public private(set) var lineTooLong = false
+    /// The current over-long line is being skipped up to its end.
+    private var discarding = false
+
     /// Bytes of the current, unterminated line.
     private var line: [UInt8] = []
     /// The previous chunk ended with CR: a LF at the start of the next one belongs to it.
@@ -46,7 +60,9 @@ public struct SSEParser: Sendable {
     /// The reconnection time (milliseconds) of the most recent valid `retry:` field.
     public private(set) var retry: Int?
 
-    public init() {}
+    public init(maxLineBytes: Int = SSEParser.defaultMaxLineBytes) {
+        self.maxLineBytes = maxLineBytes
+    }
 
     /// Feeds the next bytes and returns the events completed by them.
     public mutating func feed(_ bytes: Data) -> [SSEEvent] {
@@ -73,13 +89,25 @@ public struct SSEParser: Sendable {
             case 0x0A:
                 endLine(into: &events)
             default:
+                guard !discarding else { continue }
                 line.append(byte)
+                if line.count > maxLineBytes {
+                    lineTooLong = true
+                    discarding = true
+                    line.removeAll()
+                }
             }
         }
         return events
     }
 
     private mutating func endLine(into events: inout [SSEEvent]) {
+        if discarding {
+            // End of an over-long line: it is dropped, not interpreted.
+            discarding = false
+            line.removeAll(keepingCapacity: true)
+            return
+        }
         let text = String(decoding: line, as: UTF8.self)
         line.removeAll(keepingCapacity: true)
         if text.isEmpty {
@@ -104,6 +132,12 @@ public struct SSEParser: Sendable {
             if hasData { dataBuffer += "\n" }
             dataBuffer += value
             hasData = true
+            if dataBuffer.utf8.count > maxLineBytes {
+                // Many data lines without a blank line: drop the event.
+                lineTooLong = true
+                dataBuffer = ""
+                hasData = false
+            }
         case "id":
             if !value.contains("\u{0}") { lastEventId = String(value) }
         case "retry":

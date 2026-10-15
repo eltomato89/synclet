@@ -102,6 +102,21 @@ final class SSEParserTests: XCTestCase {
         XCTAssertEqual(parser.feed(Data(bytes[split...])), [SSEEvent(data: "Größe")])
     }
 
+    func testOverlongLineIsDroppedAndFlagged() {
+        var parser = SSEParser(maxLineBytes: 16)
+        XCTAssertEqual(parser.feed(Data("data: \(String(repeating: "x", count: 40))".utf8)), [])
+        XCTAssertTrue(parser.lineTooLong)
+        // The rest of the long line is skipped; the parser continues after its end.
+        XCTAssertEqual(parser.feed(Data("yyyy\ndata: ok\n\n".utf8)), [SSEEvent(data: "ok")])
+    }
+
+    func testOverlongEventDataIsDroppedAndFlagged() {
+        var parser = SSEParser(maxLineBytes: 16)
+        XCTAssertEqual(parser.feed(Data("data: 0123456789\ndata: 0123456789\n\ndata: ok\n\n".utf8)),
+                       [SSEEvent(data: "ok")])
+        XCTAssertTrue(parser.lineTooLong)
+    }
+
     func testRetryWithoutDataIsRemembered() {
         var parser = SSEParser()
         XCTAssertEqual(parser.feed(Data("retry: 2500\n\n".utf8)), [])

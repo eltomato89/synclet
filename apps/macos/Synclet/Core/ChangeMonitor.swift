@@ -56,6 +56,9 @@ final class ChangeMonitor {
         var fallback: Duration = .seconds(60)
         /// `GET /account` interval (spaces).
         var accountRefresh: Duration = .seconds(15 * 60)
+        /// First delay before reopening a stream that ended by itself (doubles up to `reconnectMax`).
+        var reconnectBase: Duration = .seconds(1)
+        var reconnectMax: Duration = .seconds(60)
     }
 
     private(set) var state: State = .connecting
@@ -72,6 +75,11 @@ final class ChangeMonitor {
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var wakeTask: Task<Void, Never>?
     @ObservationIgnored private var trailingSignal: Task<Void, Never>?
+    /// One-shot `/account` refresh after `hello`.
+    @ObservationIgnored private var accountTask: Task<Void, Never>?
+    /// Reopens a stream that ended by itself.
+    @ObservationIgnored private var reconnectTask: Task<Void, Never>?
+    @ObservationIgnored private var reconnectAttempt = 0
     @ObservationIgnored private var lastWorkingSetSignal: ContinuousClock.Instant?
     /// Identifies the current stream task (an old task's late signals are ignored).
     @ObservationIgnored private var generation = 0
@@ -111,7 +119,11 @@ final class ChangeMonitor {
     func stop() {
         isRunning = false
         generation += 1
-        for task in [streamTask, fallbackTask, refreshTask, wakeTask, trailingSignal] { task?.cancel() }
+        for task in [streamTask, fallbackTask, refreshTask, wakeTask, trailingSignal, accountTask, reconnectTask] {
+            task?.cancel()
+        }
+        accountTask = nil
+        reconnectTask = nil
         streamTask = nil
         fallbackTask = nil
         refreshTask = nil
@@ -133,6 +145,8 @@ final class ChangeMonitor {
     func suspendForSignIn() {
         streamTask?.cancel()
         streamTask = nil
+        reconnectTask?.cancel()
+        reconnectTask = nil
         generation += 1
         setState(.authFailed)
     }
@@ -141,6 +155,8 @@ final class ChangeMonitor {
 
     private func connect() {
         streamTask?.cancel()
+        reconnectTask?.cancel()
+        reconnectTask = nil
         generation += 1
         let current = generation
         setState(.connecting)
@@ -151,6 +167,9 @@ final class ChangeMonitor {
                     guard let self, self.generation == current else { return }
                     self.handle(signal)
                 }
+                // Ended without an error and without our cancellation (e.g. a system cancel).
+                guard !Task.isCancelled, let self, self.generation == current else { return }
+                self.streamEnded("stream finished")
             } catch {
                 guard !Task.isCancelled, let self, self.generation == current else { return }
                 self.streamFailed(error)
@@ -161,9 +180,11 @@ final class ChangeMonitor {
     private func handle(_ signal: StreamSignal) {
         switch signal {
         case .connected:
+            reconnectAttempt = 0
             setState(.connected)
             signalWorkingSet()
-            Task { await refreshAccount() }
+            accountTask?.cancel()
+            accountTask = Task { [weak self] in await self?.refreshAccount() }
         case .changes:
             if state != .connected { setState(.connected) }
             signalWorkingSet()
@@ -185,9 +206,26 @@ final class ChangeMonitor {
             suspendForSignIn()
             dependencies.reportAuthFailure()
         } else {
-            // EventStream only ends with auth errors; anything else: stay offline and poll.
-            Self.log.error("event stream ended: \(String(describing: error), privacy: .public)")
-            setState(.offline)
+            streamEnded(String(describing: error))
+        }
+    }
+
+    /// The stream ended although nobody stopped it: poll while offline and reopen it with
+    /// backoff (1, 2, 4 … 60 s; reset by the next `hello`).
+    private func streamEnded(_ why: String) {
+        Self.log.error("event stream ended: \(why, privacy: .public); reconnecting")
+        streamTask = nil
+        generation += 1
+        setState(.offline)
+        let exponent = min(reconnectAttempt, 16)
+        reconnectAttempt += 1
+        let delay = min(timing.reconnectMax, timing.reconnectBase * (1 << exponent))
+        reconnectTask?.cancel()
+        reconnectTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, let self, self.isRunning, self.state == .offline else { return }
+            self.reconnectTask = nil
+            self.connect()
         }
     }
 
@@ -246,6 +284,8 @@ final class ChangeMonitor {
     private func refreshAccount() async {
         do {
             let account = try await dependencies.fetchAccount()
+            // Stopped (signed out) or rejected meanwhile: do not touch the account any more.
+            guard isRunning, state != .authFailed, !Task.isCancelled else { return }
             if dependencies.updateSpaces(account.spaces) {
                 Self.log.info("spaces changed: signalling the root container")
                 await dependencies.signal(.rootContainer)

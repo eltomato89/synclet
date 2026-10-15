@@ -11,6 +11,11 @@ final class FakeMonitorWorld: @unchecked Sendable {
     private var wakeContinuation: AsyncStream<Void>.Continuation?
     var spaces: [SyncSpace] = [SyncSpace(id: "personal", kind: .personal, name: "Meine Dateien", rootId: "root", canWrite: true)]
     private(set) var accountFetches = 0
+    /// Delay of `GET /account`.
+    var fetchDelay: Duration = .zero
+    private var terminated: Set<Int> = []
+    /// Indices of streams the monitor dropped (cancelled or finished).
+    var terminatedStreams: Set<Int> { lock.withLock { terminated } }
 
     var streamCount: Int { lock.withLock { streams.count } }
     var signalled: [NSFileProviderItemIdentifier] { lock.withLock { signals } }
@@ -20,6 +25,16 @@ final class FakeMonitorWorld: @unchecked Sendable {
     /// Sends a signal on the newest stream.
     func send(_ signal: StreamSignal) {
         _ = lock.withLock { streams.last }?.yield(signal)
+    }
+
+    /// Sends a signal on a specific (possibly replaced) stream.
+    func send(_ signal: StreamSignal, onStream index: Int) {
+        _ = lock.withLock { streams[index] }.yield(signal)
+    }
+
+    /// Ends the newest stream without an error.
+    func finish() {
+        lock.withLock { streams.last }?.finish()
     }
 
     func fail(_ error: Error) {
@@ -35,11 +50,16 @@ final class FakeMonitorWorld: @unchecked Sendable {
         ChangeMonitor.Dependencies(
             events: {
                 AsyncThrowingStream { continuation in
-                    self.lock.withLock { self.streams.append(continuation) }
+                    let index = self.lock.withLock { () -> Int in
+                        self.streams.append(continuation)
+                        return self.streams.count - 1
+                    }
+                    continuation.onTermination = { _ in _ = self.lock.withLock { self.terminated.insert(index) } }
                 }
             },
             signal: { container in self.lock.withLock { self.signals.append(container) } },
             fetchAccount: {
+                if self.fetchDelay > .zero { try await Task.sleep(for: self.fetchDelay) }
                 let spaces = self.lock.withLock { () -> [SyncSpace] in
                     self.accountFetches += 1
                     return self.spaces
@@ -96,9 +116,83 @@ final class ChangeMonitorTests: XCTestCase {
     }
 
     private func monitor(coalesce: Duration = .milliseconds(300), fallback: Duration = .seconds(60),
-                         refresh: Duration = .seconds(3600)) -> ChangeMonitor {
+                         refresh: Duration = .seconds(3600), reconnectBase: Duration = .seconds(1)) -> ChangeMonitor {
         ChangeMonitor(accountKey: "srv1:u1", dependencies: world.dependencies(storedSpaces: stored, authFailures: authFailures),
-                      timing: ChangeMonitor.Timing(coalesce: coalesce, fallback: fallback, accountRefresh: refresh))
+                      timing: ChangeMonitor.Timing(coalesce: coalesce, fallback: fallback, accountRefresh: refresh,
+                                                   reconnectBase: reconnectBase))
+    }
+
+    func testStreamEndingByItselfReconnectsWithBackoffAndPolls() async throws {
+        let monitor = monitor(coalesce: .milliseconds(1), fallback: .milliseconds(40), reconnectBase: .milliseconds(300))
+        monitor.start()
+        defer { monitor.stop() }
+        _ = await eventually { self.world.streamCount == 1 }
+        world.send(.connected(cursor: "1"))
+        _ = await eventually { monitor.state == .connected }
+        let connectedSignals = world.workingSetSignals
+
+        // Clean end (no error, not cancelled by us): offline, polling, reconnect after 300 ms.
+        world.finish()
+        let offline = await eventually { monitor.state == .offline }
+        XCTAssertTrue(offline)
+        let polled = await eventually(timeout: .milliseconds(250)) { self.world.workingSetSignals >= connectedSignals + 2 }
+        XCTAssertTrue(polled, "fallback polling while the stream is down")
+        XCTAssertEqual(world.streamCount, 1, "not before the backoff")
+        let reopened = await eventually { self.world.streamCount == 2 }
+        XCTAssertTrue(reopened)
+        XCTAssertEqual(monitor.state, .connecting)
+
+        // Second clean end without a hello in between: the delay doubles (600 ms).
+        world.finish()
+        let started = ContinuousClock.now
+        let again = await eventually { self.world.streamCount == 3 }
+        XCTAssertTrue(again)
+        XCTAssertGreaterThanOrEqual(ContinuousClock.now - started, .milliseconds(550))
+
+        // `hello` resets the backoff.
+        world.send(.connected(cursor: "2"))
+        _ = await eventually { monitor.state == .connected }
+        world.finish()
+        let quick = ContinuousClock.now
+        let reset = await eventually { self.world.streamCount == 4 }
+        XCTAssertTrue(reset)
+        XCTAssertLessThan(ContinuousClock.now - quick, .milliseconds(550))
+    }
+
+    func testUnexpectedStreamErrorReconnectsWithoutMarker() async throws {
+        let monitor = monitor(reconnectBase: .milliseconds(50))
+        monitor.start()
+        defer { monitor.stop() }
+        _ = await eventually { self.world.streamCount == 1 }
+        world.fail(URLError(.networkConnectionLost))
+        let reopened = await eventually { self.world.streamCount == 2 }
+        XCTAssertTrue(reopened)
+        XCTAssertEqual(authFailures.value, 0)
+    }
+
+    func testUnreadableTokenIsOfflineNotAuthFailed() async throws {
+        let monitor = monitor()
+        monitor.start()
+        defer { monitor.stop() }
+        _ = await eventually { self.world.streamCount == 1 }
+        world.send(.disconnected(reason: .tokenUnavailable))
+        let offline = await eventually { monitor.state == .offline }
+        XCTAssertTrue(offline)
+        XCTAssertEqual(authFailures.value, 0, "no persistent sign-in marker for a keychain hiccup")
+    }
+
+    func testNoAccountRefreshAfterStop() async throws {
+        world.fetchDelay = .milliseconds(200)
+        world.spaces = []   // would signal the root if applied
+        let monitor = monitor(coalesce: .milliseconds(1))
+        monitor.start()
+        _ = await eventually { self.world.streamCount == 1 }
+        world.send(.connected(cursor: "1"))
+        _ = await eventually { self.world.accountFetches == 1 }
+        monitor.stop()
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(world.rootSignals, 0)
+        XCTAssertEqual(stored.value.map(\.id), ["personal"])
     }
 
     func testConnectedAndChangesSignalTheWorkingSet() async throws {
@@ -263,8 +357,17 @@ final class ChangeMonitorTests: XCTestCase {
         let signalled = await eventually { self.world.workingSetSignals == before + 1 }
         XCTAssertTrue(signalled)
 
-        // Signals of the replaced stream are ignored.
-        world.send(.connected(cursor: "2"))
+        // The replaced stream was dropped, and its late signals are ignored.
+        let dropped = await eventually { self.world.terminatedStreams.contains(0) }
+        XCTAssertTrue(dropped)
+        let signals = world.workingSetSignals
+        world.send(.connected(cursor: "old"), onStream: 0)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(monitor.state, .connecting)
+        XCTAssertEqual(world.workingSetSignals, signals)
+
+        // The new stream's hello counts.
+        world.send(.connected(cursor: "2"), onStream: 1)
         let connected = await eventually { monitor.state == .connected }
         XCTAssertTrue(connected)
     }
@@ -323,6 +426,9 @@ final class AccountsMonitoringTests: XCTestCase {
 
         await harness.accounts.signOut(key: "srvA:u1")
         XCTAssertEqual(Set(harness.accounts.monitors.keys), ["srvB:u1"])
+        // srvA's stream (the first one opened) was ended; srvB's keeps running.
+        let ended = await eventually { self.world.terminatedStreams == [0] }
+        XCTAssertTrue(ended, "\(world.terminatedStreams)")
         XCTAssertNotNil(harness.accounts.monitor(key: "srvB:u1"))
     }
 

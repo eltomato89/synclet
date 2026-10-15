@@ -13,6 +13,10 @@ final class SSEStubProtocol: URLProtocol, @unchecked Sendable {
         /// Do not finish the response (the client has to cancel or time out).
         var keepOpen = false
         var body: Data? = nil
+        /// Fail the request with this error instead of answering.
+        var error: URLError? = nil
+
+        static func failing(_ code: URLError.Code) -> Script { Script(error: URLError(code)) }
 
         static func events(_ chunks: [String], keepOpen: Bool = false) -> Script {
             Script(chunks: chunks, keepOpen: keepOpen)
@@ -57,6 +61,10 @@ final class SSEStubProtocol: URLProtocol, @unchecked Sendable {
         let script = Self.lock.withLock { () -> Script in
             Self.recorded.append(request)
             return Self.script?(Self.recorded.count - 1) ?? Script(status: 500)
+        }
+        if let error = script.error {
+            client?.urlProtocol(self, didFailWithError: error)
+            return
         }
         let response = HTTPURLResponse(url: request.url!, statusCode: script.status, httpVersion: "HTTP/1.1",
                                        headerFields: script.headers)!
@@ -279,16 +287,47 @@ final class EventStreamTests: XCTestCase {
         XCTAssertEqual(SSEStubProtocol.requests.count, 1)
     }
 
-    func testMissingTokenStopsWithoutARequest() async throws {
+    func testMissingTokenIsTransientAndRetriedWithoutARequest() async throws {
         SSEStubProtocol.reset { _ in .events([Self.hello]) }
-        struct NoToken: Error {}
-        do {
-            _ = try await collect(stream(token: { throw NoToken() }), count: 1)
-            XCTFail("expected an error")
-        } catch let error as SyncAPIError {
-            guard case .unauthorized = error else { return XCTFail("wrong error \(error)") }
-        }
+        struct KeychainError: Error {}
+        let signals = try await collect(stream(token: { throw KeychainError() }), count: 3)
+        XCTAssertEqual(signals, Array(repeating: .disconnected(reason: .tokenUnavailable), count: 3))
+        XCTAssertEqual(Array(sleeper.delays.prefix(3)), [1, 2, 4])
         XCTAssertEqual(SSEStubProtocol.requests.count, 0)
+    }
+
+    func testForbiddenFromAProxyIsNotAnAuthFailure() async throws {
+        SSEStubProtocol.reset { _ in .status(403, contentType: "text/html", body: "<html>Access denied</html>") }
+        let signals = try await collect(stream(), count: 2)
+        XCTAssertEqual(signals, Array(repeating: .disconnected(reason: .unavailable(status: 403)), count: 2))
+        XCTAssertEqual(Array(sleeper.delays.prefix(2)), [60, 60])
+    }
+
+    func testUnauthorizedWithoutASyncErrorBodyIsNotAnAuthFailure() async throws {
+        SSEStubProtocol.reset { _ in .status(401, contentType: "application/json", body: #"{"error":"proxy auth"}"#) }
+        let signals = try await collect(stream(), count: 2)
+        XCTAssertEqual(signals, Array(repeating: .disconnected(reason: .unavailable(status: 401)), count: 2))
+    }
+
+    func testCancellationNotCausedByTheConsumerIsADisconnect() async throws {
+        SSEStubProtocol.reset { attempt in attempt == 0 ? .failing(.cancelled) : .events([Self.hello], keepOpen: true) }
+        let signals = try await collect(stream(), count: 2)
+        XCTAssertEqual(signals, [.disconnected(reason: .network(.cancelled)), .connected(cursor: "1234")])
+        XCTAssertEqual(sleeper.delays, [1])
+    }
+
+    func testServerRetryIsCappedAtTheMaximum() async throws {
+        SSEStubProtocol.reset { _ in .events(["retry: 86400000\n\n", Self.hello]) }
+        _ = try await collect(stream(), count: 2)
+        XCTAssertEqual(sleeper.delays.first, 60)
+    }
+
+    func testOverlongLineResetsTheConnection() async throws {
+        let endless = "data: " + String(repeating: "x", count: 10_000)
+        SSEStubProtocol.reset { _ in .events([Self.hello, endless], keepOpen: true) }
+        let signals = try await collect(stream(timing: EventStreamTiming(maxLineBytes: 1024)), count: 2)
+        XCTAssertEqual(signals, [.connected(cursor: "1234"), .disconnected(reason: .unavailable(status: 200))])
+        XCTAssertEqual(sleeper.delays.first, 60)
     }
 
     func testByeReasons() async throws {
