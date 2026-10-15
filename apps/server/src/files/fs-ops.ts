@@ -5,7 +5,7 @@ import { nameKey, tempName } from '../common/names';
 
 const code = (e: unknown) => (e as NodeJS.ErrnoException)?.code;
 const eexist = (dst: string) => Object.assign(new Error(`EEXIST: ${dst}`), { code: 'EEXIST' });
-const NO_HARDLINK = ['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'EXDEV', 'EMLINK', 'ENOSYS'];
+export const NO_HARDLINK = ['EPERM', 'ENOTSUP', 'EOPNOTSUPP', 'EXDEV', 'EMLINK', 'ENOSYS'];
 
 export async function statEntry(abs: string) {
   const st = await lstat(abs, { bigint: true });

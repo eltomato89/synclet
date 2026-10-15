@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
-import { VersionsService } from '../versions/versions.service';
+import { VersionsModule } from '../versions/versions.module';
 import { FilesService } from './files.service';
 
-// VersionsService: Task 3 stub until the versions module (Task 2) is merged.
-@Module({ providers: [FilesService, VersionsService], exports: [FilesService, VersionsService] })
+/** Re-exports VersionsModule: FilesService captures versions before every overwrite. */
+@Module({ imports: [VersionsModule], providers: [FilesService], exports: [FilesService, VersionsModule] })
 export class FilesModule {}
