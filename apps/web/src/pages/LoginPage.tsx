@@ -16,6 +16,15 @@ import {
 import { useAuth } from '@/lib/auth';
 import { safeNext } from '@/lib/next';
 
+/** This login page with `local=1` (password form shown), keeping `next`. */
+function localLoginPath(params: URLSearchParams): string {
+  const q = new URLSearchParams();
+  const next = params.get('next');
+  if (next) q.set('next', next);
+  q.set('local', '1');
+  return `/login?${q}`;
+}
+
 export function LoginPage() {
   const { t } = useTranslation();
   const { login, status } = useAuth();
@@ -27,8 +36,10 @@ export function LoginPage() {
   const methods = useLoginMethods();
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  // After a failed SSO started from the app login page, offer the way back to it.
-  const [appLoginPath] = useState(() => (ssoError ? pendingAppLoginSso() : null));
+  // After a failed SSO started from the app login page, offer the way back to it: the tab's own
+  // marker, or the attempt's return path the server passes along as `next` (survives a lost
+  // sessionStorage; safeNext keeps it a same-origin path).
+  const [appLoginPath] = useState(() => (ssoError ? pendingAppLoginSso() ?? (next.startsWith('/app-login?') ? next : null) : null));
 
   if (status === 'authenticated' && !pending) return <Navigate to={next} replace />;
   if (status === 'needs-setup') return <Navigate to="/setup" replace />;
@@ -67,6 +78,12 @@ export function LoginPage() {
         )}
         {oidc && <SsoButton href={oidcStartUrl(next)} label={oidc.label} primary={!local} />}
         {oidc && !password && <p className="text-sm text-muted-foreground">{t('sso.redirectHint')}</p>}
+        {oidc && !password && (
+          // Unobtrusive way to the password form (administrators keep password sign-in; the server enforces who may).
+          <Link to={localLoginPath(params)} className="self-center text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline">
+            {t('sso.usePassword')}
+          </Link>
+        )}
         {oidc && password && <OrDivider />}
         {password && (
           <form onSubmit={onSubmit} className="flex flex-col gap-5" noValidate>

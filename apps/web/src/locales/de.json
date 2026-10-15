@@ -599,6 +599,7 @@
     "orPassword": "oder mit Passwort",
     "redirectHint": "Die Anmeldung geht auf der Seite deiner Organisation weiter, danach kommst du hierher zurück.",
     "passwordDisabled": "Die Anmeldung mit Passwort ist für dein Konto abgeschaltet. Melde dich per Single Sign-on an.",
+    "usePassword": "Mit Passwort anmelden",
     "backToAppLogin": "Zurück zur App-Anmeldung",
     "error": {
       "oidc_disabled": "Single Sign-on ist auf diesem Server abgeschaltet. Melde dich mit deinem Passwort an oder frag deine Administration.",
@@ -626,7 +627,8 @@
     "problemTitle": "Anmeldung für die App nicht möglich",
     "invalidLink": "Dieser Anmeldelink ist unvollständig oder beschädigt. Starte die Anmeldung erneut in der App.",
     "invalidClient": "Diese App darf sich bei diesem Server nicht anmelden. Starte die Anmeldung erneut in der App oder aktualisiere sie.",
-    "unreachable": "Der Server antwortet nicht. Prüf die Verbindung und versuch es erneut."
+    "unreachable": "Der Server antwortet nicht. Prüf die Verbindung und versuch es erneut.",
+    "rateLimited": "Gerade zu viele Anmeldeversuche. Warte einen Moment und versuch es erneut."
   },
   "versions": {
     "title": "Versionen",

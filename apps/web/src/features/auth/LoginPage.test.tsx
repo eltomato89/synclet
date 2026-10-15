@@ -51,6 +51,17 @@ describe('LoginPage login methods', () => {
     expect(screen.queryByLabelText('Password')).not.toBeInTheDocument();
   });
 
+  it('links to the password form (?local=1, keeping next) when SSO replaces it', async () => {
+    routeFetch({ ...anonymous, 'GET /api/auth/methods': methods({ password: false, oidc: { enabled: true, label: 'SSO' } }) });
+    const router = renderLogin('/login?next=%2Ffiles%2Fabc');
+    const link = await screen.findByRole('link', { name: 'Sign in with password' });
+    expect(link).toHaveAttribute('href', '/login?next=%2Ffiles%2Fabc&local=1');
+    fireEvent.click(link);
+    expect(await screen.findByLabelText('Password')).toBeInTheDocument();
+    expect(router.state.location.search).toBe('?next=%2Ffiles%2Fabc&local=1');
+    expect(screen.queryByRole('link', { name: 'Sign in with password' })).not.toBeInTheDocument();
+  });
+
   it('shows the password form for ?local=1', async () => {
     routeFetch({ ...anonymous, 'GET /api/auth/methods': methods({ password: false, oidc: { enabled: true, label: 'SSO' } }) });
     renderLogin('/login?local=1');
@@ -101,5 +112,19 @@ describe('LoginPage sso_error', () => {
     routeFetch({ ...anonymous, 'GET /api/auth/methods': methods({ oidc: { enabled: true, label: 'SSO' } }) });
     renderLogin('/login?sso_error=idp_error');
     expect(await screen.findByRole('link', { name: 'Back to the app sign-in' })).toHaveAttribute('href', '/app-login?client_id=ios');
+  });
+
+  it('uses the next path from the server when the tab has no marker, and keeps it for SSO', async () => {
+    routeFetch({ ...anonymous, 'GET /api/auth/methods': methods({ oidc: { enabled: true, label: 'SSO' } }) });
+    renderLogin(`/login?sso_error=idp_error&next=${encodeURIComponent('/app-login?client_id=ios&state=s')}`);
+    expect(await screen.findByRole('link', { name: 'Back to the app sign-in' })).toHaveAttribute('href', '/app-login?client_id=ios&state=s');
+    expect(screen.getByRole('link', { name: 'SSO' })).toHaveAttribute('href', `/api/auth/oidc/start?return=${encodeURIComponent('/app-login?client_id=ios&state=s')}`);
+  });
+
+  it('offers no way back for a next that is not an app sign-in or not same-origin', async () => {
+    routeFetch({ ...anonymous, 'GET /api/auth/methods': methods({ oidc: { enabled: true, label: 'SSO' } }) });
+    renderLogin(`/login?sso_error=idp_error&next=${encodeURIComponent('//evil.example/app-login?x')}`);
+    expect(await screen.findByRole('alert')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Back to the app sign-in' })).not.toBeInTheDocument();
   });
 });
