@@ -154,6 +154,9 @@
   --ft-presentation: oklch(0.64 0.14 45);
   --ft-document: oklch(0.55 0.13 250);
   --ft-generic: oklch(0.6 0.012 200);
+
+  /* QuickLook stage: deep Ink in both themes, so photos read true and documents float as a page. */
+  --stage: oklch(0.165 0.009 200 / 0.96);
 }
 
 .dark {
@@ -240,3 +243,74 @@
     scroll-behavior: auto !important;
   }
 }
+
+/*
+ * QuickLook documents
+ * -------------------
+ * Code: highlight.js classes mapped to a small cool palette around Fjord (no theme CSS shipped).
+ * Markdown: a reading measure of ~70ch, Inter at 15px/1.7, headings in Ink, links in Fjord.
+ */
+.code-view {
+  --hl-keyword: oklch(0.5 0.14 300);
+  --hl-string: oklch(0.5 0.11 155);
+  --hl-number: oklch(0.55 0.13 55);
+  --hl-title: oklch(0.5 0.11 235);
+  --hl-type: oklch(0.5 0.1 198);
+  --hl-attr: oklch(0.53 0.13 25);
+  tab-size: 4;
+}
+.dark .code-view {
+  --hl-keyword: oklch(0.78 0.11 300);
+  --hl-string: oklch(0.8 0.11 155);
+  --hl-number: oklch(0.82 0.1 65);
+  --hl-title: oklch(0.8 0.09 235);
+  --hl-type: oklch(0.8 0.09 195);
+  --hl-attr: oklch(0.78 0.1 30);
+}
+.code-view .hljs-keyword, .code-view .hljs-selector-tag, .code-view .hljs-meta .hljs-keyword, .code-view .hljs-doctag { color: var(--hl-keyword); }
+.code-view .hljs-string, .code-view .hljs-regexp, .code-view .hljs-template-string, .code-view .hljs-symbol { color: var(--hl-string); }
+.code-view .hljs-number, .code-view .hljs-literal, .code-view .hljs-variable.constant_ { color: var(--hl-number); }
+.code-view .hljs-title, .code-view .hljs-title.function_, .code-view .hljs-section { color: var(--hl-title); }
+.code-view .hljs-type, .code-view .hljs-built_in, .code-view .hljs-title.class_, .code-view .hljs-selector-class { color: var(--hl-type); }
+.code-view .hljs-attr, .code-view .hljs-attribute, .code-view .hljs-property, .code-view .hljs-name, .code-view .hljs-selector-id { color: var(--hl-attr); }
+.code-view .hljs-comment, .code-view .hljs-quote, .code-view .hljs-meta { color: var(--muted-foreground); font-style: italic; }
+.code-view .hljs-emphasis { font-style: italic; }
+.code-view .hljs-strong { font-weight: 600; }
+
+.md-view {
+  max-width: 70ch;
+  margin-inline: auto;
+  font-size: 0.9375rem;
+  line-height: 1.7;
+  overflow-wrap: break-word;
+}
+.md-view > :first-child { margin-top: 0; }
+.md-view > :last-child { margin-bottom: 0; }
+.md-view h1, .md-view h2, .md-view h3, .md-view h4, .md-view h5, .md-view h6 {
+  margin: 1.8em 0 0.6em;
+  font-weight: 600;
+  line-height: 1.25;
+  letter-spacing: -0.014em;
+}
+.md-view h1 { font-size: 1.75rem; margin-top: 0; }
+.md-view h2 { font-size: 1.3rem; padding-bottom: 0.35em; border-bottom: 1px solid var(--border); }
+.md-view h3 { font-size: 1.075rem; }
+.md-view h4, .md-view h5, .md-view h6 { font-size: 0.9375rem; }
+.md-view p, .md-view ul, .md-view ol, .md-view pre, .md-view blockquote, .md-view table { margin: 0 0 1.1em; }
+.md-view ul, .md-view ol { padding-left: 1.5em; }
+.md-view ul { list-style: disc; }
+.md-view ol { list-style: decimal; }
+.md-view li + li { margin-top: 0.25em; }
+.md-view li > ul, .md-view li > ol { margin: 0.25em 0 0; }
+.md-view li:has(> input[type="checkbox"]) { list-style: none; }
+.md-view a { color: var(--primary); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.md-view a:not([href]) { color: inherit; text-decoration: none; }
+.md-view strong { font-weight: 600; }
+.md-view code { font-family: var(--font-mono); font-size: 0.85em; padding: 0.15em 0.35em; border-radius: var(--radius-sm); background: var(--muted); }
+.md-view pre { padding: 0.9em 1.1em; border-radius: var(--radius-lg); background: var(--muted); overflow-x: auto; line-height: 1.55; }
+.md-view pre code { padding: 0; background: none; font-size: 0.8125rem; }
+.md-view blockquote { padding-left: 1em; border-left: 2px solid var(--primary); color: var(--muted-foreground); }
+.md-view hr { margin: 2em 0; border: 0; border-top: 1px solid var(--border); }
+.md-view table { display: block; overflow-x: auto; border-collapse: collapse; font-size: 0.875rem; }
+.md-view th, .md-view td { padding: 0.45em 0.8em; border: 1px solid var(--border); text-align: left; }
+.md-view th { font-weight: 600; background: var(--muted); }

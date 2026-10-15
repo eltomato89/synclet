@@ -1,9 +1,20 @@
+import { Play } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { Thumbnail } from '@/features/preview/Thumbnail';
 import { formatBytes, formatDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { ItemMenuButton } from './FileActions';
 import { FileIcon, fileKind, kindStyle } from './FileIcon';
 import { itemTabIndex, useItemPointer, type ViewProps } from './FileList';
+
+/** Marks a video thumbnail as playable. */
+function PlayBadge() {
+  return (
+    <span aria-hidden className="absolute bottom-2 left-2 flex size-7 items-center justify-center rounded-full bg-black/55 text-white backdrop-blur-sm">
+      <Play className="size-3.5 translate-x-px fill-current" strokeWidth={0} />
+    </span>
+  );
+}
 
 export function FileGrid({ items, label, selectedId, onSelect, onOpen, actions }: ViewProps) {
   const { i18n } = useTranslation();
@@ -36,12 +47,19 @@ export function FileGrid({ items, label, selectedId, onSelect, onOpen, actions }
               selected ? 'border-primary/40 bg-accent-soft' : 'border-transparent hover:bg-accent/70',
             )}
           >
-            <div
-              style={kindStyle(fileKind(item))}
-              className="flex aspect-[4/3] items-center justify-center rounded-lg bg-(--ft)/8 dark:bg-(--ft)/12"
+            <Thumbnail
+              item={item}
+              className="aspect-[4/3] overflow-hidden rounded-lg"
+              imgClassName={cn('object-cover', item.preview?.kind === 'pdf' && 'object-top')}
+              overlay={item.preview?.kind === 'video' && <PlayBadge />}
             >
-              <FileIcon item={item} strokeWidth={1.25} className="size-12" />
-            </div>
+              <div
+                style={kindStyle(fileKind(item))}
+                className="flex size-full items-center justify-center bg-(--ft)/8 dark:bg-(--ft)/12"
+              >
+                <FileIcon item={item} strokeWidth={1.25} className="size-12" />
+              </div>
+            </Thumbnail>
             <div className="min-w-0 px-1 pt-2 pb-0.5">
               <div className="truncate text-sm font-medium" title={item.name}>{item.name}</div>
               <div className="truncate text-xs text-muted-foreground tabular-nums">

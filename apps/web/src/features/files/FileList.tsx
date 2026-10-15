@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { formatBytes, formatDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { type ItemActions, ItemMenuButton } from './FileActions';
+import { Thumbnail } from '@/features/preview/Thumbnail';
 import { FileIcon } from './FileIcon';
 import type { SortDir, SortKey } from './queries';
 
@@ -103,8 +104,10 @@ export function FileList({ items, label, selectedId, onSelect, onOpen, actions, 
               )}
             >
               <td role="gridcell" className="pr-2 pl-3 md:pl-6">
-                <div className="flex min-w-0 items-center gap-3">
-                  <FileIcon item={item} className="size-5" />
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <Thumbnail item={item} className="flex size-7 shrink-0 items-center justify-center overflow-hidden rounded-[5px] data-[thumb=loaded]:ring-1 data-[thumb=loaded]:ring-foreground/10" imgClassName="object-cover">
+                    <FileIcon item={item} className="size-5" />
+                  </Thumbnail>
                   <div className="min-w-0">
                     <div className="truncate font-medium text-foreground" title={item.name}>{item.name}</div>
                     <div className="truncate text-xs text-muted-foreground tabular-nums sm:hidden">

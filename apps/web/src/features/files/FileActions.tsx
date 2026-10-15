@@ -1,5 +1,5 @@
 import type { SyncItem } from '@synclet/shared';
-import { Download, FolderInput, FolderOpen, FolderPlus, MoreHorizontal, PencilLine, Trash2, Upload } from 'lucide-react';
+import { Download, Eye, FolderInput, FolderOpen, FolderPlus, MoreHorizontal, PencilLine, Trash2, Upload } from 'lucide-react';
 import type { ComponentType, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
@@ -13,6 +13,8 @@ import { cn } from '@/lib/utils';
 
 export interface ItemActions {
   open(item: SyncItem): void;
+  /** QuickLook; offered for files only. */
+  preview?(item: SyncItem): void;
   rename(item: SyncItem): void;
   move(item: SyncItem): void;
   remove(item: SyncItem): void;
@@ -36,6 +38,11 @@ function ItemMenuItems({ item, actions, parts: { Item, Separator, Shortcut } }: 
         {item.type === 'folder' ? t('files.open') : t('common.download')}
         <Shortcut>↵</Shortcut>
       </Item>
+      {actions.preview && item.type === 'file' && (
+        <Item onSelect={() => actions.preview?.(item)}>
+          <Eye />{t('files.preview')}<Shortcut>{t('files.shortcutPreview')}</Shortcut>
+        </Item>
+      )}
       <Separator />
       <Item onSelect={() => actions.rename(item)} disabled={!caps.rename}>
         <PencilLine />{t('common.rename')}<Shortcut>F2</Shortcut>

@@ -178,6 +178,25 @@
       "expand": "Expand uploads",
       "close": "Close uploads",
       "dismiss": "Remove from list"
+    },
+    "preview": "Preview",
+    "shortcutPreview": "Space"
+  },
+  "preview": {
+    "close": "Close preview",
+    "previous": "Previous file",
+    "next": "Next file",
+    "share": "Share",
+    "position": "{{index}} of {{total}}",
+    "meta": "{{size}}, modified {{date}}",
+    "loading": "Loading preview …",
+    "zoomFit": "Fit to window",
+    "zoomActual": "Actual size",
+    "truncated": "Only the beginning of this file is shown. Download it to see everything.",
+    "none": {
+      "title": "No preview available",
+      "body": "Download the file to open it in an app that can read it.",
+      "failed": "The preview couldn't be loaded. Download the file to open it in an app."
     }
   }
 }
