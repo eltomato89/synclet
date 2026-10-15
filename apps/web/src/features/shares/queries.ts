@@ -61,11 +61,14 @@ export function shareStatus(share: Pick<ShareLinkWire, 'revokedAt' | 'expiresAt'
 /**
  * Copies with the legacy `execCommand('copy')`. The helper textarea goes into the dialog that
  * holds the focus (a modal's focus trap would otherwise pull focus back and nothing gets copied),
- * and the focus returns to where it was.
+ * and the focus returns afterwards. Pass the clicked button as `trigger`: Safari and macOS Firefox
+ * don't focus buttons on click, so the active element alone may be the body.
  */
-export function execCopy(text: string): boolean {
-  const prev = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-  const host = prev?.closest<HTMLElement>('[role="dialog"], [role="alertdialog"]') ?? document.body;
+const DIALOG = '[role="dialog"], [role="alertdialog"]';
+export function execCopy(text: string, trigger?: HTMLElement | null): boolean {
+  const active = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null;
+  const host = trigger?.closest<HTMLElement>(DIALOG) ?? active?.closest<HTMLElement>(DIALOG) ?? document.body;
+  const restore = trigger ?? active;
   const ta = document.createElement('textarea');
   ta.value = text;
   ta.setAttribute('readonly', '');
@@ -82,7 +85,7 @@ export function execCopy(text: string): boolean {
     ok = false;
   } finally {
     ta.remove();
-    prev?.focus({ preventScroll: true });
+    restore?.focus({ preventScroll: true });
   }
   return ok;
 }
@@ -92,12 +95,12 @@ export function execCopy(text: string): boolean {
  * plain-http LAN installs) and can reject (permissions, unfocused document), so both paths are
  * tried. Rejects only if neither worked; callers then let the user copy by hand.
  */
-export async function copyText(text: string): Promise<void> {
+export async function copyText(text: string, trigger?: HTMLElement | null): Promise<void> {
   if (navigator.clipboard?.writeText) {
     try {
       await navigator.clipboard.writeText(text);
       return;
     } catch { /* fall through to the legacy path */ }
   }
-  if (!execCopy(text)) throw new Error('copy failed');
+  if (!execCopy(text, trigger)) throw new Error('copy failed');
 }

@@ -74,6 +74,36 @@ describe('execCopy', () => {
     expect(dialog.querySelector('textarea')).toBeNull();
   });
 
+  it('hosts the textarea in the trigger\'s dialog when the click left focus on the body (Safari)', () => {
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    const button = document.createElement('button');
+    dialog.appendChild(button);
+    document.body.appendChild(dialog);
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.activeElement).toBe(document.body);
+
+    let host: Element | null = null;
+    execCommand.mockImplementation(() => { host = (document.activeElement as HTMLElement).parentElement; return true; });
+    expect(execCopy('x', button)).toBe(true);
+    expect(host).toBe(dialog);
+    expect(document.activeElement).toBe(button);
+    expect(dialog.querySelector('textarea')).toBeNull();
+  });
+
+  it('passes the trigger through copyText', async () => {
+    setClipboard(undefined);
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'alertdialog');
+    const button = document.createElement('button');
+    dialog.appendChild(button);
+    document.body.appendChild(dialog);
+    let host: Element | null = null;
+    execCommand.mockImplementation(() => { host = (document.activeElement as HTMLElement).parentElement; return true; });
+    await copyText('x', button);
+    expect(host).toBe(dialog);
+  });
+
   it('uses the body outside dialogs and reports failure', () => {
     let host: Element | null = null;
     execCommand.mockImplementation(() => { host = (document.activeElement as HTMLElement).parentElement; return false; });

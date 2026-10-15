@@ -150,7 +150,7 @@ function LinkList({ links, onEdit, onConfirm, onCreate, onDone }: {
                 <ShareBadges share={s} />
               </div>
             </div>
-            <Button variant="ghost" size="icon-sm" onClick={() => copy(s)} disabled={!s.url} aria-label={t('shares.copy')}>
+            <Button variant="ghost" size="icon-sm" onClick={(e) => copy(s, e.currentTarget)} disabled={!s.url} aria-label={t('shares.copy')}>
               <Copy />
             </Button>
             <DropdownMenu modal={false}>
@@ -182,8 +182,8 @@ function CreatedLink({ share, rotated, onDone, onShowAll }: { share: ShareLinkWi
   const [copied, setCopied] = useState(false);
   const field = useRef<HTMLInputElement>(null);
   const url = absoluteUrl(share.url);
-  const copy = () => {
-    copyText(url).then(
+  const copy = (trigger: HTMLElement) => {
+    copyText(url, trigger).then(
       () => { setCopied(true); window.setTimeout(() => setCopied(false), 1600); },
       // Nothing could be copied: hand the user the selected URL to copy by hand.
       () => { field.current?.focus(); field.current?.select(); notify.error(t('shares.errors.copyManual')); },
@@ -203,7 +203,7 @@ function CreatedLink({ share, rotated, onDone, onShowAll }: { share: ShareLinkWi
             onFocus={(e) => e.currentTarget.select()}
             className="bg-background text-sm md:text-sm"
           />
-          <Button onClick={copy} autoFocus className="min-w-28" aria-live="polite">
+          <Button onClick={(e) => copy(e.currentTarget)} autoFocus className="min-w-28" aria-live="polite">
             {copied ? <Check /> : <Copy />}
             {copied ? t('shares.copied') : t('shares.copy')}
           </Button>

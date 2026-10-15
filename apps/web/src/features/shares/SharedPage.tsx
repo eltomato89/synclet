@@ -71,7 +71,7 @@ export function SharedPage() {
 
   const onRotated = (share: ShareLinkWire) => toast.success(t('shares.toast.rotated'), {
     position: 'bottom-center',
-    action: { label: t('shares.copy'), onClick: () => copy(share) },
+    action: { label: t('shares.copy'), onClick: (e) => copy(share, e.currentTarget as HTMLElement) },
   });
 
   let body;
@@ -150,7 +150,7 @@ export function SharedPage() {
                       <Button
                         variant="ghost"
                         size="icon-sm"
-                        onClick={() => copy(s)}
+                        onClick={(e) => copy(s, e.currentTarget)}
                         disabled={!s.url || expired}
                         aria-label={t('shares.copyItem', { name: s.itemName })}
                         title={t('shares.copy')}

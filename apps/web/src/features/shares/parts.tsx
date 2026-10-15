@@ -63,14 +63,14 @@ export function ShareBadges({ share }: { share: ShareLinkWire }) {
  * Copy action for share links. Returns the click handler and a node to render: when the browser
  * refuses to copy, that node is a small dialog with the URL pre-selected for copying by hand.
  */
-export function useCopyLink(): [(share: Pick<ShareLinkWire, 'url'>) => void, ReactNode] {
+export function useCopyLink(): [(share: Pick<ShareLinkWire, 'url'>, trigger?: HTMLElement | null) => void, ReactNode] {
   const { t } = useTranslation();
   const [manual, setManual] = useState<{ url: string; open: boolean } | null>(null);
-  const copy = (share: Pick<ShareLinkWire, 'url'>) => {
+  const copy = (share: Pick<ShareLinkWire, 'url'>, trigger?: HTMLElement | null) => {
     // A link whose token can't be decrypted (server secret changed) needs a new link first.
     if (!share.url) { notify.error(t('shares.errors.noUrl')); return; }
     const url = absoluteUrl(share.url);
-    copyText(url).then(
+    copyText(url, trigger).then(
       () => notify.success(t('shares.toast.copied')),
       () => { notify.error(t('shares.errors.copy')); setManual({ url, open: true }); },
     );
