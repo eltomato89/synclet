@@ -2,6 +2,7 @@ packages:
   - apps/server
   - apps/web
   - packages/*
+  - e2e
 allowBuilds:
   '@parcel/watcher': true
   '@prisma/client': true
