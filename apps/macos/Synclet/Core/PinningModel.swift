@@ -112,6 +112,7 @@ final class PinningModel {
     @ObservationIgnored private var refreshes: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var refreshAgain: Set<String> = []
     @ObservationIgnored private var announcements: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private var announceAgain: Set<String> = []
 
     /// - Parameters:
     ///   - makeStore: the pin store of an account (default: `accounts/<key16>/` in the app group).
@@ -162,7 +163,8 @@ final class PinningModel {
             return AccountState(key: entry.id, title: entry.title, spaces: spaces)
         }
         let current = Set(accounts.map(\.key))
-        for key in Set(refreshes.keys).union(announcements.keys).union(refreshAgain) where !current.contains(key) {
+        for key in Set(refreshes.keys).union(announcements.keys).union(refreshAgain).union(announceAgain)
+            where !current.contains(key) {
             cancelWork(key: key)
         }
         observeSignals()
@@ -173,6 +175,7 @@ final class PinningModel {
         Logger.app.info("cancelling offline work of a removed account")
         refreshes.removeValue(forKey: key)?.cancel()
         announcements.removeValue(forKey: key)?.cancel()
+        announceAgain.remove(key)
         refreshAgain.remove(key)
         refreshing.remove(key)
     }
@@ -351,11 +354,18 @@ final class PinningModel {
 
     /// `pinnedContentChanged`: new content below a pin was reported to the system. After the
     /// debounce, exactly the announced ids are requested (an overflowed queue ⇒ one walk).
+    ///
+    /// A running batch is never cancelled by a newer announcement (its ids are already taken
+    /// from the queue): the newer one only schedules one more batch afterwards. Only signing
+    /// out cancels, and then the ids no longer matter.
     func pinnedContentChanged(key16: String) {
         guard let entry = accountsModel.entries.first(where: { $0.account.key16 == key16 }) else { return }
         let key = entry.id
+        guard announcements[key] == nil else {
+            announceAgain.insert(key)
+            return
+        }
         let downloads = makeDownloads(entry.account)
-        announcements[key]?.cancel()
         let debounce = debounce
         let retryDelay = retryDelay
         let domain = domain(key: key)
@@ -380,15 +390,17 @@ final class PinningModel {
                     if !failed.isEmpty { Logger.app.error("\(failed.count) pinned downloads could not be requested") }
                 }
             }
-            if !Task.isCancelled { self.announcements[key] = nil }
+            guard !Task.isCancelled else { return }
+            self.announcements[key] = nil
+            if self.announceAgain.remove(key) != nil { self.pinnedContentChanged(key16: key16) }
         }
     }
 
-    /// Waits for pending announcements (tests).
+    /// Waits for pending announcements, including follow-up batches (tests).
     func waitForAnnouncements() async {
         while let task = announcements.values.first {
             await task.value
-            if announcements.values.first == task { break }
+            if announcements.values.first == task { break }   // cancelled (sign-out)
         }
     }
 

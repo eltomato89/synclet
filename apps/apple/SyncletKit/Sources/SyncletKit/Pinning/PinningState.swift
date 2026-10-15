@@ -78,6 +78,17 @@ final class SharedJSONMap<Value: Codable & Sendable & Equatable>: @unchecked Sen
     }
 }
 
+/// Moves an unreadable state file aside as `<name>.corrupt` (replacing an older one).
+func quarantine(_ url: URL) {
+    let target = url.appendingPathExtension("corrupt")
+    try? FileManager.default.removeItem(at: target)
+    do {
+        try FileManager.default.moveItem(at: url, to: target)
+    } catch {
+        try? FileManager.default.removeItem(at: url)
+    }
+}
+
 /// One state object per file and type in this process (generic types cannot hold static storage).
 nonisolated(unsafe) private var registry: [String: AnyObject] = [:]
 private let sharedRegistryLock = NSLock()
@@ -172,8 +183,13 @@ public final class PinnedDownloadQueue: Sendable {
         }
     }
 
+    /// A file that cannot be decoded is moved aside (`.corrupt`) and counts as an overflow,
+    /// so the app walks the pins instead of losing the ids.
     private func read() -> Batch {
         guard let data = try? Data(contentsOf: fileURL) else { return Batch() }
-        return (try? JSONDecoder().decode(Batch.self, from: data)) ?? Batch()
+        if let batch = try? JSONDecoder().decode(Batch.self, from: data) { return batch }
+        Log.pinning.error("pinned-downloads.json unreadable: moved aside, falling back to a walk")
+        quarantine(fileURL)
+        return Batch(overflow: true)
     }
 }

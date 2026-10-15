@@ -10,14 +10,15 @@ public struct PinningContext: Sendable {
     /// Persistent, bounded re-report work (drained by the working set).
     public var queue: PinWorkQueue
     /// Receives ids of files newly reported as kept offline (new or changed content), so the
-    /// app can request exactly those downloads.
-    public var announce: @Sendable ([String]) -> Void
+    /// app can request exactly those downloads. Returns `false` when they could not be queued
+    /// (the ledger then forgets them, so they are announced again).
+    public var announce: @Sendable ([String]) -> Bool
     /// Asks the system for a working-set round (work was queued outside the working set).
     public var requestWorkingSetRound: @Sendable () -> Void
 
     public init(store: PinStore, parentMap: ParentMap, ledger: PinnedContentLedger = PinnedContentLedger(fileURL: nil),
                 queue: PinWorkQueue = PinWorkQueue(fileURL: nil),
-                announce: @escaping @Sendable ([String]) -> Void = { _ in },
+                announce: @escaping @Sendable ([String]) -> Bool = { _ in true },
                 requestWorkingSetRound: @escaping @Sendable () -> Void = {}) {
         self.store = store
         self.parentMap = parentMap
@@ -47,8 +48,10 @@ public struct PinningContext: Sendable {
                     try downloads.append(ids)
                 } catch {
                     Log.pinning.error("pinned downloads not queued: \(String(describing: error), privacy: .public)")
+                    return false
                 }
                 PinStore.postDarwinNotification(name)
+                return true
             },
             requestWorkingSetRound: {
                 let domain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(key16), displayName: "")
@@ -146,6 +149,9 @@ struct PinResolver: Sendable {
         var result: [FileProviderItem] = []
         var fresh: [String] = []
         result.reserveCapacity(syncItems.count)
+        // Kept files recorded in the ledger by this call; forgotten again if it is cancelled,
+        // so they are never "known" without being announced.
+        defer { if Task.isCancelled { pinning.ledger.remove(fresh) } }
         for item in syncItems {
             try Task.checkCancellation()
             if let space = layout.space(forRootId: item.id) {
@@ -198,6 +204,9 @@ struct PinResolver: Sendable {
                     queue.enqueue(PinTask(kind: .item, id: id, announce: false, walkAfter: true))
                 }
             }
+            // The queue must be on disk before the change counts as applied: an extension
+            // killed during the drain then still re-reports it.
+            queue.flush()
             do {
                 try store.setAppliedPins(current, space: space.id)
             } catch {
@@ -273,8 +282,17 @@ struct PinResolver: Sendable {
                     }
                 }
             } catch {
-                if !(error is CancellationError) {
-                    Log.pinning.error("pin re-report paused: \(String(describing: error), privacy: .public)")
+                if error is CancellationError { return (false, fresh) }
+                // Rotate the failing task behind the others (no head-of-line blocking); give up
+                // after `maxFailures` attempts. The round ends here (no busy loop).
+                queue.popHead()
+                var retry = task
+                retry.failures += 1
+                if retry.failures >= PinWorkQueue.maxFailures {
+                    Log.pinning.error("pin re-report of \(task.id, privacy: .public) dropped after \(retry.failures) failures: \(String(describing: error), privacy: .public)")
+                } else {
+                    Log.pinning.error("pin re-report of \(task.id, privacy: .public) failed (\(retry.failures)): \(String(describing: error), privacy: .public)")
+                    queue.append(retry)
                 }
                 return (false, fresh)
             }
@@ -285,6 +303,20 @@ struct PinResolver: Sendable {
 
 /// One unit of re-report work.
 public struct PinTask: Codable, Hashable, Sendable {
+    private enum CodingKeys: String, CodingKey { case kind, id, spaceId, firstLevel, pageToken, announce, walkAfter, failures }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try c.decode(Kind.self, forKey: .kind)
+        id = try c.decode(String.self, forKey: .id)
+        spaceId = try c.decodeIfPresent(String.self, forKey: .spaceId)
+        firstLevel = try c.decodeIfPresent(String.self, forKey: .firstLevel)
+        pageToken = try c.decodeIfPresent(String.self, forKey: .pageToken)
+        announce = try c.decodeIfPresent(Bool.self, forKey: .announce) ?? true
+        walkAfter = try c.decodeIfPresent(Bool.self, forKey: .walkAfter) ?? false
+        failures = try c.decodeIfPresent(Int.self, forKey: .failures) ?? 0
+    }
+
     public enum Kind: String, Codable, Sendable {
         /// Report the children of `id` (page by page), queue sub-folders.
         case walk
@@ -303,9 +335,12 @@ public struct PinTask: Codable, Hashable, Sendable {
     /// Announce kept files with new content to the app (not for pin toggles: the app walks then).
     public var announce: Bool
     public var walkAfter: Bool
+    /// Failed attempts so far (see ``PinWorkQueue/maxFailures``).
+    public var failures: Int
 
     public init(kind: Kind, id: String, spaceId: String? = nil, firstLevel: String? = nil, pageToken: String? = nil,
-                announce: Bool, walkAfter: Bool = false) {
+                announce: Bool, walkAfter: Bool = false, failures: Int = 0) {
+        self.failures = failures
         self.kind = kind
         self.id = id
         self.spaceId = spaceId
@@ -318,12 +353,20 @@ public struct PinTask: Codable, Hashable, Sendable {
 
 /// FIFO of ``PinTask``s, persisted (`accounts/<key16>/pin-queue.json`) on ``flush()`` so a
 /// re-report survives errors and extension restarts and resumes where it stopped.
+///
+/// An unreadable file is moved aside (`.corrupt`), logged, and reported once through
+/// ``takeCorruption()`` so the extension can schedule a full re-walk.
 public final class PinWorkQueue: @unchecked Sendable {
+    /// A task is dropped after this many failed attempts.
+    public static let maxFailures = 5
+
     public let fileURL: URL?
     private let lock = NSLock()
     // Guarded by `lock`.
     private var storage: [PinTask]?
     private var dirty = false
+    private var corrupted = false
+    private var roundRequested = false
 
     public init(fileURL: URL?) {
         self.fileURL = fileURL
@@ -336,12 +379,45 @@ public final class PinWorkQueue: @unchecked Sendable {
     private func loaded() -> [PinTask] {
         if let storage { return storage }
         var result: [PinTask] = []
-        if let fileURL, let data = try? Data(contentsOf: fileURL),
-           let decoded = try? JSONDecoder().decode([PinTask].self, from: data) {
-            result = decoded
+        if let fileURL, let data = try? Data(contentsOf: fileURL) {
+            if let decoded = try? JSONDecoder().decode([PinTask].self, from: data) {
+                result = decoded
+            } else {
+                Log.pinning.error("pin-queue.json unreadable: moved aside, scheduling a full re-walk")
+                quarantine(fileURL)
+                corrupted = true
+            }
         }
         storage = result
         return result
+    }
+
+    /// `true` once after the stored queue turned out unreadable.
+    public func takeCorruption() -> Bool {
+        lock.withLock {
+            _ = loaded()
+            defer { corrupted = false }
+            return corrupted
+        }
+    }
+
+    /// Whether a non-working-set path should ask for a working-set round: at most once until
+    /// the next round starts (``roundStarted()``).
+    public func shouldRequestRound() -> Bool {
+        lock.withLock {
+            guard !roundRequested else { return false }
+            roundRequested = true
+            return true
+        }
+    }
+
+    public func roundStarted() {
+        lock.withLock { roundRequested = false }
+    }
+
+    /// Appends without the duplicate check (a rotated task).
+    func append(_ task: PinTask) {
+        change { $0.append(task) }
     }
 
     private func change(_ body: (inout [PinTask]) -> Void) {

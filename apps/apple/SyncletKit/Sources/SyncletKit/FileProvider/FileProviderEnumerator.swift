@@ -258,6 +258,14 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
         var announce = resolved.announce
         var more = false
         if isWorkingSet {
+            pinning.queue.roundStarted()
+            if pinning.queue.takeCorruption() {
+                // The lost queue may have held pin changes already marked applied: re-walk
+                // every space with the current pins.
+                for space in layout.spaces {
+                    pinning.queue.enqueue(PinTask(kind: .walk, id: space.rootId, spaceId: space.id, announce: true))
+                }
+            }
             resolver.enqueueChangedPins(gone: Set(goneIDs), report: report)
             let drained = await resolver.drain(budget: budget, report: report)
             more = drained.more
@@ -269,10 +277,16 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
 
     /// Persists the pinning state, announces new kept content, and asks for a working-set
     /// round when work was queued outside of it.
+    /// Announces before the ledger is saved: ids that could not be queued are forgotten by
+    /// the ledger, so they are announced again later.
     static func finishPinning(_ pinning: PinningContext, announce: [String], workingSet: Bool) {
+        if !announce.isEmpty, !pinning.announce(announce) {
+            pinning.ledger.remove(announce)
+        }
         pinning.flush()
-        if !announce.isEmpty { pinning.announce(announce) }
-        if !workingSet, !pinning.queue.isEmpty { pinning.requestWorkingSetRound() }
+        if !workingSet, !pinning.queue.isEmpty, pinning.queue.shouldRequestRound() {
+            pinning.requestWorkingSetRound()
+        }
     }
 
     /// Splits changes into upserts and deletions (optionally only the direct children of

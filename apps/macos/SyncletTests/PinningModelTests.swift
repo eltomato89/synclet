@@ -16,6 +16,8 @@ final class FakeOfflineContent: OfflineContentManaging, @unchecked Sendable {
     var failOnce: Set<String> = []
     /// `ensureDownloaded` waits this long (cancellable).
     var walkDuration: Duration = .zero
+    /// Called inside each `requestDownloads` (before it answers).
+    var onRequest: (@Sendable ([String]) async -> Void)?
 
     var signals: [(domain: String, containers: [String])] { lock.withLock { _signals } }
     var ensured: [(domain: String, containers: [String])] { lock.withLock { _ensured } }
@@ -23,7 +25,8 @@ final class FakeOfflineContent: OfflineContentManaging, @unchecked Sendable {
     var cancelledWalks: Int { lock.withLock { _cancelledWalks } }
 
     func requestDownloads(domain: NSFileProviderDomainIdentifier, ids: [String]) async -> [String] {
-        lock.withLock {
+        await onRequest?(ids)
+        return lock.withLock {
             _requested.append(ids)
             let failed = ids.filter { failOnce.contains($0) }
             failOnce.subtract(failed)
@@ -291,6 +294,28 @@ final class PinningModelTests: XCTestCase {
         model.handle(notification: PinStore.pinnedContentNotificationName(key16: account.key16))
         await model.waitForAnnouncements()
         XCTAssertEqual(content.requested, [["f_1", "f_2"], ["f_2"]])
+    }
+
+    func testAnAnnouncementDuringARunningBatchLosesNoIds() async throws {
+        let account = try addAccount(host: "a.test", serverId: "srvA")
+        let model = makeModel()
+        let queue = PinnedDownloadQueue(accountDirectory: harness.manager.accounts.accountDirectory(key: account.key))
+        content.failOnce = ["f_1"]
+        let key16 = account.key16
+        let posted = PostedNames()
+        // While the first batch is being requested, new content is announced.
+        content.onRequest = { @MainActor ids in
+            guard posted.all.isEmpty else { return }
+            posted.record("second")
+            try? queue.append(["f_3"])
+            model.handle(notification: PinStore.pinnedContentNotificationName(key16: key16))
+        }
+        try queue.append(["f_1", "f_2"])
+        model.handle(notification: PinStore.pinnedContentNotificationName(key16: account.key16))
+        await model.waitForAnnouncements()
+
+        // f_1 failed once and was retried; f_2 was not dropped; f_3 came in a follow-up batch.
+        XCTAssertEqual(content.requested, [["f_1", "f_2"], ["f_1"], ["f_3"]])
     }
 
     func testSignOutCancelsTheWalkAndPendingAnnouncements() async throws {
