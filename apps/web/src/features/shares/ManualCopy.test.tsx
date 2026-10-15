@@ -9,7 +9,7 @@ import { ShareDialog } from './ShareDialog';
 
 const share = {
   id: 's1', itemId: 'f_1', itemName: 'Rechnung.pdf', itemType: 'file', url: '/s/tok123', hasPassword: false,
-  expiresAt: null, allowDownload: true, allowUpload: false, createdAt: '2026-10-15T10:00:00Z', revokedAt: null, hits: 3,
+  expiresAt: null, allowDownload: true, allowUpload: false, createdAt: '2026-10-15T10:00:00Z', revokedAt: null, hits: 3, itemTrashed: false,
 };
 const URL_ABS = `${window.location.origin}/s/tok123`;
 const original = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
