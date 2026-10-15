@@ -222,6 +222,39 @@ final class AccountManagerTests: XCTestCase {
         XCTAssertEqual(second.addedAt, first.addedAt)
     }
 
+    func testReLoginRevokesPreviousDeviceTokenAfterStoringTheNewOne() async throws {
+        let (manager, _, credentials, _) = makeManager()
+        serve(token: "syd_1")
+        _ = try await manager.add(server: Fixtures.server, tokens: tokens)
+        XCTAssertFalse(MockURLProtocol.requests.contains { $0.method == "DELETE" }, "nothing to revoke on the first login")
+
+        serve(token: "syd_2")
+        _ = try await manager.add(server: Fixtures.server, tokens: tokens)
+        let revokes = MockURLProtocol.requests.filter { $0.method == "DELETE" }
+        XCTAssertEqual(revokes.map(\.path), ["/api/sync/v1/devices/current"])
+        XCTAssertEqual(revokes.first?.header("Authorization"), "Bearer syd_1")
+        XCTAssertEqual(credentials.token(for: "srv1:u1"), "syd_2")
+    }
+
+    func testReLoginSucceedsWhenRevokingThePreviousTokenFails() async throws {
+        let (manager, domains, credentials, _) = makeManager()
+        serve(token: "syd_1")
+        _ = try await manager.add(server: Fixtures.server, tokens: tokens)
+        MockURLProtocol.reset { request in
+            switch (request.method, request.path) {
+            case ("POST", "/api/sync/v1/devices"): return .json(201, Fixtures.registrationJSON(token: "syd_2"))
+            case ("GET", "/api/sync/v1/account"): return .json(200, Fixtures.accountJSON())
+            case ("POST", "/api/auth/logout"): return .empty(204)
+            case ("DELETE", _): return .error(401, "device_revoked") // already revoked by the server
+            default: return .empty(500)
+            }
+        }
+        _ = try await manager.add(server: Fixtures.server, tokens: tokens)
+        XCTAssertEqual(credentials.token(for: "srv1:u1"), "syd_2")
+        XCTAssertEqual(domains.all.count, 1)
+        XCTAssertTrue(MockURLProtocol.requests.contains { $0.method == "DELETE" && $0.header("Authorization") == "Bearer syd_1" })
+    }
+
     func testTwoServersSameUserAreTwoAccounts() async throws {
         let (manager, domains, _, accounts) = makeManager()
         serve(serverId: "srvA")

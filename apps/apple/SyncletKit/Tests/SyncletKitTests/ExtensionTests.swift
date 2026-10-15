@@ -216,6 +216,53 @@ final class ExtensionTests: XCTestCase {
         XCTAssertFalse(MockURLProtocol.requests.contains { $0.method == "POST" || $0.method == "PUT" })
     }
 
+    /// The probe after a PATCH 404 fails transiently: that is not "item gone". The error is
+    /// rethrown (the system retries later) and nothing is uploaded.
+    func testMoveProbeServerErrorIsRethrownWithoutUpload() async throws {
+        for status in [500, 503] {
+            MockURLProtocol.reset { request in
+                switch (request.method, request.path) {
+                case ("PATCH", _): return .error(404, "not_found")
+                case ("GET", "/api/sync/v1/items/f_1"): return .empty(status)
+                default:
+                    XCTFail("unexpected: \(request.method) \(request.path)")
+                    return .empty(500)
+                }
+            }
+            let local = TemplateItem(id: "f_1", parent: NSFileProviderItemIdentifier("d_2"), name: "Angebot.pdf", type: .pdf)
+            do {
+                _ = try await makeExtension().modify(item: local, baseVersion: NSFileProviderItemVersion(),
+                                                     changedFields: [.parentItemIdentifier, .contents],
+                                                     contents: Fixtures.tempFile("lokal"), context: context, progress: nil)
+                XCTFail("error expected")
+            } catch {
+                XCTAssertEqual(error as? SyncAPIError, .http(status: status, code: nil, message: nil))
+                let mapped = ErrorMapping.fileProviderError(error) as NSError
+                XCTAssertEqual(mapped.code, NSFileProviderError.Code.serverUnreachable.rawValue)
+            }
+            XCTAssertEqual(MockURLProtocol.requests.map(\.method), ["PATCH", "GET"])
+        }
+    }
+
+    func testMoveProbeNetworkErrorIsRethrownWithoutUpload() async throws {
+        MockURLProtocol.reset { request in
+            if request.method == "GET" { throw URLError(.notConnectedToInternet) }
+            if request.method == "PATCH" { return .error(404, "not_found") }
+            XCTFail("unexpected: \(request.method) \(request.path)")
+            return .empty(500)
+        }
+        let local = TemplateItem(id: "f_1", parent: NSFileProviderItemIdentifier("d_2"), name: "Angebot.pdf", type: .pdf)
+        do {
+            _ = try await makeExtension().modify(item: local, baseVersion: NSFileProviderItemVersion(),
+                                                 changedFields: [.parentItemIdentifier, .contents],
+                                                 contents: Fixtures.tempFile("lokal"), context: context, progress: nil)
+            XCTFail("error expected")
+        } catch SyncAPIError.transport(let code, _) {
+            XCTAssertEqual(code, .notConnectedToInternet)
+        }
+        XCTAssertFalse(MockURLProtocol.requests.contains { $0.method == "POST" || $0.method == "PUT" })
+    }
+
     func testMoveOfItemDeletedOnServerWithContentRecreates() async throws {
         MockURLProtocol.reset { request in
             switch (request.method, request.path) {

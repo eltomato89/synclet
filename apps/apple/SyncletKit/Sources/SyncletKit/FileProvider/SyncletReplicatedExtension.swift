@@ -1,4 +1,3 @@
-import CryptoKit
 import FileProvider
 import Foundation
 import UniformTypeIdentifiers
@@ -25,13 +24,21 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
         public var layout: SpaceLayout
         /// Receives each space's cursor after a change page (per-space sync state).
         public var cursorSink: (@Sendable (_ spaceID: String, _ cursor: String) -> Void)?
+        /// Where unfinished tus uploads are remembered (the account's folder in the app
+        /// group, so they survive a killed extension); `nil` ⇒ the extension's temp directory.
+        public var transferStateDirectory: URL?
+        /// Uploads above this size use tus (SYNC_API.md §7).
+        public var uploadThreshold: Int
 
         public init(client: SyncAPIClient, deviceName: String, layout: SpaceLayout,
-                    cursorSink: (@Sendable (_ spaceID: String, _ cursor: String) -> Void)? = nil) {
+                    cursorSink: (@Sendable (_ spaceID: String, _ cursor: String) -> Void)? = nil,
+                    transferStateDirectory: URL? = nil, uploadThreshold: Int = TransferEngine.defaultThreshold) {
             self.client = client
             self.deviceName = deviceName
             self.layout = layout
             self.cursorSink = cursorSink
+            self.transferStateDirectory = transferStateDirectory
+            self.uploadThreshold = uploadThreshold
         }
     }
 
@@ -84,7 +91,9 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
                            layout: SpaceLayout(spaces: account.spaces),
                            cursorSink: { spaceID, cursor in
                                try? accounts.saveSyncState(SpaceSyncState(cursor: cursor), key: key, spaceId: spaceID)
-                           })
+                           },
+                           transferStateDirectory: accounts.accountDirectory(key: key)
+                               .appending(path: "uploads", directoryHint: .isDirectory))
         }
     }
 
@@ -108,6 +117,20 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
         if let temporaryDirectoryOverride { return temporaryDirectoryOverride }
         if let url = try? manager?.temporaryDirectoryURL() { return url }
         return FileManager.default.temporaryDirectory
+    }
+
+    /// Transfers of this context (tus state in ``Context/transferStateDirectory``).
+    func transfers(_ context: Context) -> TransferEngine {
+        let stateDir = context.transferStateDirectory
+            ?? temporaryDirectory().appending(path: "synclet-uploads", directoryHint: .isDirectory)
+        return TransferEngine(api: context.client, tus: TusUploader(api: context.client), stateDir: stateDir,
+                              threshold: context.uploadThreshold)
+    }
+
+    /// Resume key of an upload: the File Provider item plus its content version (spec §2.6).
+    static func resumeKey(_ identifier: NSFileProviderItemIdentifier, contentVersion: Data?) -> String {
+        UploadStateStore.key(itemIdentifier: identifier.rawValue,
+                             contentVersion: contentVersion.map { $0.base64EncodedString() } ?? "")
     }
 
     /// Runs the operation as a `Task`; cancelling the `Progress` cancels the task.
@@ -181,16 +204,23 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
         }
     }
 
-    /// Downloads the content into a temp file and returns the matching item. If the
-    /// content changes meanwhile (ETag ≠ `contentEtag`), it is loaded again up to twice;
-    /// after that the state of the downloaded file wins.
+    /// Downloads the content into a temp file (streamed, resumed after network errors by
+    /// ``RangeDownloader``) and returns the matching item. If the content changes meanwhile
+    /// (ETag ≠ `contentEtag`), it is loaded again up to twice; after that the state of the
+    /// downloaded file wins.
     func download(_ id: String, client: SyncAPIClient, progress: Progress) async throws -> (url: URL, item: SyncItem) {
         let directory = temporaryDirectory()
+        let downloader = RangeDownloader(api: client)
         for attempt in 0..<3 {
             try Task.checkCancellation()
             let destination = directory.appending(path: "synclet-\(UUID().uuidString)")
-            let result = try await client.downloadContent(itemID: id, to: destination,
-                                                          progress: attempt == 0 ? progress : nil)
+            let result: SyncDownloadResult
+            do {
+                result = try await downloader.download(itemID: id, to: destination, progress: progress)
+            } catch {
+                try? FileManager.default.removeItem(at: destination)
+                throw error
+            }
             var item = try await client.item(id: id)
             guard !item.isFolder else {
                 try? FileManager.default.removeItem(at: destination)
@@ -224,7 +254,9 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
                 let context = try context()
                 let created = try await create(template: template.value, contents: url, modifiedAt: modifiedAt,
                                                mayAlreadyExist: options.contains(.mayAlreadyExist),
-                                               context: context, progress: progressBox.value)
+                                               context: context, progress: progressBox.value,
+                                               resumeKey: Self.resumeKey(template.value.itemIdentifier,
+                                                                         contentVersion: template.value.itemVersion?.contentVersion))
                 done.value(FileProviderItem(created, layout: context.layout), [], false, nil)
             } catch {
                 done.value(nil, [], false, ErrorMapping.fileProviderError(error))
@@ -241,7 +273,7 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
     ///   (sha256) is reused (resume, or a re-create by the system); otherwise the server
     ///   picks a free name `"<base> (2).<ext>"`.
     func create(template: NSFileProviderItem, contents url: URL?, modifiedAt: Date?, mayAlreadyExist: Bool,
-                context: Context, progress: Progress?) async throws -> SyncItem {
+                context: Context, progress: Progress?, resumeKey: String? = nil) async throws -> SyncItem {
         let client = context.client
         let parentID = try context.layout.serverParentId(for: template.parentItemIdentifier)
         let name = template.filename
@@ -274,35 +306,13 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
         }
         defer { if let emptyFile { try? FileManager.default.removeItem(at: emptyFile) } }
         guard let source else { throw CocoaError(.fileReadNoSuchFile) }
-        return try await uploadNew(source, name: name, parentID: parentID, modifiedAt: modifiedAt,
-                                   client: client, progress: progress)
-    }
-
-    /// `POST /items/upload` with `onConflict=fail`; on a name conflict an identical file
-    /// is reused, otherwise the upload is repeated with `onConflict=rename`.
-    private func uploadNew(_ source: URL, name: String, parentID: String, modifiedAt: Date?,
-                           client: SyncAPIClient, progress: Progress?) async throws -> SyncItem {
-        do {
-            return try await client.uploadNewFile(parentID: parentID, name: name, from: source, onConflict: .fail,
-                                                  modifiedAt: modifiedAt, progress: progress)
-        } catch SyncAPIError.nameConflict(let existing?) where !existing.isFolder
-                    && existing.sha256 != nil && existing.sha256 == (try? Self.sha256(of: source)) {
-            return existing
-        } catch SyncAPIError.nameConflict {
-            return try await client.uploadNewFile(parentID: parentID, name: name, from: source, onConflict: .rename,
-                                                  modifiedAt: modifiedAt, progress: nil)
-        }
+        return try await transfers(context).upload(file: source, newIn: parentID, name: name, modifiedAt: modifiedAt,
+                                                   progress: progress, resumeKey: resumeKey)
     }
 
     /// SHA-256 (hex) of a file, read in blocks.
     static func sha256(of url: URL) throws -> String {
-        let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
-        var hasher = SHA256()
-        while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty {
-            hasher.update(data: chunk)
-        }
-        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        try TransferEngine.sha256(of: url)
     }
 
     // MARK: - Modify
@@ -368,11 +378,18 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
                 current = try await client.updateItem(id: id, name: newName, parentID: newParent)
             } catch SyncAPIError.notFound {
                 // 404 is ambiguous on PATCH (§8.2): the item or the target folder is gone.
-                if newParent != nil, (try? await client.item(id: id)) != nil {
-                    Log.fileProvider.info("move target of \(id, privacy: .public) no longer exists")
-                    throw NSFileProviderError(.noSuchItem, userInfo: [
-                        NSFileProviderErrorNonExistentItemIdentifierKey: item.parentItemIdentifier,
-                    ])
+                // Only a 404 of the probe means "item gone"; any other error (network, 5xx)
+                // is rethrown so the system retries instead of uploading a stray copy.
+                if newParent != nil {
+                    do {
+                        _ = try await client.item(id: id)
+                        Log.fileProvider.info("move target of \(id, privacy: .public) no longer exists")
+                        throw NSFileProviderError(.noSuchItem, userInfo: [
+                            NSFileProviderErrorNonExistentItemIdentifierKey: item.parentItemIdentifier,
+                        ])
+                    } catch SyncAPIError.notFound {
+                        // The item itself is gone.
+                    }
                 }
                 guard hasNewContent, let newContents else { throw NSFileProviderError(.noSuchItem) }
                 return try await recreateDeleted(item: item, contents: newContents, parentID: newParent,
@@ -396,9 +413,10 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
                 }
             }
             let modifiedAt = item.contentModificationDate ?? nil
+            let transfers = transfers(context)
             do {
-                current = try await client.replaceContent(itemID: id, from: newContents, ifMatch: ifMatch ?? "*",
-                                                          modifiedAt: modifiedAt, progress: progress)
+                current = try await transfers.replace(file: newContents, itemId: id, baseEtag: ifMatch ?? "*",
+                                                      modifiedAt: modifiedAt, progress: progress)
             } catch SyncAPIError.conflict(let serverItem) {
                 let server: SyncItem
                 if let serverItem {
@@ -410,8 +428,13 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
                 Log.fileProvider.info("conflict on \(id, privacy: .public): uploading copy \(copyName, privacy: .private)")
                 let parentID = server.parentId ?? newParent ?? (try? layout.serverParentId(for: item.parentItemIdentifier))
                     ?? SyncItem.rootID
-                _ = try await client.uploadNewFile(parentID: parentID, name: copyName, from: newContents,
-                                                   onConflict: .rename, modifiedAt: modifiedAt, progress: nil)
+                // Keyed by the item, not the name: the copy's name contains the minute, so a
+                // retry after the minute boundary still resumes the same upload.
+                _ = try await transfers.upload(file: newContents, newIn: parentID, name: copyName,
+                                               modifiedAt: modifiedAt, progress: nil,
+                                               resumeKey: Self.resumeKey(NSFileProviderItemIdentifier("conflict:" + item.itemIdentifier.rawValue),
+                                                                         contentVersion: baseVersion.contentVersion),
+                                               reuseIdentical: false)
                 signalWorkingSet()
                 return (FileProviderItem(server, layout: layout), true)
             } catch SyncAPIError.notFound {
@@ -434,12 +457,15 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
         let parent = parentID ?? (try? layout.serverParentId(for: item.parentItemIdentifier)) ?? fallback
         let modifiedAt = item.contentModificationDate ?? nil
         Log.fileProvider.info("re-uploading \(item.filename, privacy: .private): deleted on the server, changed locally")
+        let transfers = transfers(context)
+        let resumeKey = Self.resumeKey(NSFileProviderItemIdentifier("recreate:" + item.itemIdentifier.rawValue),
+                                       contentVersion: nil)
         do {
-            _ = try await uploadNew(contents, name: item.filename, parentID: parent, modifiedAt: modifiedAt,
-                                    client: context.client, progress: progress)
+            _ = try await transfers.upload(file: contents, newIn: parent, name: item.filename, modifiedAt: modifiedAt,
+                                           progress: progress, resumeKey: resumeKey)
         } catch SyncAPIError.notFound where parent != fallback {
-            _ = try await uploadNew(contents, name: item.filename, parentID: fallback, modifiedAt: modifiedAt,
-                                    client: context.client, progress: nil)
+            _ = try await transfers.upload(file: contents, newIn: fallback, name: item.filename, modifiedAt: modifiedAt,
+                                           progress: nil, resumeKey: resumeKey)
         }
         signalWorkingSet()
         throw NSFileProviderError(.noSuchItem)

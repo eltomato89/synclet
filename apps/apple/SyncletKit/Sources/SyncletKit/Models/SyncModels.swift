@@ -554,8 +554,13 @@ public enum SyncDate {
         return try? Date(value, strategy: Date.ISO8601FormatStyle())
     }
 
-    /// UTC with milliseconds (like JavaScript's `toISOString()`).
+    /// UTC with milliseconds (like JavaScript's `toISOString()`), rounded to the nearest
+    /// millisecond (a plain formatter truncates, and `x.123` is often stored as `x.12299…`).
     public static func format(_ date: Date) -> String {
-        date.formatted(Date.ISO8601FormatStyle(includingFractionalSeconds: true))
+        let millis = (date.timeIntervalSince1970 * 1000).rounded()
+        let seconds = (millis / 1000).rounded(.down)
+        let fraction = Int(millis - seconds * 1000)
+        let base = Date(timeIntervalSince1970: seconds).formatted(Date.ISO8601FormatStyle()) // …:SSZ
+        return String(base.dropLast()) + String(format: ".%03dZ", fraction)
     }
 }
