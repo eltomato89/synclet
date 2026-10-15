@@ -90,8 +90,8 @@ final class ThumbnailsTests: XCTestCase {
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: tempDir.path), ["f_1-256.webp"], "no stale file")
     }
 
-    func testMissingThumbnailIsNilAndRememberedForTenMinutes() async throws {
-        for (status, code) in [(404, "not_found"), (415, "invalid_request"), (400, "invalid_request")] {
+    func testUnsupportedTypesAndFoldersAreRememberedForTenMinutes() async throws {
+        for (status, code) in [(415, "invalid_request"), (400, "invalid_request")] {
             let clock = TestClock()
             let fetcher = ThumbnailFetcher(cache: ThumbnailCache(directory: tempDir, now: clock.now))
             MockURLProtocol.reset { _ in .error(status, code) }
@@ -106,12 +106,71 @@ final class ThumbnailsTests: XCTestCase {
             let second = try await fetcher.thumbnail(itemID: "x_\(status)", requestedSize: small, client: Fixtures.client())
             XCTAssertNil(second)
             XCTAssertTrue(MockURLProtocol.requests.isEmpty)
-            // After 10 minutes: asked again (the worker may have rendered it meanwhile).
+            // After 10 minutes: asked again.
             clock.advance(2 * 60)
             thumbnailServer()
             let third = try await fetcher.thumbnail(itemID: "x_\(status)", requestedSize: small, client: Fixtures.client())
             XCTAssertEqual(third, Data("WEBP".utf8))
         }
+    }
+
+    /// §9.1: a 404 means "not rendered yet" ⇒ poll with backoff 2 s, 5 s, 15 s, 60 s, 5 min, then 10 min.
+    func testNotRenderedBacksOffStepByStep() async throws {
+        let clock = TestClock()
+        let fetcher = ThumbnailFetcher(cache: ThumbnailCache(directory: tempDir, now: clock.now))
+        let expected: [TimeInterval] = [2, 5, 15, 60, 300, 600, 600]
+        var requests = 0
+        for ttl in expected {
+            MockURLProtocol.reset { _ in .error(404, "not_found") }
+            let result1 = try await fetcher.thumbnail(itemID: "f_new", requestedSize: small, client: Fixtures.client())
+            XCTAssertNil(result1)
+            requests += MockURLProtocol.requests.count
+            XCTAssertEqual(MockURLProtocol.requests.count, 1, "asks once when the backoff has passed (\(ttl) s step)")
+            // Just before the step ends: still suppressed.
+            clock.advance(ttl - 0.5)
+            MockURLProtocol.reset { request in
+                XCTFail("asked too early in the \(ttl) s step: \(request.path)")
+                return .empty(500)
+            }
+            let result2 = try await fetcher.thumbnail(itemID: "f_new", requestedSize: small, client: Fixtures.client())
+            XCTAssertNil(result2)
+            clock.advance(0.5)
+        }
+        XCTAssertEqual(requests, expected.count)
+        // Another size is independent.
+        XCTAssertEqual(ThumbnailCache(directory: tempDir, now: clock.now).markMissing(itemID: "f_new", size: 1024, reason: .notRendered), 2)
+    }
+
+    func testThumbnailResetsTheBackoff() async throws {
+        let clock = TestClock()
+        let cache = ThumbnailCache(directory: tempDir, now: clock.now)
+        let fetcher = ThumbnailFetcher(cache: cache)
+        // Three 404s: the next one would wait 60 s.
+        for ttl: TimeInterval in [2, 5, 15] {
+            MockURLProtocol.reset { _ in .error(404, "not_found") }
+            _ = try await fetcher.thumbnail(itemID: "f_1", requestedSize: small, client: Fixtures.client())
+            clock.advance(ttl)
+        }
+        // 200 resets: a later 404 (thumbnail gone with a new version) starts at 2 s again.
+        thumbnailServer()
+        let result3 = try await fetcher.thumbnail(itemID: "f_1", requestedSize: small, client: Fixtures.client())
+        XCTAssertNotNil(result3)
+        MockURLProtocol.reset { _ in .error(404, "not_found") }
+        let result4 = try await fetcher.thumbnail(itemID: "f_1", requestedSize: small, client: Fixtures.client())
+        XCTAssertNil(result4)
+        clock.advance(2)
+        XCTAssertFalse(cache.isKnownMissing(itemID: "f_1", size: 256), "back at the 2 s step")
+
+        // 304 resets too.
+        XCTAssertEqual(cache.markMissing(itemID: "f_2", size: 256, reason: .notRendered), 2)
+        XCTAssertEqual(cache.markMissing(itemID: "f_2", size: 256, reason: .notRendered), 5)
+        cache.store(Data("OLD".utf8), etag: "sha1-256", itemID: "f_2", size: 256)
+        clock.advance(5)
+        thumbnailServer(etag: "sha1")
+        let result5 = try await fetcher.thumbnail(itemID: "f_2", requestedSize: small, client: Fixtures.client())
+        XCTAssertEqual(result5, Data("OLD".utf8))
+        XCTAssertEqual(MockURLProtocol.requests.first?.header("If-None-Match"), "\"sha1-256\"")
+        XCTAssertEqual(cache.markMissing(itemID: "f_2", size: 256, reason: .notRendered), 2, "reset by the 304")
     }
 
     func testThumbnailGoneOnTheServerDropsTheCachedFile() async throws {

@@ -33,8 +33,13 @@ public enum ThumbnailSize {
 /// repeated requests for types without thumbnails do not each reach the server.
 public final class ThumbnailCache: Sendable {
     public static let defaultMaxBytes: Int64 = 200 * 1024 * 1024
-    /// How long a "no thumbnail" answer is remembered (the worker may still be rendering).
+    /// How long a "no thumbnail" answer is remembered: `415`/`400` always, and a `404` once
+    /// ``notRenderedBackoff`` is used up.
     public static let missingTTL: TimeInterval = 10 * 60
+    /// `404` means "not rendered yet" for a new file (SYNC_API.md §9.1: poll with backoff):
+    /// the n-th consecutive 404 of an item and size is remembered this long, then
+    /// ``missingTTL``. A `200`/`304` resets the item.
+    public static let notRenderedBackoff: [TimeInterval] = [2, 5, 15, 60, 5 * 60]
     static let etagAttribute = "tech.jensk.synclet.thumbnail-etag"
 
     public struct Entry: Sendable, Hashable {
@@ -47,7 +52,8 @@ public final class ThumbnailCache: Sendable {
     public let maxBytes: Int64
     private let now: @Sendable () -> Date
     private let state = Mutex<Int64?>(nil) // approximate bytes on disk; nil = not measured yet
-    private let missing = Mutex<[String: Date]>([:]) // "<id>-<size>" → expiry
+    private struct Missing { var expiry: Date; var strikes: Int }
+    private let missing = Mutex<[String: Missing]>([:]) // "<id>-<size>" → negative entry
 
     public init(directory: URL, maxBytes: Int64 = ThumbnailCache.defaultMaxBytes,
                 now: @escaping @Sendable () -> Date = { Date() }) {
@@ -187,23 +193,45 @@ public final class ThumbnailCache: Sendable {
 
     // MARK: Negative cache
 
-    /// Whether the server recently said there is no thumbnail.
+    /// Why the server has no thumbnail.
+    public enum MissingReason: Sendable {
+        /// `404`: maybe not rendered yet ⇒ escalating backoff.
+        case notRendered
+        /// `415`/`400`: never (unsupported type, folder) ⇒ ``missingTTL``.
+        case unsupported
+    }
+
+    /// Whether the server recently said there is no thumbnail (in memory only). An expired
+    /// entry keeps its strike count, so the next 404 escalates.
     public func isKnownMissing(itemID: String, size: Int) -> Bool {
         let key = "\(itemID)-\(size)", current = now()
+        return missing.withLock { $0[key].map { $0.expiry > current } ?? false }
+    }
+
+    /// Remembers a "no thumbnail" answer; returns how long it is remembered.
+    @discardableResult
+    public func markMissing(itemID: String, size: Int, reason: MissingReason) -> TimeInterval {
+        let key = "\(itemID)-\(size)", current = now()
         return missing.withLock { entries in
-            guard let expiry = entries[key] else { return false }
-            if expiry > current { return true }
-            entries[key] = nil
-            return false
+            if entries.count > 10_000 {
+                entries = entries.filter { $0.value.expiry > current.addingTimeInterval(-Self.missingTTL) }
+            }
+            let strikes = (entries[key]?.strikes ?? 0) + 1
+            let ttl: TimeInterval
+            switch reason {
+            case .notRendered:
+                ttl = strikes <= Self.notRenderedBackoff.count ? Self.notRenderedBackoff[strikes - 1] : Self.missingTTL
+            case .unsupported:
+                ttl = Self.missingTTL
+            }
+            entries[key] = Missing(expiry: current.addingTimeInterval(ttl), strikes: strikes)
+            return ttl
         }
     }
 
-    public func markMissing(itemID: String, size: Int) {
-        let expiry = now().addingTimeInterval(Self.missingTTL)
-        missing.withLock { entries in
-            if entries.count > 10_000 { entries = entries.filter { $0.value > expiry.addingTimeInterval(-Self.missingTTL) } }
-            entries["\(itemID)-\(size)"] = expiry
-        }
+    /// The server delivered a thumbnail (`200`/`304`): forget earlier misses.
+    public func clearMissing(itemID: String, size: Int) {
+        _ = missing.withLock { $0.removeValue(forKey: "\(itemID)-\(size)") }
     }
 }
 
@@ -220,26 +248,38 @@ public struct ThumbnailFetcher: Sendable {
     ///
     /// - A cached thumbnail is revalidated with `If-None-Match` (its ETag): `304` serves the
     ///   file, `200` replaces it.
-    /// - `404`/`415` (no thumbnail, or not rendered yet) and `400` (a folder) ⇒ `nil`, the
-    ///   cached file is dropped and the answer is remembered for ``ThumbnailCache/missingTTL``.
+    /// - `404` (not rendered yet, or never) ⇒ `nil`, the cached file is dropped, and the item
+    ///   is not asked again for 2 s, 5 s, 15 s, 60 s, 5 min, then 10 min per further 404.
+    /// - `415` (unsupported type) and `400` (a folder) ⇒ `nil`, not asked again for 10 min.
+    /// - A `200`/`304` resets the backoff.
     /// - Network errors serve a cached thumbnail when there is one.
     public func thumbnail(itemID: String, requestedSize: CGSize, client: SyncAPIClient) async throws -> Data? {
         let size = ThumbnailSize.bucket(for: requestedSize)
         if cache.isKnownMissing(itemID: itemID, size: size) { return nil }
         let cached = cache.entry(itemID: itemID, size: size)
         do {
-            guard let thumbnail = try await client.thumbnail(itemID: itemID, size: size,
-                                                             ifNoneMatch: cached?.data != nil ? cached?.etag : nil) else {
-                noThumbnail(itemID: itemID, size: size)
+            switch try await client.thumbnailResult(itemID: itemID, size: size,
+                                                    ifNoneMatch: cached?.data != nil ? cached?.etag : nil) {
+            case .thumbnail(let thumbnail):
+                cache.clearMissing(itemID: itemID, size: size)
+                cache.store(thumbnail.data, etag: thumbnail.etag, itemID: itemID, size: size)
+                return thumbnail.data
+            case .notRendered:
+                noThumbnail(itemID: itemID, size: size, reason: .notRendered)
+                return nil
+            case .unsupported:
+                noThumbnail(itemID: itemID, size: size, reason: .unsupported)
                 return nil
             }
-            cache.store(thumbnail.data, etag: thumbnail.etag, itemID: itemID, size: size)
-            return thumbnail.data
         } catch SyncAPIError.notModified {
+            cache.clearMissing(itemID: itemID, size: size)
             cache.touch(itemID: itemID, size: size)
             return cached?.data
-        } catch SyncAPIError.invalidRequest, SyncAPIError.notFound, SyncAPIError.http(status: 400, _, _) {
-            noThumbnail(itemID: itemID, size: size)
+        } catch SyncAPIError.notFound {
+            noThumbnail(itemID: itemID, size: size, reason: .notRendered)
+            return nil
+        } catch SyncAPIError.invalidRequest, SyncAPIError.http(status: 400, _, _) {
+            noThumbnail(itemID: itemID, size: size, reason: .unsupported)
             return nil
         } catch let error as SyncAPIError where error.isTransient && !error.isAuthenticationFailure {
             if let cached { return cached.data }
@@ -247,9 +287,9 @@ public struct ThumbnailFetcher: Sendable {
         }
     }
 
-    private func noThumbnail(itemID: String, size: Int) {
+    private func noThumbnail(itemID: String, size: Int, reason: ThumbnailCache.MissingReason) {
         cache.remove(itemID: itemID, size: size)
-        cache.markMissing(itemID: itemID, size: size)
+        cache.markMissing(itemID: itemID, size: size, reason: reason)
     }
 }
 
