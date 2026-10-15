@@ -9,6 +9,7 @@ import { FileIcon, fileKind, kindStyle } from '@/features/files/FileIcon';
 import { formatBytes, formatDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { shareUrls } from './api';
+import { useProbedDownload } from './download';
 
 export interface Crumb { id: string | null; name: string }
 export type ViewMode = 'list' | 'grid';
@@ -82,9 +83,10 @@ function Breadcrumbs({ trail, onNavigate }: { trail: Crumb[]; onNavigate(depth: 
 
 function DownloadIcon({ href, name }: { href: string; name: string }) {
   const { t } = useTranslation();
+  const probed = useProbedDownload();
   return (
     <Button asChild variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground">
-      <a href={href} download aria-label={t('publicShare.downloadNamed', { name })} title={t('publicShare.download')} onClick={(e) => e.stopPropagation()}>
+      <a href={href} download aria-label={t('publicShare.downloadNamed', { name })} title={t('publicShare.download')} onClick={probed}>
         <Download />
       </a>
     </Button>
@@ -218,7 +220,7 @@ export function FolderBrowser({ token, trail, items, loading, error, allowDownlo
         <Breadcrumbs trail={trail} onNavigate={onNavigate} />
         {inSubfolder && allowDownload && (
           <Button asChild variant="ghost" size="sm" className="text-muted-foreground">
-            <a href={shareUrls(token).zip(current.id)} download>
+            <a href={shareUrls(token).zip(current.id)} download title={t('publicShare.zipHint')}>
               <Download />
               <span className="max-sm:sr-only">{t('publicShare.downloadFolder')}</span>
             </a>

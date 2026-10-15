@@ -173,7 +173,7 @@ export class SharesService {
     }
     await this.prisma.shareLink.update({ where: { id: share.id }, data: { hits: { increment: 1 } } });
     return {
-      name: root.name, type: root.type, size, mime: root.type === 'file' ? mimeFor(root.name) : null,
+      id: toSyncId(root), name: root.name, type: root.type, size, mime: root.type === 'file' ? mimeFor(root.name) : null,
       ownerDisplayName: rs.owner.displayName, allowDownload: share.allowDownload,
       allowUpload: share.allowUpload && root.type === 'folder', expiresAt: share.expiresAt?.toISOString() ?? null,
     };

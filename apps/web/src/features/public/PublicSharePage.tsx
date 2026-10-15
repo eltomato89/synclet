@@ -1,4 +1,4 @@
-import type { PublicShareEntry } from '@synclet/shared';
+import type { PublicShareEntry, PublicShareInfo } from '@synclet/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarClock, Clock, Download, Eye, Link2Off, LockKeyhole, ShieldCheck, WifiOff } from 'lucide-react';
 import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useReducer, useState } from 'react';
@@ -13,7 +13,8 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { formatBytes } from '@/lib/format';
 import { cn } from '@/lib/utils';
-import { fetchShareInfo, listShareItems, PublicError, type ShareInfo, shareUrls, unlockShare } from './api';
+import { fetchShareInfo, listShareItems, PublicError, shareUrls, unlockShare } from './api';
+import { ShareErrorContext, useProbedDownload } from './download';
 import { type Crumb, FolderBrowser } from './FolderBrowser';
 import { type GateError, gateReducer, initialGate } from './gate';
 import { publicPreviewSource } from './preview';
@@ -198,8 +199,9 @@ function initials(name: string): string {
   return (first + last).toUpperCase();
 }
 
-function Hero({ token, info }: { token: string; info: ShareInfo }) {
+function Hero({ token, info }: { token: string; info: PublicShareInfo }) {
   const { t, i18n } = useTranslation();
+  const probed = useProbedDownload();
   const urls = shareUrls(token);
   const expires = info.expiresAt
     ? new Intl.DateTimeFormat(i18n.language, { dateStyle: 'long' }).format(new Date(info.expiresAt))
@@ -239,20 +241,34 @@ function Hero({ token, info }: { token: string; info: ShareInfo }) {
         </ul>
       </div>
       {info.allowDownload && (
-        <Button asChild size="lg" className="shrink-0 self-start px-4 sm:self-auto">
-          <a href={info.type === 'folder' ? urls.zip() : urls.content(info.id ?? '', { download: true })} download>
-            <Download />
-            {info.type === 'folder' ? t('publicShare.downloadAll') : t('publicShare.download')}
-          </a>
-        </Button>
+        <div className="flex shrink-0 flex-col items-start gap-1.5 sm:items-end">
+          {info.type === 'folder' ? (
+            <>
+              <Button asChild size="lg" className="px-4">
+                <a href={urls.zip()} download>
+                  <Download />
+                  {t('publicShare.downloadAll')}
+                </a>
+              </Button>
+              <p className="text-xs text-muted-foreground">{t('publicShare.zipHint')}</p>
+            </>
+          ) : (
+            <Button asChild size="lg" className="px-4">
+              <a href={urls.content(info.id, { download: true })} download onClick={probed}>
+                <Download />
+                {t('publicShare.download')}
+              </a>
+            </Button>
+          )}
+        </div>
       )}
     </section>
   );
 }
 
-function FileShare({ token, info }: { token: string; info: ShareInfo }) {
+function FileShare({ token, info }: { token: string; info: PublicShareInfo }) {
   const source = useMemo(
-    () => publicPreviewSource(token, { id: info.id ?? '', name: info.name, size: info.size, mime: info.mime }, info.allowDownload),
+    () => publicPreviewSource(token, { id: info.id, name: info.name, size: info.size, mime: info.mime }, info.allowDownload),
     [token, info],
   );
   const tall = !!viewers[source.kind] && source.kind !== 'audio';
@@ -265,7 +281,7 @@ function FileShare({ token, info }: { token: string; info: ShareInfo }) {
 
 interface NavState { trail?: Crumb[] }
 
-function FolderShare({ token, info, onShareError }: { token: string; info: ShareInfo; onShareError(e: unknown): void }) {
+function FolderShare({ token, info, onShareError }: { token: string; info: PublicShareInfo; onShareError(e: unknown): void }) {
   const { t } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
@@ -423,5 +439,5 @@ export function PublicSharePage() {
       );
       break;
   }
-  return <Frame>{content}</Frame>;
+  return <ShareErrorContext.Provider value={onShareError}><Frame>{content}</Frame></ShareErrorContext.Provider>;
 }

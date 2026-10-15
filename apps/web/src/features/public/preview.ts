@@ -72,8 +72,8 @@ export function previewKind(name: string, mime: string | null): PreviewKind {
 export const isRasterSafe = (name: string) => RASTER.has(ext(name));
 
 /**
- * Source of a file inside a public share. `entry.id` is its sync id; `''` addresses the shared
- * item itself (file shares). `hasThumbnail: undefined` means unknown: the thumbnail is tried.
+ * Source of a file inside a public share. `entry.id` is its sync id (for a file share
+ * `PublicShareInfo.id`). `hasThumbnail: undefined` means unknown: the thumbnail is tried.
  */
 export function publicPreviewSource(
   token: string,

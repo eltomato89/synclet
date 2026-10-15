@@ -1,4 +1,5 @@
-import { PublicError, type ShareInfo } from './api';
+import type { PublicShareInfo } from '@synclet/shared';
+import { PublicError } from './api';
 
 /**
  * State machine of the share page, from opening the link to showing its content.
@@ -16,12 +17,12 @@ export type GateError = 'wrong_password' | 'rate_limited' | 'busy' | 'network' |
 export type GateState =
   | { status: 'loading' }
   | { status: 'locked'; unlocking: boolean; error: GateError | null; retryAt: number | null; relock: boolean }
-  | { status: 'open'; info: ShareInfo }
+  | { status: 'open'; info: PublicShareInfo }
   | { status: 'gone'; reason: 'not_found' | 'expired' }
   | { status: 'failed'; error: GateError; retryAt: number | null };
 
 export type GateEvent =
-  | { type: 'loaded'; info: ShareInfo }
+  | { type: 'loaded'; info: PublicShareInfo }
   /** Any failed request of the page (info, listing, preview metadata). */
   | { type: 'failed'; error: unknown; now: number }
   | { type: 'unlock' }

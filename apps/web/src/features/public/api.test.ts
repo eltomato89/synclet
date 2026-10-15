@@ -24,10 +24,6 @@ describe('shareUrls', () => {
     expect(u.zip('d_2')).toBe(`${base}/zip?folder=d_2`);
   });
 
-  it('addresses the shared item itself with an empty id (file shares)', () => {
-    expect(u.content('', { download: true })).toBe(`${base}/items//content?download=1`);
-  });
-
   it('encodes ids, names and folders', () => {
     expect(u.content('a/../b')).toBe(`${base}/items/a%2F..%2Fb/content`);
     expect(u.upload('Bericht & Plan #1.pdf')).toBe(`${base}/upload?name=Bericht+%26+Plan+%231.pdf`);

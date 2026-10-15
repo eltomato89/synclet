@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { formatBytes } from '@/lib/format';
+import { useProbedDownload } from './download';
 import type { PreviewSource } from './preview';
 import { PreviewStage } from './PreviewViewer';
 
@@ -18,6 +19,7 @@ export function QuickLook({ sources, index, onIndex, onClose }: {
   onClose(): void;
 }) {
   const { t, i18n } = useTranslation();
+  const probed = useProbedDownload();
   const source = index === null ? null : sources[index];
   const count = sources.length;
   const go = (delta: number) => { if (index !== null && count > 1) onIndex((index + delta + count) % count); };
@@ -54,7 +56,7 @@ export function QuickLook({ sources, index, onIndex, onClose }: {
               </div>
               {source.downloadUrl && (
                 <Button asChild variant="outline" size="sm">
-                  <a href={source.downloadUrl} download>
+                  <a href={source.downloadUrl} download onClick={probed}>
                     <Download />
                     <span className="max-sm:sr-only">{t('publicShare.download')}</span>
                   </a>

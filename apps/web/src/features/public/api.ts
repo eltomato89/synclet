@@ -21,16 +21,10 @@ export class PublicError extends Error {
   }
 }
 
-/**
- * `PublicShareInfo` as the page reads it. `id` (the shared item's sync id) is not part of the
- * server response yet; while it is missing, the shared file of a file share is addressed with
- * an empty item id (`items//content`), which the server resolves to the shared item itself.
- */
-export type ShareInfo = PublicShareInfo & { id?: string };
 
 const enc = encodeURIComponent;
 
-/** Every URL of one share. Item ids are sync ids (`f_…` / `d_…`); `''` means the shared item. */
+/** Every URL of one share. Item ids are sync ids (`f_…` / `d_…`; `PublicShareInfo.id` for the shared item). */
 export function shareUrls(token: string) {
   const base = `/api/public/shares/${enc(token)}`;
   const item = (id: string) => `${base}/items/${enc(id)}`;
@@ -81,8 +75,8 @@ async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
-export function fetchShareInfo(token: string, signal?: AbortSignal): Promise<ShareInfo> {
-  return request<ShareInfo>(shareUrls(token).info, { signal });
+export function fetchShareInfo(token: string, signal?: AbortSignal): Promise<PublicShareInfo> {
+  return request<PublicShareInfo>(shareUrls(token).info, { signal });
 }
 
 /** Unlocks a password-protected share: on success the server sets the unlock cookie. */

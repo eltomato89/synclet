@@ -9,7 +9,7 @@ const BASE = `/api/public/shares/${TOKEN}`;
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 const folderInfo = {
-  name: 'Urlaub 2026', type: 'folder', size: 4096, mime: null, ownerDisplayName: 'Jens Köhler',
+  id: 'd_root', name: 'Urlaub 2026', type: 'folder', size: 4096, mime: null, ownerDisplayName: 'Jens Köhler',
   allowDownload: true, allowUpload: true, expiresAt: null,
 };
 const entries = [
@@ -101,14 +101,14 @@ describe('PublicSharePage', () => {
 
   it('shows a file share without download button when downloads are off, and never renders SVG content inline', async () => {
     const urls = mockServer((url) => (url === BASE
-      ? json(200, { ...folderInfo, name: 'logo.svg', type: 'file', mime: 'image/svg+xml', allowDownload: false, allowUpload: false })
+      ? json(200, { ...folderInfo, id: 'f_svg', name: 'logo.svg', type: 'file', mime: 'image/svg+xml', allowDownload: false, allowUpload: false })
       : undefined));
     renderAt(`/s/${TOKEN}`);
     expect(await screen.findByRole('heading', { name: 'logo.svg' })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Download/ })).toBeNull();
     expect(screen.getByText('View only')).toBeInTheDocument();
     const img = screen.getByRole('img', { name: 'Preview of logo.svg' });
-    expect(img).toHaveAttribute('src', `${BASE}/items//thumbnail?size=1024`);
+    expect(img).toHaveAttribute('src', `${BASE}/items/f_svg/thumbnail?size=1024`);
     await act(async () => { fireEvent.error(img); });
     // No thumbnail: fall back to the no-preview panel, never to the SVG itself.
     expect(screen.queryByRole('img', { name: 'Preview of logo.svg' })).toBeNull();

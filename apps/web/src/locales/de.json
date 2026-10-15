@@ -256,6 +256,14 @@
         "network": "Die Verbindung ist während des Uploads abgebrochen.",
         "unknown": "Der Upload hat nicht geklappt. Versuch es erneut."
       }
+    },
+    "zipHint": "Falls der Download nicht startet, bitte später erneut versuchen.",
+    "downloadErrors": {
+      "forbidden": "Der Besitzer hat Downloads für diesen Link deaktiviert.",
+      "notFound": "Diese Datei ist nicht mehr verfügbar.",
+      "rateLimited": "Gerade laufen zu viele Downloads. Versuch es gleich noch einmal.",
+      "network": "Keine Verbindung zum Server. Prüfe deine Internetverbindung und versuch es erneut.",
+      "unknown": "Der Download hat nicht geklappt. Versuch es erneut."
     }
   }
 }

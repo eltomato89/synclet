@@ -81,6 +81,8 @@ export interface CreateShareInput {
   allowDownload?: boolean; allowUpload?: boolean;
 }
 export interface PublicShareInfo {
+  /** Sync id of the shared item (`f_…` / `d_…`): the `:itemId` of a file share's content/thumbnail. */
+  id: string;
   name: string; type: 'folder' | 'file'; size: number; mime: string | null;
   ownerDisplayName: string; allowDownload: boolean; allowUpload: boolean; expiresAt: string | null;
 }

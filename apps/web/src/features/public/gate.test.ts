@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { PublicError, type ShareInfo } from './api';
+import type { PublicShareInfo } from '@synclet/shared';
+import { PublicError } from './api';
 import { gateReducer, type GateState, initialGate } from './gate';
 
-const info: ShareInfo = {
-  name: 'Urlaub', type: 'folder', size: 10, mime: null, ownerDisplayName: 'Jens', allowDownload: true, allowUpload: false, expiresAt: null,
+const info: PublicShareInfo = {
+  id: 'd_1', name: 'Urlaub', type: 'folder', size: 10, mime: null, ownerDisplayName: 'Jens', allowDownload: true, allowUpload: false, expiresAt: null,
 };
 const err = (status: number, code: string, retryAfter: number | null = null) => new PublicError(status, code, code, retryAfter);
 const NOW = 1_000_000;

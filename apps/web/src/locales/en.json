@@ -256,6 +256,14 @@
         "network": "The connection was lost during the upload.",
         "unknown": "The upload didn't work. Try again."
       }
+    },
+    "zipHint": "If the download doesn't start, try again later.",
+    "downloadErrors": {
+      "forbidden": "The owner has turned off downloads for this link.",
+      "notFound": "This file isn't available anymore.",
+      "rateLimited": "Too many downloads right now. Try again in a moment.",
+      "network": "No connection to the server. Check your internet connection and try again.",
+      "unknown": "The download didn't work. Try again."
     }
   }
 }

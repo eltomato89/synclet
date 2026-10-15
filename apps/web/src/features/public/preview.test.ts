@@ -29,7 +29,7 @@ describe('publicPreviewSource', () => {
 
   it('has no thumbnail when the server says there is none, and tries it when unknown', () => {
     expect(publicPreviewSource(TOKEN, { ...entry, hasThumbnail: false }, true).thumbnailUrl(256)).toBeNull();
-    expect(publicPreviewSource(TOKEN, { ...entry, id: '', hasThumbnail: undefined }, true).thumbnailUrl(256)).toBe(`${base}/items//thumbnail?size=256`);
+    expect(publicPreviewSource(TOKEN, { ...entry, id: 'f_9', hasThumbnail: undefined }, true).thumbnailUrl(256)).toBe(`${base}/items/f_9/thumbnail?size=256`);
   });
 
   it('never marks SVG as safe to render from its content URL', () => {

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { FileIcon, fileKind, kindStyle } from '@/features/files/FileIcon';
 import { formatBytes } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { useProbedDownload } from './download';
 import type { PreviewKind, PreviewSource } from './preview';
 
 /** Props of every viewer. A viewer calls `onUnavailable` when it cannot show the file after all. */
@@ -94,6 +95,7 @@ export const viewers: Partial<Record<PreviewKind, Viewer>> = {
 /** Shown when there is no viewer for a file, or the viewer gave up. */
 export function NoPreview({ source, className }: { source: PreviewSource; className?: string }) {
   const { t, i18n } = useTranslation();
+  const probed = useProbedDownload();
   const kind = fileKind({ type: 'file', name: source.name, mime: source.mime });
   return (
     <div className={cn('flex max-w-sm flex-col items-center text-center', className)}>
@@ -107,7 +109,7 @@ export function NoPreview({ source, className }: { source: PreviewSource; classN
       </p>
       {source.downloadUrl && (
         <Button asChild className="mt-5">
-          <a href={source.downloadUrl} download>
+          <a href={source.downloadUrl} download onClick={probed}>
             <Download />
             {t('publicShare.download')}
           </a>
