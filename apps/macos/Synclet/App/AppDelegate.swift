@@ -58,6 +58,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Logger.app.error("restoring domains failed: \(String(describing: error), privacy: .public)")
             }
             accounts.reload()
+            // One event stream per account: the extension drains `/changes` on every wake-up.
+            accounts.startMonitoring()
         }
         #if DEBUG
         if runDebugArguments(after: restore) { return }
@@ -101,6 +103,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
     #endif
+
+    func applicationWillTerminate(_ notification: Notification) {
+        accounts.stopMonitoring()
+    }
 
     /// `synclet://` URLs outside a running browser login (the session receives its own redirect).
     func application(_ application: NSApplication, open urls: [URL]) {

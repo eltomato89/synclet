@@ -44,6 +44,11 @@ final class AccountsModel {
     private(set) var entries: [AccountEntry] = []
     /// Last error of an action (open in Finder …), shown by the app.
     var lastActionError: String?
+    /// Live-change monitor per account key (connection state and last sync for the menu).
+    /// Empty until ``startMonitoring(factory:)``.
+    private(set) var monitors: [String: ChangeMonitor] = [:]
+    /// Builds an account's monitor; set by ``startMonitoring(factory:)``.
+    @ObservationIgnored private var makeMonitor: ((StoredAccount) -> ChangeMonitor)?
 
     @ObservationIgnored let manager: AccountManager
     @ObservationIgnored let finder: FinderIntegrating
@@ -64,6 +69,9 @@ final class AccountsModel {
 
     func entry(key: String) -> AccountEntry? { entries.first { $0.id == key } }
 
+    /// The live-change monitor of an account (`nil` before ``startMonitoring(factory:)``).
+    func monitor(key: String) -> ChangeMonitor? { monitors[key] }
+
     // MARK: - List
 
     /// Reads the accounts from the store and the auth-failure markers of the extension.
@@ -72,6 +80,52 @@ final class AccountsModel {
             let failed = AuthFailureSignal.pending(container: container, key16: account.key16) != nil
             let missingToken = manager.credentials.token(for: account.key) == nil
             return AccountEntry(account: account, status: failed || missingToken ? .needsLogin : .ok)
+        }
+        syncMonitors()
+    }
+
+    // MARK: - Live changes
+
+    /// Starts one ``ChangeMonitor`` per account (app launch; tests pass a factory). Accounts
+    /// added later get theirs in ``reload()``.
+    func startMonitoring(factory: ((StoredAccount) -> ChangeMonitor)? = nil) {
+        makeMonitor = factory ?? { [weak self, manager] account in
+            ChangeMonitor.live(account: account, manager: manager, container: manager.accounts.directory) {
+                self?.processAuthFailures()
+            }
+        }
+        syncMonitors()
+    }
+
+    /// Stops all monitors (app end).
+    func stopMonitoring() {
+        for monitor in monitors.values { monitor.stop() }
+        monitors = [:]
+        makeMonitor = nil
+    }
+
+    /// One monitor per account: new accounts start theirs (or wait for sign-in), removed
+    /// accounts stop theirs, accounts needing sign-in suspend. Leaving `.authFailed` is
+    /// explicit (``add(server:tokens:)``), so a rejected token never reconnects in a loop.
+    private func syncMonitors() {
+        guard let makeMonitor else { return }
+        let keys = Set(entries.map(\.id))
+        for (key, monitor) in monitors where !keys.contains(key) {
+            monitor.stop()
+            monitors[key] = nil
+        }
+        for entry in entries {
+            let monitor: ChangeMonitor
+            if let existing = monitors[entry.id] {
+                monitor = existing
+            } else {
+                monitor = makeMonitor(entry.account)
+                monitors[entry.id] = monitor
+                if entry.status == .ok { monitor.start() }
+            }
+            if entry.status == .needsLogin, monitor.state != .authFailed {
+                monitor.suspendForSignIn()
+            }
         }
     }
 
@@ -89,7 +143,10 @@ final class AccountsModel {
         let wasEmpty = manager.accounts.all().isEmpty
         let stored = try await manager.add(server: server, tokens: tokens)
         AuthFailureSignal.clear(container: container, key16: stored.key16)
+        let existingMonitor = monitors[stored.key]
         reload()
+        // A monitor from before the sign-in reconnects with the new token (also out of `.authFailed`).
+        existingMonitor?.restart()
         if wasEmpty { onFirstAccountAdded() }
         // Let the system retry what failed while the token was rejected (always: a rejected
         // token may not have been reported yet when the user signs in again).
@@ -106,6 +163,7 @@ final class AccountsModel {
     /// Signs out: revokes the device (best effort), removes the domain, token and state.
     func signOut(key: String) async {
         let key16 = AccountStore.key16(for: key)
+        monitors[key]?.stop()
         await manager.remove(key: key)
         AuthFailureSignal.clear(container: container, key16: key16)
         reload()

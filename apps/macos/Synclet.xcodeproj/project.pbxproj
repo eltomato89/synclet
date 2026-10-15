@@ -15,6 +15,7 @@
 		1F4D23B1BF33782B565492D3 /* LoginModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25E1633E6ACB75BECC4645B5 /* LoginModel.swift */; };
 		2BACE763045072E41D574C9D /* AccountsModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DEFD96AA4B8F7CC31E78232 /* AccountsModelTests.swift */; };
 		381D9332E767282701B8AE68 /* SignallingEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0549D1707523ADE628BAE012 /* SignallingEnumerator.swift */; };
+		386D65F16AD4BFE59389D3CA /* ChangeMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDA45935F8FDAC9C7C8FC8D5 /* ChangeMonitor.swift */; };
 		448E51CE094CEC5AB88F2FBD /* SyncletKit in Frameworks */ = {isa = PBXBuildFile; productRef = 8FC63EFAA00022D3F750C6C8 /* SyncletKit */; };
 		4A1E92D64853EC51BA0C07CE /* MenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A53080418DFB6AA2F6F65AA3 /* MenuView.swift */; };
 		53BC004437864D6975D62982 /* AuthFailureSignal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5285317D0F802AD01B1EA5B2 /* AuthFailureSignal.swift */; };
@@ -28,6 +29,7 @@
 		A940851430FF07AF09FE196A /* TestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEA2F48FC6AB5EA7576D6295 /* TestSupport.swift */; };
 		C61BDD75B35DCAD3D4413E2E /* AuthFailureSignal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5285317D0F802AD01B1EA5B2 /* AuthFailureSignal.swift */; };
 		D2AE771EC377AC5329F09DEC /* SyncletFileProvider.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 10A946F058FF4E8C71C14E8B /* SyncletFileProvider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		EEA44006D1FCA7BF0F7DBD0F /* ChangeMonitorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C72D8D5CBEEA1E36AFC7D73 /* ChangeMonitorTests.swift */; };
 		F122E0681201886798E85226 /* AccountsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A82B142571A22CAECE450756 /* AccountsModel.swift */; };
 		FAF7E7D7833704D492C732E0 /* ExtensionSupportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 695619BB11A1624ED456C238 /* ExtensionSupportTests.swift */; };
 		FF2AE58D1D4DBDEDC0404970 /* AccountsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6168701B33DB1A48BB8DBA61 /* AccountsSettingsView.swift */; };
@@ -67,6 +69,7 @@
 /* Begin PBXFileReference section */
 		0549D1707523ADE628BAE012 /* SignallingEnumerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignallingEnumerator.swift; sourceTree = "<group>"; };
 		086E1EDA4C761957CD43E37C /* Synclet.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Synclet.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0C72D8D5CBEEA1E36AFC7D73 /* ChangeMonitorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChangeMonitorTests.swift; sourceTree = "<group>"; };
 		10A946F058FF4E8C71C14E8B /* SyncletFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SyncletFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		1134399FB18B2F00CD3A86B1 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		1BD7CA4D5152ACE00B194079 /* SyncletKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SyncletKit; path = ../apple/SyncletKit; sourceTree = SOURCE_ROOT; };
@@ -88,6 +91,7 @@
 		A82B142571A22CAECE450756 /* AccountsModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountsModel.swift; sourceTree = "<group>"; };
 		BDAC27E1128135FBE8D78967 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
 		BEA2F48FC6AB5EA7576D6295 /* TestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestSupport.swift; sourceTree = "<group>"; };
+		CDA45935F8FDAC9C7C8FC8D5 /* ChangeMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChangeMonitor.swift; sourceTree = "<group>"; };
 		D134E3930D82ED2895EDC4D7 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		D4A29675CD5201E8AD9E062E /* FileProviderExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderExtension.swift; sourceTree = "<group>"; };
 		E7B95538C4E2F3B17506ED94 /* LoginModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginModelTests.swift; sourceTree = "<group>"; };
@@ -191,6 +195,7 @@
 			children = (
 				A82B142571A22CAECE450756 /* AccountsModel.swift */,
 				9F21569AA77C665C13230E0D /* BrowserLogin.swift */,
+				CDA45935F8FDAC9C7C8FC8D5 /* ChangeMonitor.swift */,
 				25E1633E6ACB75BECC4645B5 /* LoginModel.swift */,
 				98CDF2ADD7967B204D325FDF /* SystemIntegration.swift */,
 			);
@@ -220,6 +225,7 @@
 			isa = PBXGroup;
 			children = (
 				9DEFD96AA4B8F7CC31E78232 /* AccountsModelTests.swift */,
+				0C72D8D5CBEEA1E36AFC7D73 /* ChangeMonitorTests.swift */,
 				695619BB11A1624ED456C238 /* ExtensionSupportTests.swift */,
 				E7B95538C4E2F3B17506ED94 /* LoginModelTests.swift */,
 				BEA2F48FC6AB5EA7576D6295 /* TestSupport.swift */,
@@ -355,6 +361,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				2BACE763045072E41D574C9D /* AccountsModelTests.swift in Sources */,
+				EEA44006D1FCA7BF0F7DBD0F /* ChangeMonitorTests.swift in Sources */,
 				FAF7E7D7833704D492C732E0 /* ExtensionSupportTests.swift in Sources */,
 				190ED6BF5373EDBCB3FA9A63 /* LoginModelTests.swift in Sources */,
 				A940851430FF07AF09FE196A /* TestSupport.swift in Sources */,
@@ -370,6 +377,7 @@
 				693120E912C16A0675CEE8B3 /* AppDelegate.swift in Sources */,
 				C61BDD75B35DCAD3D4413E2E /* AuthFailureSignal.swift in Sources */,
 				03CD7451B882E670BE53CEEF /* BrowserLogin.swift in Sources */,
+				386D65F16AD4BFE59389D3CA /* ChangeMonitor.swift in Sources */,
 				1F4D23B1BF33782B565492D3 /* LoginModel.swift in Sources */,
 				9B05458DB28CD8440CC9CE2F /* LoginView.swift in Sources */,
 				4A1E92D64853EC51BA0C07CE /* MenuView.swift in Sources */,
