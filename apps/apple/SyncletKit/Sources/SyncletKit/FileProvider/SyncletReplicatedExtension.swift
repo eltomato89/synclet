@@ -337,12 +337,13 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
         }
     }
 
-    /// Core of `modifyItem`: rename/move via PATCH, content via PUT with `If-Match`.
+    /// Core of `modifyItem`: rename/move via PATCH, content via ``TransferEngine/replace(file:itemId:baseEtag:modifiedAt:progress:resumeKey:)``
+    /// (`PUT` with `If-Match` up to 32 MiB, resumable tus replace above).
     ///
     /// - Root container and space folders: renaming/moving/new content →
     ///   `CocoaError(.featureUnsupported)`; other fields are ignored.
     /// - Moving into the root container → ``SpaceLayoutError/readOnlyTopLevel``.
-    /// - `412` on PUT: the local content is uploaded as a conflict copy
+    /// - `412` (PUT, or tus replace at creation or completion): the local content is uploaded as a conflict copy
     ///   `"<base> (Konflikt <device> <date>).<ext>"` into the same folder and the server
     ///   state is returned (`shouldFetchContent`).
     /// - `404` on PUT (deleted remotely, changed locally): the local content is uploaded as
@@ -428,13 +429,14 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
                 Log.fileProvider.info("conflict on \(id, privacy: .public): uploading copy \(copyName, privacy: .private)")
                 let parentID = server.parentId ?? newParent ?? (try? layout.serverParentId(for: item.parentItemIdentifier))
                     ?? SyncItem.rootID
-                // Keyed by the item, not the name: the copy's name contains the minute, so a
-                // retry after the minute boundary still resumes the same upload.
+                // Keyed by the item, not the name, and `nameMayChange`: the copy's name contains
+                // the minute, so a retry after the minute boundary resumes the same upload and
+                // keeps the name of its first attempt.
                 _ = try await transfers.upload(file: newContents, newIn: parentID, name: copyName,
                                                modifiedAt: modifiedAt, progress: nil,
                                                resumeKey: Self.resumeKey(NSFileProviderItemIdentifier("conflict:" + item.itemIdentifier.rawValue),
                                                                          contentVersion: baseVersion.contentVersion),
-                                               reuseIdentical: false)
+                                               reuseIdentical: false, nameMayChange: true)
                 signalWorkingSet()
                 return (FileProviderItem(server, layout: layout), true)
             } catch SyncAPIError.notFound {

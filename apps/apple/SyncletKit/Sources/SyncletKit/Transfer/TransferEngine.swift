@@ -3,13 +3,14 @@ import Foundation
 
 /// Uploads file content (SYNC_API.md §6.3, §6.4, §7; design spec §2.6).
 ///
-/// - New files up to `threshold` (32 MiB): `POST /items/upload` in one request.
-/// - New files above: tus 1.0 in chunks of ``TusUploader/chunkSize`` (16 MiB), resumable
-///   across calls and engine instances through the ``UploadStateStore``.
-/// - Replacing content: always `PUT /items/:id/content` with `If-Match` (any size up to
-///   `maxUploadBytes`). The tus endpoint of the contract only creates new files (§7 has no
-///   replace metadata), so a replace via tus would publish a second file instead of a new
-///   version; a `412` surfaces as ``SyncAPIError/conflict(current:)``.
+/// - Up to `threshold` (32 MiB): one request – `POST /items/upload` for new files,
+///   `PUT /items/:id/content` with `If-Match` for replacements.
+/// - Above: tus 1.0 in chunks of ``TusUploader/chunkSize`` (16 MiB), resumable across
+///   calls and engine instances through the ``UploadStateStore``. Replacements send
+///   `itemId` + `ifMatch` (§7); `ifMatch: *` is not supported by tus, so such a replace
+///   stays on `PUT`.
+/// - A stale base etag (`412`, at creation or at completion of a tus replace, or on `PUT`)
+///   surfaces as ``SyncAPIError/conflict(current:)``; the replace is never retried blindly.
 ///
 /// Duplicates: an existing file of the same name with identical content (size + sha256)
 /// is reused instead of uploading again. When a resumed upload is gone on the server
@@ -61,9 +62,12 @@ public final class TransferEngine: Sendable {
     ///     default: derived from the target.
     ///   - reuseIdentical: `false` ⇒ never reuse an existing file (conflict copies); a
     ///     collision always gets a free name.
+    ///   - nameMayChange: the name is derived from something volatile (a conflict copy's name
+    ///     contains the minute): a stored upload with the same key and parent resumes even
+    ///     when `name` differs, and keeps the name of its first attempt.
     public func upload(file: URL, newIn parentId: String, name: String, modifiedAt: Date?,
                        progress: Progress? = nil, resumeKey: String? = nil,
-                       reuseIdentical: Bool = true) async throws -> SyncItem {
+                       reuseIdentical: Bool = true, nameMayChange: Bool = false) async throws -> SyncItem {
         let info = try Self.fileInfo(file)
         progress?.totalUnitCount = info.size
         if info.size <= Int64(threshold) {
@@ -77,17 +81,31 @@ public final class TransferEngine: Sendable {
         let key = resumeKey ?? UploadStateStore.key(itemIdentifier: "new:\(parentId)/\(name)", contentVersion: "")
         let target = TusUploadMetadata(name: name, parentId: parentId, onConflict: .rename, modifiedAt: modifiedAt)
         return try await uploadTus(file: file, info: info, target: target, key: key, reuseIdentical: reuseIdentical,
-                                   progress: progress)
+                                   nameMayChange: nameMayChange, progress: progress)
     }
 
-    /// Replaces the content of `itemId`, based on `baseEtag` (`*` = any version).
+    /// Replaces the content of `itemId`, based on `baseEtag` (`*` = any version; only via `PUT`).
+    ///
+    /// - Parameter resumeKey: identifies a tus replace across calls; default: item id + base etag.
     /// - Throws: ``SyncAPIError/conflict(current:)`` when the server has another version.
     public func replace(file: URL, itemId: String, baseEtag: String, modifiedAt: Date?,
-                        progress: Progress? = nil) async throws -> SyncItem {
+                        progress: Progress? = nil, resumeKey: String? = nil) async throws -> SyncItem {
         let info = try Self.fileInfo(file)
         progress?.totalUnitCount = info.size
-        return try await api.replaceContent(itemID: itemId, from: file, ifMatch: baseEtag,
-                                            modifiedAt: modifiedAt, progress: progress)
+        let etag = SyncAPIClient.unquoted(baseEtag)
+        guard info.size > Int64(threshold), Self.isVersionEtag(etag) else {
+            return try await api.replaceContent(itemID: itemId, from: file, ifMatch: baseEtag,
+                                                modifiedAt: modifiedAt, progress: progress)
+        }
+        let key = resumeKey ?? UploadStateStore.key(itemIdentifier: "replace:\(itemId)", contentVersion: etag)
+        let target = TusUploadMetadata.replace(itemId: itemId, ifMatch: etag, modifiedAt: modifiedAt)
+        return try await uploadTus(file: file, info: info, target: target, key: key, reuseIdentical: false,
+                                   nameMayChange: false, progress: progress)
+    }
+
+    /// `v<n>` – the only etag form tus accepts for `ifMatch` (§7).
+    static func isVersionEtag(_ etag: String) -> Bool {
+        etag.hasPrefix("v") && Int(etag.dropFirst()) != nil
     }
 
     // MARK: - Single request
@@ -108,25 +126,36 @@ public final class TransferEngine: Sendable {
 
     // MARK: - tus
 
-    private func uploadTus(file: URL, info: FileInfo, target: TusUploadMetadata, key: String, reuseIdentical: Bool,
-                           progress: Progress?) async throws -> SyncItem {
+    /// Result of the PATCH loop.
+    private struct Completion {
+        var item: SyncItem
+        /// The item is the completion's own JSON body (its etag is our published version).
+        var fromResponse: Bool
+        /// Found after the upload was gone and already matched by size + sha256.
+        var matched: Bool
+    }
+
+    private func uploadTus(file: URL, info: FileInfo, target requested: TusUploadMetadata, key: String,
+                           reuseIdentical: Bool, nameMayChange: Bool, progress: Progress?) async throws -> SyncItem {
         let localHash = LazyHash(file: file)
+        var target = requested
         var upload: (url: URL, offset: Int64)?
         var resumed = false
 
         // 1. Resume a stored upload when the local file and the target are unchanged.
         if let state = stateStore.load(key: key) {
             if state.fileSize == info.size, state.length == info.size, state.fileMtime == info.mtime,
-               state.target == target {
+               Self.sameTarget(state.target, requested, nameMayChange: nameMayChange) {
+                // The server publishes with the stored metadata (N2: the first attempt's name).
+                target = state.target
                 do {
                     upload = (state.uploadURL, try await tus.head(state.uploadURL).offset)
                     resumed = true
                     Log.transfer.info("resuming upload at \(upload?.offset ?? 0, privacy: .public)/\(info.size, privacy: .public)")
                 } catch let error as SyncAPIError where Self.isUploadGone(error) {
                     stateStore.remove(key: key)
-                    if let published = try await findIdentical(target: target, size: info.size, hash: localHash,
-                                                               allowSuffixed: true) {
-                        Log.transfer.info("upload gone on the server, found the published file")
+                    if let published = try await publishedAfterGone(target: target, size: info.size, hash: localHash) {
+                        Log.transfer.info("upload gone on the server, found the published content")
                         progress?.completedUnitCount = info.size
                         return published
                     }
@@ -141,20 +170,23 @@ public final class TransferEngine: Sendable {
 
         var restarts = 0
         while true {
-            // 2. Start a new upload (reusing an identical existing file of the same name).
+            // 2. Start a new upload (a new file may reuse an identical existing file of the same name).
             if upload == nil {
-                if reuseIdentical, let existing = try await findIdentical(target: target, size: info.size, hash: localHash,
-                                                          allowSuffixed: false) {
+                if reuseIdentical, case .create(let name, let parentId, _) = target.target,
+                   let existing = try await findIdentical(name: name, parentId: parentId, modifiedAt: target.modifiedAt,
+                                                          size: info.size, hash: localHash, allowSuffixed: false) {
                     progress?.completedUnitCount = info.size
                     return existing
                 }
+                // A stale base etag of a replace ⇒ 412 here, before any byte is sent.
                 switch try await tus.create(length: info.size, metadata: target) {
                 case .completed(let item):
                     progress?.completedUnitCount = info.size
                     return item
                 case .created(let url):
                     try stateStore.save(UploadState(uploadURL: url, length: info.size, fileSize: info.size,
-                                                    fileMtime: info.mtime, target: target, createdAt: now()),
+                                                    fileMtime: info.mtime, target: target, baseEtag: target.ifMatch,
+                                                    createdAt: now()),
                                         key: key)
                     upload = (url, 0)
                 }
@@ -163,16 +195,29 @@ public final class TransferEngine: Sendable {
 
             // 3. Send the chunks.
             do {
-                let item = try await sendChunks(file: file, info: info, url: current.url, offset: current.offset,
-                                                key: key, target: target, hash: localHash, progress: progress)
+                let completion = try await sendChunks(file: file, info: info, url: current.url, offset: current.offset,
+                                                      key: key, target: target, hash: localHash, progress: progress)
                 stateStore.remove(key: key)
-                let verified = try await verify(item, file: file, info: info, target: target, resumed: resumed, hash: localHash)
+                let item = completion.matched ? completion.item
+                    : try await verify(completion.item, fromResponse: completion.fromResponse, file: file, info: info,
+                                       target: target, resumed: resumed, hash: localHash)
                 progress?.completedUnitCount = info.size
-                return verified
+                return item
+            } catch SyncAPIError.conflict(let current) {
+                // 412 at completion of a replace: the server dropped the upload and left the
+                // file untouched – the caller takes the conflict path. Never replace again here.
+                stateStore.remove(key: key)
+                throw SyncAPIError.conflict(current: current)
             } catch let error as SyncAPIError where Self.isUploadGone(error) && restarts == 0 {
-                // Expired (410) or unknown (404) while patching: start over once.
+                // Expired (410) or unknown (404) while patching: start over once (a replace
+                // first checks what the server has now).
                 restarts += 1
                 stateStore.remove(key: key)
+                if case .replace = target.target,
+                   let published = try await publishedAfterGone(target: target, size: info.size, hash: localHash) {
+                    progress?.completedUnitCount = info.size
+                    return published
+                }
                 upload = nil
                 resumed = false
                 Log.transfer.info("upload gone while patching, starting over")
@@ -180,9 +225,19 @@ public final class TransferEngine: Sendable {
         }
     }
 
+    /// Stored and requested targets describe the same upload. With `nameMayChange` a new
+    /// file's name may differ (same parent, policy and mtime).
+    static func sameTarget(_ stored: TusUploadMetadata, _ requested: TusUploadMetadata, nameMayChange: Bool) -> Bool {
+        if stored == requested { return true }
+        guard nameMayChange, stored.modifiedAt == requested.modifiedAt,
+              case .create(_, let storedParent, let storedPolicy) = stored.target,
+              case .create(_, let parent, let policy) = requested.target else { return false }
+        return storedParent == parent && storedPolicy == policy
+    }
+
     /// PATCH loop from `offset` to the end. Returns the published item.
     private func sendChunks(file: URL, info: FileInfo, url: URL, offset start: Int64, key: String,
-                            target: TusUploadMetadata, hash: LazyHash, progress: Progress?) async throws -> SyncItem {
+                            target: TusUploadMetadata, hash: LazyHash, progress: Progress?) async throws -> Completion {
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
         var offset = start
@@ -205,8 +260,8 @@ public final class TransferEngine: Sendable {
 
             do {
                 switch try await tus.patch(url, offset: offset, chunk: chunk) {
-                case .completed(let item):
-                    return item
+                case .completed(let item, let fromResponse):
+                    return Completion(item: item, fromResponse: fromResponse, matched: false)
                 case .offset(let next):
                     offset = next
                     busy = 0
@@ -220,9 +275,8 @@ public final class TransferEngine: Sendable {
                 } catch let error as SyncAPIError where Self.isUploadGone(error) {
                     // The concurrent request published it and the server dropped the upload.
                     stateStore.remove(key: key)
-                    if let published = try await findIdentical(target: target, size: info.size, hash: hash,
-                                                               allowSuffixed: true) {
-                        return published
+                    if let published = try await publishedAfterGone(target: target, size: info.size, hash: hash) {
+                        return Completion(item: published, fromResponse: false, matched: true)
                     }
                     throw error
                 }
@@ -231,6 +285,27 @@ public final class TransferEngine: Sendable {
                 mismatches += 1
                 offset = try await tus.head(url).offset
             }
+        }
+    }
+
+    /// The upload is gone on the server (`404`/`410`): was it published before (lost final
+    /// response)?
+    /// - New file: an identical file under the name or a server-picked `(n)` name.
+    /// - Replace: the item now has our content ⇒ that item. It moved past the base version
+    ///   with other content ⇒ ``SyncAPIError/conflict(current:)``. Still at the base
+    ///   version ⇒ `nil` (start over). The item is gone ⇒ `.notFound` (re-create path).
+    private func publishedAfterGone(target: TusUploadMetadata, size: Int64, hash: LazyHash) async throws -> SyncItem? {
+        switch target.target {
+        case .create(let name, let parentId, _):
+            return try await findIdentical(name: name, parentId: parentId, modifiedAt: target.modifiedAt,
+                                           size: size, hash: hash, allowSuffixed: true)
+        case .replace(let itemId, let ifMatch):
+            let item = try await api.item(id: itemId)
+            if !item.isFolder, item.size == size, let serverHash = item.sha256, serverHash == (try await hash.value()) {
+                return item
+            }
+            if item.contentEtag != ifMatch { throw SyncAPIError.conflict(current: item) }
+            return nil
         }
     }
 
@@ -246,21 +321,28 @@ public final class TransferEngine: Sendable {
 
     /// Guards against a resumed upload that spliced different bytes (a same-size rewrite
     /// that kept the mtime): the published size must match, and after a resume the sha256
-    /// too. On a mismatch the local content is written again with `PUT` (`If-Match` = the
-    /// version just published), so the server ends up with exactly the local bytes.
-    private func verify(_ item: SyncItem, file: URL, info: FileInfo, target: TusUploadMetadata, resumed: Bool,
-                        hash: LazyHash) async throws -> SyncItem {
+    /// too. On a mismatch the local content is written again with `PUT`, conditional on the
+    /// etag of **our own** published version (from the completion body). Without such a
+    /// trusted etag (the item came from a `GET` fallback, or has no `contentEtag`) nothing
+    /// is rewritten – never `If-Match: *` – and a transient error lets the system retry.
+    private func verify(_ item: SyncItem, fromResponse: Bool, file: URL, info: FileInfo, target: TusUploadMetadata,
+                        resumed: Bool, hash: LazyHash) async throws -> SyncItem {
         var mismatch = item.size != info.size
         if !mismatch, resumed, let serverHash = item.sha256 {
             mismatch = serverHash != (try await hash.value())
         }
         guard mismatch else { return item }
+        guard fromResponse, let ownEtag = item.contentEtag else {
+            Log.transfer.error("published upload \(item.id, privacy: .public) differs from the local file; no trusted etag to rewrite it")
+            throw SyncAPIError.transport(.cannotDecodeContentData,
+                                         message: "The uploaded content could not be verified. It will be uploaded again.")
+        }
         Log.transfer.error("published upload \(item.id, privacy: .public) differs from the local file, rewriting it")
-        return try await api.replaceContent(itemID: item.id, from: file, ifMatch: item.contentEtag ?? "*",
+        return try await api.replaceContent(itemID: item.id, from: file, ifMatch: ownEtag,
                                             modifiedAt: target.modifiedAt, progress: nil)
     }
 
-    /// A file in `target.parentId` with the same size and sha256 whose name is `target.name`
+    /// A file in `parentId` with the same size and sha256 whose name is `name`
     /// (same name key) or, with `allowSuffixed` (the "upload gone" paths: our own upload may
     /// have been published under a server-picked name), `"<base> (n).<ext>"`.
     ///
@@ -268,17 +350,17 @@ public final class TransferEngine: Sendable {
     /// metadata value), so an unrelated identical copy is not taken for ours. Preference:
     /// the exact name; then suffixed names with `version == 1`, highest `n` first (the newest
     /// server-picked name).
-    private func findIdentical(target: TusUploadMetadata, size: Int64, hash: LazyHash,
-                               allowSuffixed: Bool) async throws -> SyncItem? {
-        let wanted = Self.nameKey(target.name)
-        let (base, ext) = Self.splitName(target.name)
+    private func findIdentical(name: String, parentId: String, modifiedAt targetModifiedAt: Date?, size: Int64,
+                               hash: LazyHash, allowSuffixed: Bool) async throws -> SyncItem? {
+        let wanted = Self.nameKey(name)
+        let (base, ext) = Self.splitName(name)
         var exact: SyncItem?
         var suffixed: [(item: SyncItem, n: Int)] = []
         var pageToken: String?
         repeat {
             let page: SyncChildrenPage
             do {
-                page = try await api.children(of: target.parentId, pageToken: pageToken)
+                page = try await api.children(of: parentId, pageToken: pageToken)
             } catch SyncAPIError.notFound {
                 return nil // parent gone: the create reports it
             }
@@ -286,7 +368,7 @@ public final class TransferEngine: Sendable {
                 let key = Self.nameKey(item.name)
                 let n = allowSuffixed ? Self.suffixNumber(key, base: base, ext: ext) : nil
                 guard key == wanted || n != nil else { continue }
-                if allowSuffixed, let modifiedAt = target.modifiedAt {
+                if allowSuffixed, let modifiedAt = targetModifiedAt {
                     guard let serverDate = item.modifiedDate, abs(serverDate.timeIntervalSince(modifiedAt)) < 2 else { continue }
                 }
                 guard item.sha256 == (try await hash.value()) else { continue }

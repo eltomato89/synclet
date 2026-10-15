@@ -258,12 +258,14 @@ final class TransferEngineTests: XCTestCase {
         XCTAssertEqual(server.requests.map(\.path), ["/api/sync/v1/items/upload"])
     }
 
+    /// Up to 32 MiB a replace is a PUT; a stale etag surfaces as conflict (the tus replace
+    /// conflicts are in `TransferReplaceTests`).
     func testReplaceWithStaleEtagSurfacesConflict() async throws {
         let server = FakeTusServer()
         let current = Fixtures.itemJSON(id: "f_1", version: 5, contentEtag: "v5", etag: "v5")
         server.fallback = { _ in .response(.error(412, "conflict", item: current)) }
         do {
-            _ = try await engine().replace(file: sparseFile(40 * Self.mib), itemId: "f_1", baseEtag: "v3",
+            _ = try await engine().replace(file: sparseFile(32 * Self.mib), itemId: "f_1", baseEtag: "v3",
                                            modifiedAt: nil, progress: Progress())
             XCTFail("conflict expected")
         } catch SyncAPIError.conflict(let item) {
@@ -272,7 +274,7 @@ final class TransferEngineTests: XCTestCase {
         let put = try XCTUnwrap(server.requests.last)
         XCTAssertEqual(put.method, "PUT")
         XCTAssertEqual(put.header("If-Match"), "\"v3\"")
-        XCTAssertTrue(server.tusRequests.isEmpty, "tus cannot replace (SYNC_API.md §7)")
+        XCTAssertTrue(server.tusRequests.isEmpty)
     }
 
     func testIdenticalExistingFileIsReusedForLargeUpload() async throws {

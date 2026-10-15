@@ -124,6 +124,33 @@ final class FakeTusServer: @unchecked Sendable {
 
     func setNetworkDown(_ down: Bool) { lock.withLock { networkDown = down } }
 
+    /// Existing files that tus can replace (`itemId` + `ifMatch`, §7), by id.
+    struct File {
+        var name: String
+        var version: Int
+        var data: Data
+        var modifiedAt: String?
+    }
+    private var files: [String: File] = [:]
+    /// The completing PATCH answers without a JSON body (only `X-Synclet-Item`).
+    var omitCompletionBody = false
+
+    func addFile(id: String, name: String, version: Int, data: Data = Data("old".utf8)) {
+        lock.withLock { files[id] = File(name: name, version: version, data: data) }
+    }
+
+    /// A concurrent edit elsewhere (web, other device): the version goes up.
+    func bumpVersion(_ id: String) { lock.withLock { files[id]?.version += 1 } }
+
+    func file(_ id: String) -> File? { lock.withLock { files[id] } }
+
+    /// Caller holds the lock.
+    private func fileJSON(_ id: String) -> String {
+        let file = files[id]!
+        return Self.itemJSON(id: id, parentId: "root", name: file.name, data: file.data, modifiedAt: file.modifiedAt,
+                             version: file.version)
+    }
+
     /// Adds an existing item to the children listing.
     func seed(_ json: String) { lock.withLock { publishedItems.append(json) } }
 
@@ -183,11 +210,20 @@ final class FakeTusServer: @unchecked Sendable {
             defer { lock.unlock() }
             let length = Int64(request.header("Upload-Length") ?? "") ?? -1
             let metadata = Self.decodeMetadata(request.header("Upload-Metadata") ?? "")
+            if let itemId = metadata["itemId"] {
+                // Replace (§7): no name/parentId/onConflict; ifMatch must name the current version.
+                if metadata["name"] != nil || metadata["parentId"] != nil || metadata["onConflict"] != nil {
+                    return .response(.error(400, "invalid_request"))
+                }
+                guard files[itemId] != nil else { return .response(.error(404, "not_found")) }
+                guard let ifMatch = metadata["ifMatch"] else { return .response(.error(428, "precondition_required")) }
+                if ifMatch != "v\(files[itemId]!.version)" { return .response(.error(412, "conflict", item: fileJSON(itemId))) }
+            }
             nextID += 1
             let id = "u\(nextID)"
             if length == 0 {
-                let json = publish(Upload(length: 0, metadata: metadata), id: id)
-                return .response(.json(201, json, headers: ["Location": "\(tusPrefix)/\(id)", "X-Synclet-Item": "f_\(id)"]))
+                return complete(Upload(length: 0, metadata: metadata), id: id, status: 201,
+                                headers: ["Location": "\(tusPrefix)/\(id)"])
             }
             uploads[id] = Upload(length: length, metadata: metadata)
             return text(201, "", headers: ["Location": "\(tusPrefix)/\(id)"])
@@ -232,8 +268,7 @@ final class FakeTusServer: @unchecked Sendable {
                 let reply: FakeReply
                 if Int64(upload.data.count) == upload.length {
                     uploads[id] = nil
-                    let json = publish(upload, id: id)
-                    reply = .response(.json(200, json, headers: ["X-Synclet-Item": "f_\(id)", "Tus-Resumable": "1.0.0"]))
+                    reply = complete(upload, id: id, status: 200, headers: ["Tus-Resumable": "1.0.0"])
                 } else {
                     uploads[id] = upload
                     reply = text(204, "", headers: ["Upload-Offset": String(upload.data.count)])
@@ -245,6 +280,11 @@ final class FakeTusServer: @unchecked Sendable {
                 return text(405, "")
             }
         }
+        if request.method == "GET", path.hasPrefix("/api/sync/v1/items/"),
+           case let id = String(path.dropFirst("/api/sync/v1/items/".count)), files[id] != nil {
+            defer { lock.unlock() }
+            return .response(.json(200, fileJSON(id)))
+        }
         if request.method == "GET", path.hasSuffix("/children") {
             defer { lock.unlock() }
             return .response(.json(200, #"{"items":[\#(publishedItems.joined(separator: ","))],"nextPageToken":null,"cursor":"1"}"#))
@@ -253,6 +293,33 @@ final class FakeTusServer: @unchecked Sendable {
         lock.unlock()
         if let fallback { return fallback(request) }
         return .response(.empty(500))
+    }
+
+    /// Publishes a completed upload (create or replace) and builds the reply. Caller holds the lock.
+    private func complete(_ upload: Upload, id: String, status: Int, headers: [String: String]) -> FakeReply {
+        let itemID: String
+        let json: String
+        if let target = upload.metadata["itemId"] {
+            // Replace: If-Match checked again; a mismatch drops the upload (HEAD → 404).
+            guard var file = files[target] else { return .response(.error(404, "not_found")) }
+            guard upload.metadata["ifMatch"] == "v\(file.version)" else {
+                return .response(.error(412, "conflict", item: fileJSON(target)))
+            }
+            file.version += 1
+            file.data = upload.data
+            file.modifiedAt = upload.metadata["modifiedAt"]
+            files[target] = file
+            publishedData = upload.data
+            publishedMetadata = upload.metadata
+            itemID = target
+            json = fileJSON(target)
+        } else {
+            itemID = "f_\(id)"
+            json = publish(upload, id: id)
+        }
+        let allHeaders = headers.merging(["X-Synclet-Item": itemID]) { a, _ in a }
+        if omitCompletionBody { return .response(.empty(status, headers: allHeaders)) }
+        return .response(.json(status, json, headers: allHeaders))
     }
 
     /// Caller holds the lock.

@@ -1,26 +1,56 @@
 import Foundation
 
-/// Metadata of a tus upload (`Upload-Metadata`, SYNC_API.md §7). The server publishes the
-/// completed upload as a **new file** in `parentId`; tus has no replace (use
-/// ``SyncAPIClient/replaceContent(itemID:from:ifMatch:modifiedAt:progress:)``).
+/// Metadata of a tus upload (`Upload-Metadata`, SYNC_API.md §7): either a **new file**
+/// (`name`, `parentId`, `onConflict`) or the **replacement** of an existing file's content
+/// (`itemId` + `ifMatch`; the create keys must then be absent).
 public struct TusUploadMetadata: Sendable, Hashable, Codable {
-    /// Target name (validated as §4.3).
-    public var name: String
-    /// Target folder (`root` or `d_…`).
-    public var parentId: String
-    /// `rename` (tus default) or `fail` (⇒ `409 name_conflict` at completion; the upload is dropped).
-    public var onConflict: SyncNameConflictPolicy
-    /// Content mtime of the new file, in whole milliseconds (the precision the server keeps,
-    /// so a stored target compares equal after its JSON round trip).
+    public enum Target: Sendable, Hashable, Codable {
+        /// New file `name` in `parentId`; `rename` (tus default) or `fail` (⇒ `409 name_conflict`
+        /// at completion; the upload is dropped).
+        case create(name: String, parentId: String, onConflict: SyncNameConflictPolicy)
+        /// New content for file `itemId`, based on content etag `ifMatch` (`v<n>`; `*` is not
+        /// supported by tus). A stale etag ⇒ `412` at creation or at completion.
+        case replace(itemId: String, ifMatch: String)
+    }
+
+    public var target: Target
+    /// Content mtime, in whole milliseconds (the precision the server keeps, so a stored
+    /// target compares equal after its JSON round trip).
     public var modifiedAt: Date? {
         didSet { if let modifiedAt, modifiedAt != Self.milliseconds(modifiedAt) { self.modifiedAt = Self.milliseconds(modifiedAt) } }
     }
 
-    public init(name: String, parentId: String, onConflict: SyncNameConflictPolicy = .rename, modifiedAt: Date? = nil) {
-        self.name = name
-        self.parentId = parentId
-        self.onConflict = onConflict
+    public init(target: Target, modifiedAt: Date? = nil) {
+        self.target = target
         self.modifiedAt = modifiedAt.map(Self.milliseconds)
+    }
+
+    /// A new file.
+    public init(name: String, parentId: String, onConflict: SyncNameConflictPolicy = .rename, modifiedAt: Date? = nil) {
+        self.init(target: .create(name: name, parentId: parentId, onConflict: onConflict), modifiedAt: modifiedAt)
+    }
+
+    /// Replacement of an existing file's content.
+    public static func replace(itemId: String, ifMatch: String, modifiedAt: Date? = nil) -> TusUploadMetadata {
+        TusUploadMetadata(target: .replace(itemId: itemId, ifMatch: ifMatch), modifiedAt: modifiedAt)
+    }
+
+    /// Name of a new file (`nil` for a replace).
+    public var name: String? {
+        if case .create(let name, _, _) = target { return name }
+        return nil
+    }
+
+    /// Base etag of a replace (`nil` for a new file).
+    public var ifMatch: String? {
+        if case .replace(_, let ifMatch) = target { return ifMatch }
+        return nil
+    }
+
+    /// Parent of a new file (`nil` for a replace).
+    public var parentId: String? {
+        if case .create(_, let parentId, _) = target { return parentId }
+        return nil
     }
 
     static func milliseconds(_ date: Date) -> Date {
@@ -29,7 +59,13 @@ public struct TusUploadMetadata: Sendable, Hashable, Codable {
 
     /// tus encoding: `key base64(value)` pairs separated by commas.
     public var headerValue: String {
-        var pairs: [(String, String)] = [("name", name), ("parentId", parentId), ("onConflict", onConflict.rawValue)]
+        var pairs: [(String, String)]
+        switch target {
+        case .create(let name, let parentId, let onConflict):
+            pairs = [("name", name), ("parentId", parentId), ("onConflict", onConflict.rawValue)]
+        case .replace(let itemId, let ifMatch):
+            pairs = [("itemId", itemId), ("ifMatch", ifMatch)]
+        }
         if let modifiedAt { pairs.append(("modifiedAt", SyncDate.format(modifiedAt))) }
         return pairs.map { "\($0.0) \(Data($0.1.utf8).base64EncodedString())" }.joined(separator: ",")
     }
@@ -38,7 +74,10 @@ public struct TusUploadMetadata: Sendable, Hashable, Codable {
 /// Answer of a `PATCH`: the new offset, or the published item (the request completed the upload).
 public enum TusPatchResult: Sendable, Equatable {
     case offset(Int64)
-    case completed(SyncItem)
+    /// `fromResponse`: the item is the completion's own JSON body (§7.4), so its etag is
+    /// the version this upload published. `false`: the body was missing and the item was
+    /// fetched with `GET /items/:id` – it may already reflect a later edit.
+    case completed(SyncItem, fromResponse: Bool)
 }
 
 /// Client of the tus 1.0 endpoint `<origin>/api/sync/v1/uploads` (SYNC_API.md §7).
@@ -75,7 +114,7 @@ public final class TusUploader: Sendable {
             throw SyncAPIError.invalidResponse("tus: Location missing")
         }
         if length == 0 {
-            return .completed(try await publishedItem(http, data: data))
+            return .completed(try await publishedItem(http, data: data).item)
         }
         return .created(url)
     }
@@ -100,7 +139,8 @@ public final class TusUploader: Sendable {
         let (data, http) = try await send(request, body: chunk)
         switch http.statusCode {
         case 200, 201:
-            return .completed(try await publishedItem(http, data: data))
+            let published = try await publishedItem(http, data: data)
+            return .completed(published.item, fromResponse: published.fromResponse)
         case 204:
             guard let newOffset = http.value(forHTTPHeaderField: "Upload-Offset").flatMap(Int64.init) else {
                 throw SyncAPIError.invalidResponse("tus: Upload-Offset missing")
@@ -145,12 +185,12 @@ public final class TusUploader: Sendable {
 
     /// The completing request answers with the `SyncItem`; otherwise fall back to
     /// `X-Synclet-Item` and `GET /items/:id` (§7.4).
-    private func publishedItem(_ http: HTTPURLResponse, data: Data) async throws -> SyncItem {
-        if let item = try? JSONDecoder().decode(SyncItem.self, from: data) { return item }
+    private func publishedItem(_ http: HTTPURLResponse, data: Data) async throws -> (item: SyncItem, fromResponse: Bool) {
+        if let item = try? JSONDecoder().decode(SyncItem.self, from: data) { return (item, true) }
         guard let id = http.value(forHTTPHeaderField: "X-Synclet-Item"), !id.isEmpty else {
             throw SyncAPIError.invalidResponse("tus: completed upload without item")
         }
-        return try await api.item(id: id)
+        return (try await api.item(id: id), false)
     }
 }
 
