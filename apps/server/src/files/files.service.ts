@@ -14,8 +14,8 @@ import type { IndexUser } from '../common/types';
 import { ItemStore } from '../journal/item-store';
 import { JournalService, Tx } from '../journal/journal.service';
 import { PrismaService, TX_OPTS } from '../prisma/prisma.service';
-import { VersionContentReplacer, VersionsService } from '../versions/versions.service';
-import { linkNoReplace, moveAcrossFs, moveNoReplace, replaceAtomic, statEntry } from './fs-ops';
+import { PreparedVersion, StaleVersionError, VersionContentReplacer, VersionsService } from '../versions/versions.service';
+import { copyNoReplace, linkNoReplace, moveAcrossFs, moveNoReplace, replaceAtomic, statEntry } from './fs-ops';
 
 export type OnConflict = 'fail' | 'rename';
 
@@ -297,31 +297,64 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
   }
 
   /**
-   * With versions on, a capture across file systems copies the current content inside the
-   * transaction: allow for it (about 25 MB/s on top of the default timeout).
+   * Runs one replace attempt with the current content's version prepared outside the user lock
+   * (a cross-file-system copy never holds the lock). If the file changed between preparing and
+   * the locked commit, the preparation is discarded and redone once; a second change is a 412.
+   * Prepared temp files (and a published version whose transaction did not commit) are removed.
    */
-  private replaceTxOpts(currentSize: bigint) {
-    if (!this.versions.enabled) return TX_OPTS;
-    return { ...TX_OPTS, timeout: TX_OPTS.timeout + Math.ceil(Number(currentSize) / (25 * 1024 * 1024)) * 1000 };
+  private async withPreparedVersion<T>(user: IndexUser, itemId: string, attempt: (prepared: PreparedVersion | null) => Promise<T>): Promise<T> {
+    for (let i = 0; ; i++) {
+      const prepared = await this.versions.prepare(user, itemId);
+      try {
+        const out = await attempt(prepared);
+        if (prepared) prepared.committed = true;
+        return out;
+      } catch (e) {
+        if (!(e instanceof StaleVersionError)) throw e;
+        if (i >= 1) {
+          const row = await this.prisma.item.findFirst({ where: { id: itemId, ownerId: user.id, deletedAt: null } });
+          throw new SyncError('conflict', 'file changed while its version was captured', row ?? undefined);
+        }
+      } finally {
+        await this.versions.discard(prepared);
+      }
+    }
+  }
+
+  /** `tmp`, or a copy of it next to `target` when a mount point lies in between (so the final rename keeps the inode). */
+  private async nearTarget(tmp: string, target: string): Promise<string> {
+    const [a, b] = await Promise.all([lstat(tmp, { bigint: true }), lstat(path.dirname(target), { bigint: true })]);
+    if (a.dev === b.dev) return tmp;
+    const near = path.join(path.dirname(target), tempName(randomBytes(8).toString('hex')));
+    await copyNoReplace(tmp, near);
+    return near;
   }
 
   /**
-   * Keeps the current content as a version (when versions are on; a failed capture throws and
-   * nothing is replaced), then swaps in `tmp` atomically (version + 1, journaled).
+   * Under the user lock: keeps the current content as a version (when versions are on; a failed
+   * or stale capture throws and nothing is replaced), writes the row (version + 1) and journal,
+   * and only then – as the very last step – renames the new content over the file. Any failure or
+   * transaction timeout before that leaves the current file untouched and rolls back the rows.
    */
   private async commitReplace(
     tx: Tx, user: IndexUser, item: Item, target: string, tmp: string, sha256: string,
-    source: VersionSource, opts: { officeKey: string | null; by?: string },
+    source: VersionSource, opts: { officeKey: string | null; by?: string; prepared?: PreparedVersion | null },
   ): Promise<Item> {
-    await this.versions.capture(tx, user, item, target, source, opts.by);
-    await replaceAtomic(tmp, target);
-    const st = await statEntry(target);
-    const updated = await tx.item.update({
-      where: { id: item.id },
-      data: { size: st.size, mtime: st.mtime, ino: st.ino, dev: st.dev, contentHash: sha256, version: { increment: 1 }, officeKey: opts.officeKey },
-    });
-    await this.journal.record(tx, user.id, [updated], 'upsert');
-    return updated;
+    await this.versions.capture(tx, user, item, target, source, opts.by, opts.prepared);
+    const src = await this.nearTarget(tmp, target);
+    try {
+      // rename keeps inode, size and mtime: the row describes the file as it will be published.
+      const st = await statEntry(src);
+      const updated = await tx.item.update({
+        where: { id: item.id },
+        data: { size: st.size, mtime: st.mtime, ino: st.ino, dev: st.dev, contentHash: sha256, version: { increment: 1 }, officeKey: opts.officeKey },
+      });
+      await this.journal.record(tx, user.id, [updated], 'upsert');
+      await replaceAtomic(src, target);
+      return updated;
+    } finally {
+      if (src !== tmp) await rm(src, { force: true });
+    }
   }
 
   async replaceContent(user: IndexUser, itemId: string, body: Readable, opts: { ifMatchVersion: number | null; modifiedAt?: Date | null }): Promise<Item> {
@@ -351,14 +384,14 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
     try {
       // The transaction returns the conflict instead of throwing, so the recorded
       // external version is committed before the 412 goes out.
-      const outcome = await this.prisma.$transaction(async (tx) => {
+      const outcome = await this.withPreparedVersion(user, itemId, (prepared) => this.prisma.$transaction(async (tx) => {
         await this.journal.lockUser(tx, user.id);
         const { item, target, changedOnDisk } = await this.lockedFile(tx, user, itemId);
         // Edited on the host but not yet indexed: that version is recorded, report the conflict.
         if (changedOnDisk) return { conflict: item, reason: 'file changed on disk' } as const;
         if (opts.ifMatchVersion !== null && item.version !== opts.ifMatchVersion) return { conflict: item, reason: 'version mismatch' } as const;
-        return { ok: await this.commitReplace(tx, user, item, target, tmp, sha256, opts.source, { officeKey: null, by: user.id }) } as const;
-      }, this.replaceTxOpts(pre.size));
+        return { ok: await this.commitReplace(tx, user, item, target, tmp, sha256, opts.source, { officeKey: null, by: user.id, prepared }) } as const;
+      }, TX_OPTS));
       if ('conflict' in outcome) throw new SyncError('conflict', outcome.reason, outcome.conflict);
       return outcome.ok;
     } finally {
@@ -381,8 +414,7 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
     guardBody(body);
     const { tmp, sha256 } = await this.receive(user, body);
     try {
-      const current = await this.prisma.item.findFirst({ where: { id: itemId, ownerId: user.id }, select: { size: true } });
-      const decided = await this.prisma.$transaction(async (tx) => {
+      const decided = await this.withPreparedVersion(user, itemId, (prepared) => this.prisma.$transaction(async (tx) => {
         await this.journal.lockUser(tx, user.id);
         let cur: Awaited<ReturnType<FilesService['lockedFile']>>;
         try {
@@ -393,8 +425,8 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
         }
         const { item, target } = cur;
         if (item.version !== opts.baseVersion && item.officeKey !== opts.key) return { outcome: 'conflict', item } as const;
-        return { outcome: 'replaced', item: await this.commitReplace(tx, user, item, target, tmp, sha256, 'office', { officeKey: opts.key, by: opts.by }) } as const;
-      }, this.replaceTxOpts(current?.size ?? 0n));
+        return { outcome: 'replaced', item: await this.commitReplace(tx, user, item, target, tmp, sha256, 'office', { officeKey: opts.key, by: opts.by, prepared }) } as const;
+      }, TX_OPTS));
       if (decided.outcome !== 'conflict') return decided;
       const copy = await this.publishNew(user, decided.item.parentId, opts.conflictName(decided.item.name), tmp, sha256, 'rename');
       return { outcome: 'conflict', item: copy };

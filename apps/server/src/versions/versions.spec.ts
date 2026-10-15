@@ -1,4 +1,4 @@
-import fsp, { chmod, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import fsp, { chmod, link, mkdir, readdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { createTestApp, createTestUser, TestContext } from '../../test/context';
@@ -7,6 +7,7 @@ import type { IndexUser } from '../common/types';
 import { DerivativesGc } from '../derivatives/derivatives-gc';
 import { DerivedStore } from '../derivatives/derived-store';
 import { FilesService } from '../files/files.service';
+import * as fsOps from '../files/fs-ops';
 import { TrashService } from '../trash/trash.service';
 import { VersionsService } from './versions.service';
 
@@ -274,6 +275,139 @@ describe('Versions', () => {
       await files.replaceContent(user, f.id, body('two'), { ifMatchVersion: 1 });
       const [v] = await rows(f.id);
       expect(await readFile(v.storePath, 'utf8')).toBe('one');
+    });
+
+    describe('capture outside the user lock', () => {
+      /** Regular files in the version store (relative paths), temps included. */
+      const storedFiles = async () => {
+        const out: string[] = [];
+        for (const rel of await walk(versionsDir())) if ((await stat(path.join(versionsDir(), rel))).isFile()) out.push(rel);
+        return out;
+      };
+
+      it('a slow copy of the current content does not hold the lock: another op of the same user proceeds', async () => {
+        const f = await files.upload(user, null, 'big.bin', body('old content'), {});
+        let entered!: () => void; const inCopy = new Promise<void>((r) => { entered = r; });
+        let release!: () => void; const gate = new Promise<void>((r) => { release = r; });
+        const proto = Object.getPrototypeOf(versions) as { copyHashed: (s: string, d: string) => Promise<string> };
+        const orig = proto.copyHashed;
+        const copy = jest.spyOn(proto, 'copyHashed').mockImplementation(async function (this: unknown, src: string, dst: string) {
+          entered(); await gate; return orig.call(this, src, dst);
+        });
+        const linkSpy = jest.spyOn(fsp, 'link').mockRejectedValueOnce(Object.assign(new Error('EXDEV'), { code: 'EXDEV' }));
+        try {
+          const put = files.replaceContent(user, f.id, body('new content'), { ifMatchVersion: 1 });
+          await inCopy;
+          // Same user, mutating, while the copy hangs: must not wait for it.
+          const folder = await Promise.race([files.createFolder(user, null, 'during'), new Promise<never>((_, rej) => setTimeout(() => rej(new Error('blocked by the capture')), 5000))]);
+          expect(folder.name).toBe('during');
+          release();
+          expect((await put).version).toBe(2);
+        } finally {
+          release(); copy.mockRestore(); linkSpy.mockRestore();
+        }
+        const [v] = await rows(f.id);
+        expect(await readFile(v.storePath, 'utf8')).toBe('old content');
+        expect(await readFile(path.join(root, 'big.bin'), 'utf8')).toBe('new content');
+      });
+
+      it('a failure after the DB writes but before the final rename leaves the current file and no version row', async () => {
+        const f = await files.upload(user, null, 'keep.txt', body('current'), {});
+        const spy = jest.spyOn(fsOps, 'replaceAtomic').mockRejectedValueOnce(new Error('disk gone'));
+        try {
+          await expect(files.replaceContent(user, f.id, body('next'), { ifMatchVersion: 1 })).rejects.toThrow('disk gone');
+        } finally {
+          spy.mockRestore();
+        }
+        expect(await readFile(path.join(root, 'keep.txt'), 'utf8')).toBe('current');
+        expect(await walk(root)).toEqual(['keep.txt']);
+        expect((await ctx.prisma.item.findUniqueOrThrow({ where: { id: f.id } })).version).toBe(1);
+        expect(await rows()).toEqual([]);
+        expect(await storedFiles()).toEqual([]); // the published copy was withdrawn, no temp left
+      });
+
+      /** Simulates a host edit that the indexer picked up right after `prepare` (row matches disk again). */
+      const hostEdit = async (itemId: string, abs: string, content: string) => {
+        await writeFile(abs, content);
+        const t = new Date(Date.now() + Math.floor(Math.random() * 100000));
+        await utimes(abs, t, t);
+        const st = await stat(abs, { bigint: true });
+        await ctx.prisma.item.update({ where: { id: itemId }, data: { size: st.size, mtime: new Date(Number(st.mtimeMs)), ino: st.ino, dev: st.dev, contentHash: null, version: { increment: 1 } } });
+      };
+
+      it('a host change between prepare and commit is detected and the version is prepared again', async () => {
+        const f = await files.upload(user, null, 'h.txt', body('one'), {});
+        const abs = path.join(root, 'h.txt');
+        const orig = versions.prepare.bind(versions);
+        let calls = 0;
+        const spy = jest.spyOn(versions, 'prepare').mockImplementation(async (u, id) => {
+          const p = await orig(u, id);
+          if (++calls === 1) await hostEdit(f.id, abs, 'host edit');
+          return p;
+        });
+        try {
+          const updated = await files.replaceContent(user, f.id, body('api'), { ifMatchVersion: null });
+          expect(updated.version).toBe(3);
+        } finally {
+          spy.mockRestore();
+        }
+        expect(calls).toBe(2);
+        const all = await rows(f.id);
+        expect(all.map((r) => r.version)).toEqual([2]);
+        expect(await readFile(all[0].storePath, 'utf8')).toBe('host edit'); // never the stale 'one'
+        expect(await readFile(abs, 'utf8')).toBe('api');
+        expect(await storedFiles()).toEqual([`${user.id}/${f.id}/${path.basename(all[0].storePath)}`]);
+      });
+
+      it('a file that keeps changing during capture yields 412 and is left as the host wrote it', async () => {
+        const f = await files.upload(user, null, 'h.txt', body('one'), {});
+        const abs = path.join(root, 'h.txt');
+        const orig = versions.prepare.bind(versions);
+        let n = 0;
+        const spy = jest.spyOn(versions, 'prepare').mockImplementation(async (u, id) => {
+          const p = await orig(u, id);
+          await hostEdit(f.id, abs, `host ${++n}`);
+          return p;
+        });
+        try {
+          await expect(files.replaceContent(user, f.id, body('api'), { ifMatchVersion: null })).rejects.toMatchObject({ code: 'conflict' });
+        } finally {
+          spy.mockRestore();
+        }
+        expect(await readFile(abs, 'utf8')).toBe('host 2');
+        expect(await rows()).toEqual([]);
+        expect(await storedFiles()).toEqual([]);
+        expect(await walk(root)).toEqual(['h.txt']);
+      });
+
+      it('a file with another hard link is copied: edits through that link never change the version', async () => {
+        const f = await files.upload(user, null, 'a.txt', body('original'), {});
+        const other = path.join(ctx.config.dataRoot, 'other-link');
+        await link(path.join(root, 'a.txt'), other); // the user's own second name for the inode
+        try {
+          await files.replaceContent(user, f.id, body('replaced'), { ifMatchVersion: 1 });
+          const [v] = await rows(f.id);
+          expect((await stat(v.storePath)).ino).not.toBe((await stat(other)).ino);
+          await writeFile(other, 'changed via the other link'); // in place, same inode as the old file
+          expect(await readFile(v.storePath, 'utf8')).toBe('original');
+        } finally {
+          await rm(other, { force: true });
+        }
+      });
+
+      it('office save and restore go through commitReplace with their sources', async () => {
+        const commit = jest.spyOn(files as unknown as { commitReplace: (...a: unknown[]) => Promise<unknown> }, 'commitReplace');
+        const f = await files.upload(user, null, 'o.docx', body('v1'), {});
+        const saved = await files.saveOfficeContent(user, f.id, body('v2 from office'), { key: 'k1', baseVersion: 1, by: user.id, conflictName: (n) => `${n} (conflict)` });
+        expect(saved.outcome).toBe('replaced');
+        const [v1] = await rows(f.id);
+        expect(v1).toMatchObject({ version: 1, source: 'office', createdBy: user.id });
+        await versions.restore(user, f.id, v1.id);
+        expect(commit.mock.calls.map((c) => c[6])).toEqual(['office', 'restore']);
+        expect((await rows(f.id)).map((r) => r.source)).toEqual(['office', 'restore']);
+        expect(await readFile(path.join(root, 'o.docx'), 'utf8')).toBe('v1');
+        commit.mockRestore();
+      });
     });
 
     it('max bytes evicts the oldest versions but always keeps the newest per item', async () => {

@@ -9,6 +9,7 @@ import type { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { APP_CONFIG, AppConfig } from '../config';
 import { splitExt } from '../common/names';
+import { absPath } from '../common/paths';
 import { SyncError } from '../common/sync-error';
 import type { IndexUser } from '../common/types';
 import { NO_HARDLINK } from '../files/fs-ops';
@@ -33,6 +34,25 @@ const CHUNK = 1000;
 export interface VersionContentReplacer {
   restoreFromVersion(user: IndexUser, itemId: string, body: Readable): Promise<Item>;
 }
+
+/** A copy of the current content made outside the user lock (see `VersionsService.prepare`). */
+export interface PreparedVersion {
+  tmp: string; ino: bigint; dev: bigint; size: bigint; mtimeMs: bigint;
+  /** sha256 of the copied bytes, or the row's hash for a hard link (null: hash at publish). */
+  sha: string | null;
+  /** Final store path once `capture` published it. */
+  published: string | null;
+  /** Set by the caller after its transaction committed (then `discard` keeps the published file). */
+  committed: boolean;
+}
+
+/** The file changed between `prepare` and `capture`: discard, prepare again, retry. */
+export class StaleVersionError extends Error {
+  constructor() { super('file changed while its version was prepared'); }
+}
+
+const sameFile = (a: { ino: bigint; dev: bigint; size: bigint; mtimeMs: bigint }, b: typeof a) =>
+  a.ino === b.ino && a.dev === b.dev && a.size === b.size && a.mtimeMs === b.mtimeMs;
 
 export interface OpenedVersion { item: Item; version: FileVersion; abs: string; downloadName: string }
 
@@ -93,33 +113,102 @@ export class VersionsService {
   // ---------------------------------------------------------------- capture
 
   /**
-   * Keeps the current content of `item` (at `absCurrent`) as a version. Must be called inside the
-   * caller's transaction, under the user lock, right before the content is replaced; a failure
-   * throws (and the caller must not replace). Same file system: hard link (the current file is
-   * never moved or modified); otherwise a copy into `<meta>/versions/.tmp-*`, published by rename.
-   * No-op when versions are off.
+   * Step 1, outside the user lock: copies the current content of a live file into
+   * `<meta>/versions/.tmp-*` (hard link when the file has no other link, else a hashed copy) and
+   * records the source's inode/size/mtime. A copy torn by a concurrent edit is redone once.
+   * Returns null when versions are off or there is nothing to prepare (missing, not a file); the
+   * caller then still calls `capture`, which reports a stale preparation when versions are on.
+   * The caller must `discard` the result in a `finally`.
    */
-  async capture(tx: Tx, user: IndexUser, item: Item, absCurrent: string, source: VersionSource, by?: string): Promise<void> {
+  async prepare(user: IndexUser, itemId: string): Promise<PreparedVersion | null> {
+    if (!this.config.versions) return null;
+    const item = await this.prisma.item.findFirst({ where: { id: itemId, ownerId: user.id, deletedAt: null } });
+    if (!item || item.type !== 'file') return null;
+    return this.prepareFile(absPath(this.config.dataRoot, user.username, item.path), item.contentHash);
+  }
+
+  private async prepareFile(abs: string, knownHash: string | null): Promise<PreparedVersion | null> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const before = await lstat(abs, { bigint: true }).catch(() => null);
+      if (!before?.isFile()) return null;
+      await mkdir(this.storeRoot(), { recursive: true });
+      const tmp = path.join(this.storeRoot(), `${TMP_PREFIX}${randomBytes(8).toString('hex')}`);
+      try {
+        let sha: string | null = null;
+        let linked = false;
+        // Only a sole link: a second name (the user's own hard link) or a writer keeping the inode
+        // could otherwise change the stored version later. (An fd still open on a sole link is not
+        // detectable; such a writer would change the version – documented limitation.)
+        if (before.nlink === 1n) {
+          try {
+            await link(abs, tmp);
+            linked = true;
+          } catch (e) {
+            if (!NO_HARDLINK.includes(errno(e) ?? '')) throw e;
+          }
+        }
+        if (!linked) sha = await this.copyHashed(abs, tmp);
+        else if (!knownHash) sha = await sha256File(tmp);
+        const after = await lstat(abs, { bigint: true }).catch(() => null);
+        if (after && sameFile(before, after)) {
+          return { tmp, ino: before.ino, dev: before.dev, size: before.size, mtimeMs: before.mtimeMs, sha: sha ?? knownHash, published: null, committed: false };
+        }
+      } catch (e) {
+        await rm(tmp, { force: true });
+        throw e;
+      }
+      await rm(tmp, { force: true }); // changed while copying: once more
+    }
+    return null;
+  }
+
+  /** Removes what a preparation left behind (its temp; its published file unless committed). */
+  async discard(prepared: PreparedVersion | null | undefined): Promise<void> {
+    if (!prepared) return;
+    await rm(prepared.tmp, { force: true }).catch(() => {});
+    if (prepared.published && !prepared.committed) {
+      await rm(prepared.published, { force: true }).catch((e) => this.log.error(`cannot remove uncommitted version ${prepared.published}: ${String(e)}`));
+      prepared.published = null;
+    }
+  }
+
+  /**
+   * Step 2, inside the caller's transaction under the user lock, before any other write of the
+   * replace: keeps the current content of `item` (at `absCurrent`) as a version. With `prepared`
+   * it only checks that the file is still the prepared one (else throws `StaleVersionError`; the
+   * caller discards, prepares again and retries) and renames the prepared copy into
+   * `<meta>/versions/<owner>/<item>/<version>-<sha|nohash>`. Without `prepared` (legacy callers)
+   * it prepares right here, under the lock. Inserts the FileVersion row; any failure throws and
+   * the caller must not replace. The current file is never moved or modified. No-op when off.
+   * The caller marks `prepared.committed` after its transaction committed and always calls `discard`.
+   */
+  async capture(tx: Tx, user: IndexUser, item: Item, absCurrent: string, source: VersionSource, by?: string, prepared?: PreparedVersion | null): Promise<void> {
     if (!this.config.versions) return;
     if (item.type !== 'file' || item.ownerId !== user.id) throw new Error('versions: capture of a foreign or non-file item');
-    const dir = this.itemDir(item.ownerId, item.id);
-    const dst = await this.freeStorePath(tx, item, dir);
-    let created = false;
+    const legacy = prepared === undefined;
+    const prep = legacy ? await this.prepareFile(absCurrent, item.contentHash) : prepared;
     try {
-      const copiedHash = await this.store(absCurrent, dst, dir);
-      created = true;
-      // A hard link is the row's inode, which the caller verified a moment ago; a copy was hashed.
-      const st = await lstat(dst, { bigint: true });
-      const sha = copiedHash ?? (st.size === item.size ? item.contentHash : null) ?? (await sha256File(dst));
+      const cur = await lstat(absCurrent, { bigint: true }).catch(() => null);
+      const rowMatches = cur !== null && cur.size === item.size && new Date(Number(cur.mtimeMs)).getTime() === item.mtime.getTime();
+      if (!prep || !cur || !rowMatches || prep.ino !== cur.ino || prep.dev !== cur.dev || prep.size !== cur.size || prep.mtimeMs !== cur.mtimeMs) {
+        throw new StaleVersionError();
+      }
+      const dir = this.itemDir(item.ownerId, item.id);
+      const dst = await this.freeStorePath(tx, item, dir);
+      await this.publish(prep.tmp, dst, dir);
+      prep.published = dst;
+      const sha = prep.sha ?? item.contentHash ?? (await sha256File(dst));
       // `by` may come from outside (the office callback's editor id): unknown or malformed -> null.
       const createdBy = by && UUID.test(by) && (await tx.user.findUnique({ where: { id: by }, select: { id: true } })) ? by : null;
       await tx.fileVersion.create({
-        data: { itemId: item.id, ownerId: item.ownerId, version: item.version, sha, size: st.size, mtime: item.mtime, createdBy, source, storePath: dst },
+        data: { itemId: item.id, ownerId: item.ownerId, version: item.version, sha, size: prep.size, mtime: item.mtime, createdBy, source, storePath: dst },
       });
     } catch (e) {
-      if (created) await rm(dst, { force: true }).catch((err) => this.log.error(`cannot remove failed capture ${dst}: ${String(err)}`));
+      if (legacy) await this.discard(prep);
       throw e;
     }
+    // Legacy callers have no handle: if their transaction rolls back, the published file is
+    // unreferenced; `prune` sweeps it after an hour (and `freeStorePath` reuses its name).
   }
 
   /**
@@ -142,38 +231,22 @@ export class VersionsService {
     throw new Error(`versions: no free store path in ${dir}`);
   }
 
-  /**
-   * Hard link, else copy (fsynced, mtime kept) via a temp in the store root. Returns the sha256 of
-   * the copied bytes (null for a hard link). The directory is re-created if a concurrent prune
-   * sweep removed it while empty.
-   */
-  private async store(src: string, dst: string, dir: string): Promise<string | null> {
+  /** Renames the prepared temp into place; re-creates the item directory if a prune sweep removed it meanwhile. */
+  private async publish(tmp: string, dst: string, dir: string): Promise<void> {
     for (let attempt = 0; ; attempt++) {
       await mkdir(dir, { recursive: true });
       try {
-        await link(src, dst);
-        return null;
+        await rename(tmp, dst);
+        return;
       } catch (e) {
-        if (errno(e) === 'ENOENT' && attempt < 3 && (await exists(src))) continue; // dir vanished
-        if (!NO_HARDLINK.includes(errno(e) ?? '')) throw e;
-      }
-      const tmp = path.join(this.storeRoot(), `${TMP_PREFIX}${randomBytes(8).toString('hex')}`);
-      try {
-        const sha = await this.copyHashed(src, tmp);
-        try {
-          await rename(tmp, dst);
-        } catch (e) {
-          if (errno(e) === 'ENOENT' && attempt < 3) continue;
-          throw e;
-        }
-        return sha;
-      } finally {
-        await rm(tmp, { force: true });
+        if (errno(e) === 'ENOENT' && attempt < 3 && (await exists(tmp))) continue;
+        throw e;
       }
     }
   }
 
-  private async copyHashed(src: string, dst: string): Promise<string> {
+  /** Copy (fsynced, mtime kept) hashing the bytes. Protected: tests slow it down. */
+  protected async copyHashed(src: string, dst: string): Promise<string> {
     const hash = createHash('sha256');
     const sfh = await open(src, 'r');
     try {
