@@ -88,6 +88,15 @@ final class AuthAPITests: XCTestCase {
         XCTAssertEqual(request.json?["installationId"] as? String, "inst")
     }
 
+    func testDeviceNameIsTruncatedByUTF16Units() {
+        let emoji = String(repeating: "👩‍💻", count: 30) // 5 UTF-16 units each
+        let truncated = AuthAPI.truncated(emoji, utf16Units: 100)
+        XCTAssertEqual(truncated.utf16.count, 100)
+        XCTAssertEqual(truncated.count, 20)
+        XCTAssertEqual(AuthAPI.truncated("Mac", utf16Units: 100), "Mac")
+        XCTAssertEqual(AuthAPI.truncated("ab👩‍💻", utf16Units: 4), "ab")
+    }
+
     func testEndSessionSendsRefreshCookie() async throws {
         MockURLProtocol.reset { _ in .empty(204) }
         await AuthAPI(session: MockURLProtocol.session()).endSession(server: Fixtures.server, refreshToken: "syr_r")

@@ -51,10 +51,15 @@ public struct KeychainStorage: SecureStorage {
 
     @discardableResult
     public func write(_ value: String, account: String) -> OSStatus {
-        remove(account: account)
+        // Update in place, so a reader never sees a gap and a failed write keeps the old value.
+        let attributes: [String: Any] = [
+            kSecValueData as String: Data(value.utf8),
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+        ]
+        let status = SecItemUpdate(baseQuery(account: account) as CFDictionary, attributes as CFDictionary)
+        guard status == errSecItemNotFound else { return status }
         var query = baseQuery(account: account)
-        query[kSecValueData as String] = Data(value.utf8)
-        query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        query.merge(attributes) { _, new in new }
         return SecItemAdd(query as CFDictionary, nil)
     }
 

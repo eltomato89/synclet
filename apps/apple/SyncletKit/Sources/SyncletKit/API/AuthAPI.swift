@@ -100,8 +100,23 @@ public struct AuthAPI: Sendable {
                                platform: SyncPlatform = .current, installationId: String?,
                                appVersion: String = SyncletKitInfo.appVersion) async throws -> DeviceRegistration {
         let client = SyncAPIClient(baseURL: server, token: accessToken, session: session)
-        return try await client.registerDevice(name: String(name.prefix(100)), platform: platform,
-                                               appVersion: String(appVersion.prefix(40)), installationId: installationId)
+        return try await client.registerDevice(name: Self.truncated(name, utf16Units: 100), platform: platform,
+                                               appVersion: Self.truncated(appVersion, utf16Units: 40),
+                                               installationId: installationId)
+    }
+
+    /// Longest prefix of whole characters within `utf16Units` UTF-16 code units (the
+    /// server counts JavaScript string length).
+    static func truncated(_ text: String, utf16Units: Int) -> String {
+        var result = ""
+        var count = 0
+        for character in text {
+            let length = character.utf16.count
+            if count + length > utf16Units { break }
+            result.append(character)
+            count += length
+        }
+        return result
     }
 
     /// `POST /api/auth/logout` with the refresh token as cookie – ends the login session the

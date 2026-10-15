@@ -88,6 +88,21 @@ public final class AccountManager: Sendable {
         let auth = AuthAPI(session: session)
         let registration = try await auth.registerDevice(server: server, accessToken: tokens.accessToken,
                                                          name: deviceName, installationId: await installationID())
+        // The login session is not needed after the registration – end it whatever happens next.
+        do {
+            let stored = try await activate(registration: registration, server: server)
+            await auth.endSession(server: server, refreshToken: tokens.refreshToken)
+            return stored
+        } catch {
+            await auth.endSession(server: server, refreshToken: tokens.refreshToken)
+            Log.account.error("adding the account failed: \(String(describing: error), privacy: .public)")
+            throw error
+        }
+    }
+
+    /// Second half of ``add(server:tokens:)``. If `addDomain` fails, token and metadata
+    /// stay stored; ``restoreMissingDomains()`` (called at app start) adds the domain later.
+    private func activate(registration: SyncDeviceRegistration, server: URL) async throws -> StoredAccount {
         let deviceClient = SyncAPIClient(baseURL: server, token: registration.token, session: session)
         // `/account` with the new device token (authoritative for `spaces`); the
         // registration's copy is the fallback.
@@ -111,8 +126,6 @@ public final class AccountManager: Sendable {
         if !existing.contains(stored.key16) {
             try await domains.addDomain(identifier: stored.key16, displayName: stored.domainDisplayName)
         }
-
-        await auth.endSession(server: server, refreshToken: tokens.refreshToken)
         return stored
     }
 

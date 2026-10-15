@@ -57,9 +57,23 @@ final class ModelsTests: XCTestCase {
         XCTAssertEqual(again, page)
     }
 
-    func testUnknownChangeOpFails() {
-        let json = #"{"changes":[{"op":"move","id":"x"}],"cursor":"1","hasMore":false}"#
-        XCTAssertThrowsError(try JSONDecoder().decode(SyncChangesPage.self, from: Data(json.utf8)))
+    func testUnknownChangeOpIsSkippedAndCursorKept() throws {
+        let json = #"{"changes":[{"op":"move","id":"x","to":"y"},{"op":"delete","id":"f_1"}],"cursor":"5","hasMore":false}"#
+        let page = try JSONDecoder().decode(SyncChangesPage.self, from: Data(json.utf8))
+        XCTAssertEqual(page.changes, [.delete(id: "f_1")])
+        XCTAssertEqual(page.cursor, "5")
+        // A broken known entry still fails.
+        let broken = #"{"changes":[{"op":"upsert"}],"cursor":"1","hasMore":false}"#
+        XCTAssertThrowsError(try JSONDecoder().decode(SyncChangesPage.self, from: Data(broken.utf8)))
+    }
+
+    func testClientErrorMessageDoesNotBlameTheNetwork() {
+        let client = SyncAPIError.http(status: 409, code: nil, message: nil).errorDescription ?? ""
+        let server = SyncAPIError.http(status: 502, code: nil, message: nil).errorDescription ?? ""
+        XCTAssertNotEqual(client, server)
+        XCTAssertTrue(client.contains("409"))
+        XCTAssertEqual(L10n.string("error.httpClient", "x", bundle: TestBundles.lproj("de")),
+                       "Der Server konnte die Anfrage nicht ausführen (Fehler %d).")
     }
 
     // MARK: Spaces

@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import os
 
 /// Metadata of a signed-in account, stored as JSON in the app group
 /// (`accounts/<key16>/account.json`). The device token lives in the ``CredentialStore``.
@@ -92,10 +93,14 @@ public final class AccountStore: Sendable {
     /// Falls back to `Application Support/tech.jensk.synclet` when the group is not available
     /// (unsigned builds, tests).
     public convenience init(appGroup: String) {
-        let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)
-            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appending(path: "tech.jensk.synclet", directoryHint: .isDirectory)
-        self.init(directory: container)
+        if let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup) {
+            self.init(directory: container)
+        } else {
+            // App and extension would no longer share state – a signing/entitlement problem.
+            Log.account.fault("app group \(appGroup, privacy: .public) unavailable; falling back to Application Support")
+            self.init(directory: FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appending(path: "tech.jensk.synclet", directoryHint: .isDirectory))
+        }
     }
 
     /// Any directory (tests).

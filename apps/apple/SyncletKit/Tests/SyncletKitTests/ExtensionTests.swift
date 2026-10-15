@@ -35,9 +35,9 @@ final class ExtensionTests: XCTestCase {
     private func makeExtension() -> SyncletReplicatedExtension {
         let domain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier("0123456789abcdef"), displayName: "Synclet – jens@test")
         let context = self.context
-        let ext = SyncletReplicatedExtension(domain: domain, temporaryDirectory: tempDir) { context }
-        ext.now = { Date(timeIntervalSince1970: 1_791_031_815) } // 2026-10-03 12:50:15 UTC
-        return ext
+        // 2026-10-03 12:50:15 UTC
+        return SyncletReplicatedExtension(domain: domain, temporaryDirectory: tempDir,
+                                          now: { Date(timeIntervalSince1970: 1_791_031_815) }) { context }
     }
 
     private var context: SyncletReplicatedExtension.Context {
@@ -137,6 +137,142 @@ final class ExtensionTests: XCTestCase {
         XCTAssertEqual(upload.query["parentId"], "d_5")
         XCTAssertEqual(upload.query["name"], "Bericht.docx")
         XCTAssertEqual(upload.body, Data("meine Änderung".utf8))
+    }
+
+    func testModifyContentConflictWithoutItemFetchesServerState() async throws {
+        MockURLProtocol.reset { request in
+            switch (request.method, request.path) {
+            case ("PUT", _): return .json(412, #"{"statusCode":412,"message":"conflict","code":"conflict"}"#)
+            case ("GET", "/api/sync/v1/items/f_1"):
+                return .json(200, Fixtures.itemJSON(id: "f_1", parentId: "d_5", version: 6, contentEtag: "v6", etag: "v6"))
+            case ("POST", "/api/sync/v1/items/upload"):
+                return .json(201, Fixtures.itemJSON(id: "f_copy", parentId: "d_5", name: request.query["name"] ?? ""))
+            default:
+                XCTFail("unexpected: \(request.method) \(request.path)")
+                return .empty(500)
+            }
+        }
+        let local = FileProviderItem(Fixtures.item(id: "f_1", parentId: "d_5"), layout: Fixtures.layout)
+        let base = NSFileProviderItemVersion(contentVersion: Data("v3".utf8), metadataVersion: Data())
+        let result = try await makeExtension().modify(item: local, baseVersion: base, changedFields: [.contents],
+                                                      contents: Fixtures.tempFile("x"), context: context, progress: nil)
+        XCTAssertEqual(result.item.syncItem?.contentEtag, "v6")
+        XCTAssertTrue(result.shouldFetchContent)
+        XCTAssertEqual(MockURLProtocol.requests.map(\.method), ["PUT", "GET", "POST"])
+        XCTAssertEqual(MockURLProtocol.requests.last?.query["parentId"], "d_5")
+    }
+
+    func testRecreateFallsBackToSpaceRootWhenParentIsGoneToo() async throws {
+        MockURLProtocol.reset { request in
+            switch (request.method, request.query["parentId"]) {
+            case ("PUT", _): return .error(404, "not_found")
+            case ("POST", "d_gone"): return .error(404, "not_found")
+            case ("POST", "root"):
+                return .json(201, Fixtures.itemJSON(id: "f_new", parentId: "root", name: request.query["name"] ?? ""))
+            default:
+                XCTFail("unexpected: \(request.method) \(request.path)")
+                return .empty(500)
+            }
+        }
+        let local = TemplateItem(id: "f_1", parent: NSFileProviderItemIdentifier("d_gone"), name: "Bericht.docx", type: .data)
+        let base = NSFileProviderItemVersion(contentVersion: Data("v3".utf8), metadataVersion: Data())
+        do {
+            _ = try await makeExtension().modify(item: local, baseVersion: base, changedFields: [.contents],
+                                                 contents: Fixtures.tempFile("x"), context: context, progress: nil)
+            XCTFail("noSuchItem expected")
+        } catch {
+            XCTAssertEqual((error as NSError).code, NSFileProviderError.Code.noSuchItem.rawValue)
+        }
+        XCTAssertEqual(MockURLProtocol.requests.compactMap { $0.query["parentId"] }, ["d_gone", "root"])
+    }
+
+    // I1: PATCH 404 with a new parent is ambiguous.
+
+    func testMoveIntoVanishedFolderReportsMissingParentWithoutUpload() async throws {
+        MockURLProtocol.reset { request in
+            switch (request.method, request.path) {
+            case ("PATCH", _): return .error(404, "not_found")
+            case ("GET", "/api/sync/v1/items/f_1"): return .json(200, Fixtures.itemJSON(id: "f_1", parentId: "d_old"))
+            default:
+                XCTFail("unexpected: \(request.method) \(request.path)")
+                return .empty(500)
+            }
+        }
+        let target = NSFileProviderItemIdentifier("d_gone")
+        let local = TemplateItem(id: "f_1", parent: target, name: "Angebot.pdf", type: .pdf)
+        for fields: NSFileProviderItemFields in [[.parentItemIdentifier], [.parentItemIdentifier, .contents]] {
+            do {
+                _ = try await makeExtension().modify(item: local, baseVersion: NSFileProviderItemVersion(),
+                                                     changedFields: fields, contents: Fixtures.tempFile("x"),
+                                                     context: context, progress: nil)
+                XCTFail("noSuchItem expected")
+            } catch {
+                let ns = ErrorMapping.fileProviderError(error) as NSError
+                XCTAssertEqual(ns.domain, NSFileProviderErrorDomain)
+                XCTAssertEqual(ns.code, NSFileProviderError.Code.noSuchItem.rawValue)
+                XCTAssertEqual(ns.userInfo[NSFileProviderErrorNonExistentItemIdentifierKey] as? NSFileProviderItemIdentifier, target)
+            }
+        }
+        XCTAssertFalse(MockURLProtocol.requests.contains { $0.method == "POST" || $0.method == "PUT" })
+    }
+
+    func testMoveOfItemDeletedOnServerWithContentRecreates() async throws {
+        MockURLProtocol.reset { request in
+            switch (request.method, request.path) {
+            case ("PATCH", _), ("GET", "/api/sync/v1/items/f_1"): return .error(404, "not_found")
+            case ("POST", "/api/sync/v1/items/upload"):
+                return .json(201, Fixtures.itemJSON(id: "f_new", parentId: "d_2", name: request.query["name"] ?? ""))
+            default:
+                XCTFail("unexpected: \(request.method) \(request.path)")
+                return .empty(500)
+            }
+        }
+        let local = TemplateItem(id: "f_1", parent: NSFileProviderItemIdentifier("d_2"), name: "Angebot.pdf", type: .pdf)
+        do {
+            _ = try await makeExtension().modify(item: local, baseVersion: NSFileProviderItemVersion(),
+                                                 changedFields: [.parentItemIdentifier, .contents],
+                                                 contents: Fixtures.tempFile("lokal"), context: context, progress: nil)
+            XCTFail("noSuchItem expected")
+        } catch {
+            let ns = error as NSError
+            XCTAssertEqual(ns.code, NSFileProviderError.Code.noSuchItem.rawValue)
+            XCTAssertNil(ns.userInfo[NSFileProviderErrorNonExistentItemIdentifierKey])
+        }
+        let upload = try XCTUnwrap(MockURLProtocol.requests.first { $0.method == "POST" })
+        XCTAssertEqual(upload.query["parentId"], "d_2")
+        XCTAssertEqual(upload.body, Data("lokal".utf8))
+    }
+
+    func testMoveOfItemDeletedOnServerWithoutContentIsNoSuchItem() async {
+        MockURLProtocol.reset { request in
+            if request.method == "POST" { XCTFail("no upload expected") }
+            return .error(404, "not_found")
+        }
+        let local = TemplateItem(id: "f_1", parent: NSFileProviderItemIdentifier("d_2"), name: "Angebot.pdf", type: .pdf)
+        do {
+            _ = try await makeExtension().modify(item: local, baseVersion: NSFileProviderItemVersion(),
+                                                 changedFields: [.parentItemIdentifier], contents: nil,
+                                                 context: context, progress: nil)
+            XCTFail("noSuchItem expected")
+        } catch {
+            let ns = error as NSError
+            XCTAssertEqual(ns.code, NSFileProviderError.Code.noSuchItem.rawValue)
+            XCTAssertNil(ns.userInfo[NSFileProviderErrorNonExistentItemIdentifierKey])
+        }
+        XCTAssertEqual(MockURLProtocol.requests.map(\.method), ["PATCH", "GET"])
+    }
+
+    func testRenameOnlyOf404ItemDoesNotProbe() async {
+        MockURLProtocol.reset { _ in .error(404, "not_found") }
+        let local = TemplateItem(id: "f_1", parent: personal, name: "Neu.pdf", type: .pdf)
+        do {
+            _ = try await makeExtension().modify(item: local, baseVersion: NSFileProviderItemVersion(),
+                                                 changedFields: [.filename], contents: nil, context: context, progress: nil)
+            XCTFail("noSuchItem expected")
+        } catch {
+            XCTAssertEqual((error as NSError).code, NSFileProviderError.Code.noSuchItem.rawValue)
+        }
+        XCTAssertEqual(MockURLProtocol.requests.map(\.method), ["PATCH"])
     }
 
     func testModifyRenameAndMoveWithinSpaceUsesPatch() async throws {

@@ -143,6 +143,40 @@ final class EnumeratorTests: XCTestCase {
         XCTAssertEqual(log.all, ["personal": "20"])
     }
 
+    func testTwoFeedSpacesKeepTheirOwnCursors() async {
+        // Two feed spaces (a hypothetical second personal-kind space) pull from their own cursors.
+        let second = SyncSpace(id: "p2", kind: .personal, name: "P2", rootId: "d_p2", canWrite: true)
+        let layout = SpaceLayout(spaces: [Fixtures.personal, second])
+        MockURLProtocol.reset { request in
+            switch request.query["cursor"] {
+            case "10": return .json(200, #"{"changes":[{"op":"delete","id":"f_a"}],"cursor":"11","hasMore":false}"#)
+            case "50": return .json(200, #"{"changes":[{"op":"delete","id":"f_b"}],"cursor":"60","hasMore":true}"#)
+            default: return .empty(500)
+            }
+        }
+        let enumerator = FileProviderEnumerator(containerIdentifier: .workingSet, client: Fixtures.client(), layout: layout)
+        let observer = MockChangeObserver(expectation(description: "changes"))
+        enumerator.enumerateChanges(for: observer, from: SyncAnchorCodec.encode(["personal": "10", "p2": "50", "gone": "1"]))
+        await fulfillment(of: [observer.finished], timeout: 5)
+        XCTAssertNil(observer.error)
+        XCTAssertEqual(observer.deleted.map(\.rawValue), ["f_a", "f_b"])
+        XCTAssertEqual(anchorMap(observer.anchor), ["personal": "11", "p2": "60"])
+        XCTAssertEqual(observer.moreComing, true)
+        XCTAssertEqual(Set(MockURLProtocol.requests.compactMap { $0.query["cursor"] }), ["10", "50"])
+    }
+
+    func testFinishedTasksAreForgotten() async throws {
+        MockURLProtocol.reset { _ in .json(200, #"{"changes":[],"cursor":"2","hasMore":false}"#) }
+        let enumerator = FileProviderEnumerator(containerIdentifier: .workingSet, client: Fixtures.client(), layout: layout)
+        for _ in 0..<5 {
+            let observer = MockChangeObserver(expectation(description: "changes"))
+            enumerator.enumerateChanges(for: observer, from: SyncAnchorCodec.encode(["personal": "1"]))
+            await fulfillment(of: [observer.finished], timeout: 5)
+        }
+        for _ in 0..<50 where enumerator.runningTaskCount > 0 { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(enumerator.runningTaskCount, 0)
+    }
+
     func testSpaceMissingFromAnchorStartsAtHead() async {
         MockURLProtocol.reset { _ in .json(200, #"{"cursor":"77"}"#) }
         let enumerator = FileProviderEnumerator(containerIdentifier: .workingSet, client: Fixtures.client(), layout: layout)

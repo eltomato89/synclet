@@ -140,8 +140,10 @@ extension SyncAPIError: LocalizedError {
             return L10n.string("error.insufficientStorage", "The server's storage is full.")
         case .notModified:
             return L10n.string("error.notModified", "Unchanged.")
-        case .http(let status, _, _):
+        case .http(let status, _, _) where status >= 500:
             return String(format: L10n.string("error.http", "The server is not reachable right now (error %d). Please try again later."), status)
+        case .http(let status, _, _):
+            return String(format: L10n.string("error.httpClient", "The server could not carry out the request (error %d)."), status)
         case .invalidResponse:
             return L10n.string("error.invalidResponse", "Unexpected response from the server. Please try again later.")
         case .transport(_, let message):

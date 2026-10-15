@@ -39,19 +39,38 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
     open class var sharedConfiguration: SharedConfiguration { .fromInfoPlist() }
 
     public let domain: NSFileProviderDomain
-    private var contextProvider: @Sendable () -> Context? = { nil }
-    private var temporaryDirectoryOverride: URL?
-    /// Clock for conflict names (tests).
-    var now: @Sendable () -> Date = { Date() }
+    private let contextProvider: @Sendable () -> Context?
+    private let temporaryDirectoryOverride: URL?
+    /// Clock for conflict names (injected by tests).
+    let now: @Sendable () -> Date
 
     public required init(domain: NSFileProviderDomain) {
         self.domain = domain
+        self.contextProvider = Self.makeContextProvider(domain: domain, configuration: Self.sharedConfiguration)
+        self.temporaryDirectoryOverride = nil
+        self.now = { Date() }
         super.init()
-        let configuration = Self.sharedConfiguration
+    }
+
+    /// For tests and custom wiring: context, temp directory and clock given.
+    public init(domain: NSFileProviderDomain, temporaryDirectory: URL? = nil,
+                now: @escaping @Sendable () -> Date = { Date() },
+                contextProvider: @escaping @Sendable () -> Context?) {
+        self.domain = domain
+        self.temporaryDirectoryOverride = temporaryDirectory
+        self.contextProvider = contextProvider
+        self.now = now
+        super.init()
+    }
+
+    /// Reads the account (app group) and token (keychain group) of `domain` on every call.
+    private static func makeContextProvider(domain: NSFileProviderDomain,
+                                            configuration: SharedConfiguration) -> @Sendable () -> Context? {
         let credentials = CredentialStore(configuration: configuration)
         let accounts = configuration.appGroup.map { AccountStore(appGroup: $0) }
+        if accounts == nil { Log.fileProvider.error("SyncletAppGroup missing in the Info.plist") }
         let key16 = domain.identifier.rawValue
-        contextProvider = {
+        return {
             guard let accounts, let account = accounts.account(key16: key16),
                   credentials.token(for: account.key) != nil else { return nil }
             let key = account.key
@@ -67,15 +86,6 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
                                try? accounts.saveSyncState(SpaceSyncState(cursor: cursor), key: key, spaceId: spaceID)
                            })
         }
-    }
-
-    /// For tests and custom wiring: context and temp directory given.
-    public init(domain: NSFileProviderDomain, temporaryDirectory: URL? = nil,
-                contextProvider: @escaping @Sendable () -> Context?) {
-        self.domain = domain
-        self.temporaryDirectoryOverride = temporaryDirectory
-        self.contextProvider = contextProvider
-        super.init()
     }
 
     open func invalidate() {}
@@ -356,8 +366,16 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
         if newName != nil || newParent != nil {
             do {
                 current = try await client.updateItem(id: id, name: newName, parentID: newParent)
-            } catch SyncAPIError.notFound where hasNewContent {
-                return try await recreateDeleted(item: item, contents: newContents!, parentID: newParent,
+            } catch SyncAPIError.notFound {
+                // 404 is ambiguous on PATCH (§8.2): the item or the target folder is gone.
+                if newParent != nil, (try? await client.item(id: id)) != nil {
+                    Log.fileProvider.info("move target of \(id, privacy: .public) no longer exists")
+                    throw NSFileProviderError(.noSuchItem, userInfo: [
+                        NSFileProviderErrorNonExistentItemIdentifierKey: item.parentItemIdentifier,
+                    ])
+                }
+                guard hasNewContent, let newContents else { throw NSFileProviderError(.noSuchItem) }
+                return try await recreateDeleted(item: item, contents: newContents, parentID: newParent,
                                                  context: context, progress: progress)
             }
         }
@@ -389,6 +407,7 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
                     server = try await client.item(id: id)
                 }
                 let copyName = ConflictNaming.name(original: server.name, device: context.deviceName, date: now())
+                Log.fileProvider.info("conflict on \(id, privacy: .public): uploading copy \(copyName, privacy: .private)")
                 let parentID = server.parentId ?? newParent ?? (try? layout.serverParentId(for: item.parentItemIdentifier))
                     ?? SyncItem.rootID
                 _ = try await client.uploadNewFile(parentID: parentID, name: copyName, from: newContents,
@@ -414,6 +433,7 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
         let fallback = layout.spaces.first(where: \.canWrite)?.rootId ?? SyncItem.rootID
         let parent = parentID ?? (try? layout.serverParentId(for: item.parentItemIdentifier)) ?? fallback
         let modifiedAt = item.contentModificationDate ?? nil
+        Log.fileProvider.info("re-uploading \(item.filename, privacy: .private): deleted on the server, changed locally")
         do {
             _ = try await uploadNew(contents, name: item.filename, parentID: parent, modifiedAt: modifiedAt,
                                     client: context.client, progress: progress)

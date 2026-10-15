@@ -47,7 +47,7 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
     private let cursorSink: (@Sendable (_ spaceID: String, _ cursor: String) -> Void)?
     private let lock = NSLock()
     private var firstPageCursor: String?
-    private var tasks: [Task<Void, Never>] = []
+    private var tasks: [UUID: Task<Void, Never>] = [:]
 
     /// - Parameters:
     ///   - layout: current space layout (read on every call; spaces may change).
@@ -71,15 +71,29 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
     public func invalidate() {
         let running = lock.withLock { () -> [Task<Void, Never>] in
             defer { tasks.removeAll() }
-            return tasks
+            return Array(tasks.values)
         }
         running.forEach { $0.cancel() }
     }
 
+    /// Runs `operation` as a task that `invalidate()` cancels; finished tasks are forgotten.
     private func track(_ operation: @escaping @Sendable () async -> Void) {
-        let task = Task { await operation() }
-        lock.withLock { tasks.append(task) }
+        let id = UUID()
+        lock.withLock {
+            let task = Task { [weak self] in
+                await operation()
+                self?.finish(id)
+            }
+            tasks[id] = task
+        }
     }
+
+    private func finish(_ id: UUID) {
+        _ = lock.withLock { tasks.removeValue(forKey: id) }
+    }
+
+    /// Number of running tasks (tests).
+    var runningTaskCount: Int { lock.withLock { tasks.count } }
 
     // MARK: - Items
 
@@ -182,6 +196,9 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
                 box.value.finishEnumeratingChanges(upTo: SyncAnchorCodec.encode(next), moreComing: moreComing)
                 for (spaceID, cursor) in next { cursorSink?(spaceID, cursor) }
             } catch {
+                if case SyncAPIError.cursorExpired = error {
+                    Log.fileProvider.info("cursor expired: full re-enumeration")
+                }
                 box.value.finishEnumeratingWithError(ErrorMapping.fileProviderError(error))
             }
         }
@@ -212,7 +229,7 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
 ///
 /// The anchor is the list of space ids. A change of the spaces (the app signals the root
 /// container) reports vanished spaces as deleted and every current space as updated.
-public final class TopLevelEnumerator: NSObject, NSFileProviderEnumerator, @unchecked Sendable {
+public final class TopLevelEnumerator: NSObject, NSFileProviderEnumerator, Sendable {
     private let layoutProvider: @Sendable () -> SpaceLayout
 
     public init(layout: @escaping @Sendable () -> SpaceLayout) {

@@ -4,12 +4,14 @@ import XCTest
 
 final class MockDomains: FileProviderDomainControlling, @unchecked Sendable {
     private let lock = NSLock()
+    var failAdd = false
     private var domains: [String: String] = [:]
     private(set) var addCalls = 0
 
     var all: [String: String] { lock.withLock { domains } }
 
     func addDomain(identifier: String, displayName: String) async throws {
+        if failAdd { throw CocoaError(.featureUnsupported) }
         lock.withLock {
             addCalls += 1
             domains[identifier] = displayName
@@ -247,6 +249,21 @@ final class AccountManagerTests: XCTestCase {
         }
         XCTAssertTrue(accounts.all().isEmpty)
         XCTAssertTrue(domains.all.isEmpty)
+    }
+
+    func testFailingDomainStillEndsSessionAndRestoreRepairs() async throws {
+        let (manager, domains, credentials, _) = makeManager()
+        domains.failAdd = true
+        serve()
+        do {
+            _ = try await manager.add(server: Fixtures.server, tokens: tokens)
+            XCTFail("error expected")
+        } catch {}
+        XCTAssertTrue(MockURLProtocol.requests.contains { $0.path == "/api/auth/logout" })
+        XCTAssertEqual(credentials.token(for: "srv1:u1"), "syd_1")
+        domains.failAdd = false
+        let restored = try await manager.restoreMissingDomains()
+        XCTAssertEqual(restored, ["srv1:u1"])
     }
 
     func testRemoveRevokesAndCleansUp() async throws {

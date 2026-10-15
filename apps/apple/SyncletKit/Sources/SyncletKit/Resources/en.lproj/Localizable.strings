@@ -21,3 +21,4 @@
 "error.notModified" = "Unchanged.";
 "error.http" = "The server is not reachable right now (error %d). Please try again later.";
 "error.invalidResponse" = "Unexpected response from the server. Please try again later.";
+"error.httpClient" = "The server could not carry out the request (error %d).";

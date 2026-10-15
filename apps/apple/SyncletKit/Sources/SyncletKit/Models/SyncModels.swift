@@ -197,7 +197,8 @@ public enum SyncChange: Codable, Sendable, Hashable {
     }
 }
 
-/// Response of `GET /changes`.
+/// Response of `GET /changes`. Entries with an unknown `op` (a newer server) are
+/// skipped, so the page – and its cursor – still applies.
 public struct SyncChangesPage: Codable, Sendable, Hashable {
     public var changes: [SyncChange]
     public var cursor: String
@@ -207,6 +208,25 @@ public struct SyncChangesPage: Codable, Sendable, Hashable {
         self.changes = changes
         self.cursor = cursor
         self.hasMore = hasMore
+    }
+
+    private enum CodingKeys: String, CodingKey { case changes, cursor, hasMore }
+    private enum OpKey: String, CodingKey { case op }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        cursor = try c.decode(String.self, forKey: .cursor)
+        hasMore = try c.decode(Bool.self, forKey: .hasMore)
+        var list = try c.nestedUnkeyedContainer(forKey: .changes)
+        var changes: [SyncChange] = []
+        while !list.isAtEnd {
+            // Peek at `op` through a copy of the decoder position.
+            let entry = try list.superDecoder()
+            let op = try entry.container(keyedBy: OpKey.self).decode(String.self, forKey: .op)
+            guard op == "upsert" || op == "delete" else { continue }
+            changes.append(try SyncChange(from: entry))
+        }
+        self.changes = changes
     }
 }
 
