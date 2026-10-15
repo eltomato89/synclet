@@ -4,7 +4,7 @@ import { createTestApp, createTestUser, itIfCaseSensitive, TestContext } from '.
 import { IndexUser } from '../common/types';
 import { BusyPaths } from '../journal/busy-paths';
 import { JournalService } from '../journal/journal.service';
-import { IndexerService } from './indexer.service';
+import { folderMoveHasEvidence, IndexerService } from './indexer.service';
 
 describe('IndexerService', () => {
   let ctx: TestContext; let indexer: IndexerService; let journal: JournalService; let user: IndexUser; let root: string;
@@ -15,7 +15,7 @@ describe('IndexerService', () => {
     user = await createTestUser(ctx);
     root = path.join(ctx.config.dataRoot, user.username);
   });
-  afterEach(async () => { await ctx.close(); });
+  afterEach(async () => { jest.restoreAllMocks(); await ctx.close(); });
 
   const live = () => ctx.prisma.item.findMany({ where: { deletedAt: null }, orderBy: { path: 'asc' } });
   const byPath = async (p: string) => (await live()).find((i) => i.path === p)!;
@@ -198,6 +198,115 @@ describe('IndexerService', () => {
     expect(await indexer.fullScan(user)).toMatchObject({ created: 1, moved: 0 });
     expect((await byPath('orig.txt')).id).toBe(id);
     expect((await byPath('hard.txt')).id).not.toBe(id);
+  });
+
+  it('indexes a flat directory with 5,000 files quickly, in several transactions', async () => {
+    await mkdir(path.join(root, 'big'));
+    const names = Array.from({ length: 5000 }, (_, i) => `f${String(i).padStart(5, '0')}.txt`);
+    for (let i = 0; i < names.length; i += 200) {
+      await Promise.all(names.slice(i, i + 200).map((n) => writeFile(path.join(root, 'big', n), n)));
+    }
+    const lock = jest.spyOn(journal, 'lockUser');
+    const t0 = Date.now();
+    expect(await indexer.fullScan(user)).toMatchObject({ created: 5001, deleted: 0 });
+    expect(Date.now() - t0).toBeLessThan(20_000);
+    expect(lock.mock.calls.length).toBeGreaterThanOrEqual(4); // root, big, + 2 deferred create chunks
+    expect(await ctx.prisma.item.count({ where: { deletedAt: null } })).toBe(5001);
+    expect((await journal.changesSince(user.id, '0', 10_000)).entries).toHaveLength(5001);
+    const cursor = await journal.currentCursor(user.id);
+    expect(await indexer.fullScan(user)).toMatchObject({ created: 0, updated: 0, moved: 0, deleted: 0 });
+    expect(await journal.currentCursor(user.id)).toBe(cursor);
+  }, 60_000);
+
+  it('re-validates deferred creates under the lock (files gone meanwhile are not indexed)', async () => {
+    indexer.createChunk = 2;
+    await mkdir(path.join(root, 'd'));
+    await indexer.fullScan(user);
+    for (const n of ['a', 'b', 'c', 'd', 'e']) await writeFile(path.join(root, 'd', n), n);
+    let calls = 0;
+    const orig = journal.lockUser.bind(journal);
+    jest.spyOn(journal, 'lockUser').mockImplementation(async (tx, id) => {
+      if (++calls === 2) await rm(path.join(root, 'd'), { recursive: true }); // after the first chunk committed
+      return orig(tx, id);
+    });
+    const stats = await indexer.reconcileDir(user, 'd', { recursive: false });
+    expect(stats.created).toBe(2);
+    expect((await live()).filter((i) => i.type === 'file')).toHaveLength(2);
+  });
+
+  it('a failing directory does not abort the scan and tombstones nothing', async () => {
+    for (const d of ['A', 'B', 'C']) {
+      await mkdir(path.join(root, d));
+      await writeFile(path.join(root, d, 'old.txt'), d);
+    }
+    await indexer.fullScan(user);
+    for (const d of ['A', 'B', 'C']) {
+      await rm(path.join(root, d, 'old.txt'));
+      await writeFile(path.join(root, d, 'new.txt'), d);
+    }
+    type Seam = { listDisk(abs: string): Promise<unknown> };
+    const orig = (indexer as unknown as Seam).listDisk.bind(indexer);
+    jest.spyOn(indexer as unknown as Seam, 'listDisk').mockImplementation((abs: string) =>
+      abs === path.join(root, 'B') ? Promise.reject(Object.assign(new Error('EIO: i/o error'), { code: 'EIO' })) : orig(abs));
+    expect(await indexer.fullScan(user)).toMatchObject({ created: 2, deleted: 2 });
+    expect((await live()).map((i) => i.path)).toEqual(['A', 'A/new.txt', 'B', 'B/old.txt', 'C', 'C/new.txt']);
+  });
+
+  it('refuses to empty a user root above SYNCLET_MASS_DELETE_THRESHOLD unless disabled', async () => {
+    for (let i = 0; i < 26; i++) await writeFile(path.join(root, `f${i}.txt`), 'x');
+    await indexer.fullScan(user);
+    const cursor = await journal.currentCursor(user.id);
+    for (let i = 0; i < 26; i++) await rm(path.join(root, `f${i}.txt`));
+    expect(ctx.config.massDeleteThreshold).toBe(25);
+    expect(await indexer.fullScan(user)).toBeNull();
+    expect(await indexer.reconcileDir(user, '', { recursive: false })).toMatchObject({ deleted: 0 });
+    expect(await live()).toHaveLength(26);
+    expect(await journal.currentCursor(user.id)).toBe(cursor);
+    ctx.config.massDeleteThreshold = 0; // the admin confirms the deletion
+    expect(await indexer.fullScan(user)).toMatchObject({ deleted: 26 });
+    expect(await live()).toEqual([]);
+  });
+
+  it('allows emptying a small user root when the data root looks mounted', async () => {
+    await writeFile(path.join(root, 'only.txt'), 'x');
+    await indexer.fullScan(user);
+    await rm(path.join(root, 'only.txt'));
+    expect(await indexer.reconcileDir(user, '', { recursive: false })).toMatchObject({ deleted: 1 });
+  });
+
+  it('refuses to empty the user root while the data root looks unmounted (watcher path)', async () => {
+    await writeFile(path.join(root, 'a.txt'), 'x');
+    await indexer.fullScan(user);
+    const cursor = await journal.currentCursor(user.id);
+    await rm(path.join(root, 'a.txt'));
+    jest.spyOn(indexer, 'dataRootLooksMounted').mockResolvedValue(false);
+    expect(await indexer.reconcileDir(user, '', { recursive: false })).toMatchObject({ deleted: 0 });
+    expect(await live()).toHaveLength(1);
+    expect(await journal.currentCursor(user.id)).toBe(cursor);
+  });
+
+  it('folder inode-reuse guard requires shared children or two empty folders', () => {
+    const r = (dev: number, ino: number) => ({ dev: BigInt(dev), ino: BigInt(ino) });
+    expect(folderMoveHasEvidence([], [])).toBe(true);
+    expect(folderMoveHasEvidence([], [r(1, 5)])).toBe(false);
+    expect(folderMoveHasEvidence([r(1, 5)], [])).toBe(false);
+    expect(folderMoveHasEvidence([r(1, 5), r(1, 6)], [r(1, 7), r(1, 6)])).toBe(true);
+    expect(folderMoveHasEvidence([r(1, 5)], [r(2, 5)])).toBe(false); // same ino, other device
+    expect(folderMoveHasEvidence([{ dev: null, ino: null }], [r(1, 5)])).toBe(false);
+  });
+
+  it('does not pair a folder whose inode matches but whose content is entirely different', async () => {
+    await mkdir(path.join(root, 'X'));
+    await writeFile(path.join(root, 'X/child.txt'), 'c');
+    await indexer.fullScan(user);
+    const oldId = (await byPath('X')).id;
+    // Same directory inode, no shared child: indistinguishable from `rm -rf X; mkdir Y` with inode reuse.
+    await rm(path.join(root, 'X/child.txt'));
+    await writeFile(path.join(root, 'X/other.txt'), 'o');
+    await rename(path.join(root, 'X'), path.join(root, 'Y'));
+    await indexer.fullScan(user);
+    expect((await byPath('Y')).id).not.toBe(oldId);
+    expect((await live()).map((i) => i.path)).toEqual(['Y', 'Y/other.txt']);
   });
 
   itIfCaseSensitive('indexes case variants as separate items', async () => {
