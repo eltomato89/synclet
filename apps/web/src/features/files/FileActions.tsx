@@ -1,5 +1,5 @@
 import type { SyncItem } from '@synclet/shared';
-import { Download, Eye, FolderInput, FolderOpen, FolderPlus, MoreHorizontal, PencilLine, Trash2, Upload } from 'lucide-react';
+import { Download, Eye, FolderInput, FolderOpen, FolderPlus, MoreHorizontal, PencilLine, Share2, Trash2, Upload } from 'lucide-react';
 import type { ComponentType, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
@@ -18,6 +18,7 @@ export interface ItemActions {
   rename(item: SyncItem): void;
   move(item: SyncItem): void;
   remove(item: SyncItem): void;
+  share(item: SyncItem): void;
 }
 
 interface MenuParts {
@@ -43,6 +44,9 @@ function ItemMenuItems({ item, actions, parts: { Item, Separator, Shortcut } }: 
           <Eye />{t('files.preview')}<Shortcut>{t('files.shortcutPreview')}</Shortcut>
         </Item>
       )}
+      <Item onSelect={() => actions.share(item)} disabled={item.kind === 'root'}>
+        <Share2 />{t('shares.action')}
+      </Item>
       <Separator />
       <Item onSelect={() => actions.rename(item)} disabled={!caps.rename}>
         <PencilLine />{t('common.rename')}<Shortcut>F2</Shortcut>

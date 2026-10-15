@@ -1,6 +1,6 @@
 import type { SyncAccount, SyncItem } from '@synclet/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { FolderPlus, LayoutGrid, List, Plus, Upload } from 'lucide-react';
+import { FolderPlus, LayoutGrid, List, Plus, Share2, Upload } from 'lucide-react';
 import { type KeyboardEvent, lazy, type MouseEvent, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useParams } from 'react-router';
@@ -32,6 +32,7 @@ const RenameDialog = lazy(() => import('@/features/files/RenameDialog').then((m)
 const MoveDialog = lazy(() => import('@/features/files/MoveDialog').then((m) => ({ default: m.MoveDialog })));
 const DeleteDialog = lazy(() => import('@/features/files/DeleteDialog').then((m) => ({ default: m.DeleteDialog })));
 const QuickLook = lazy(() => import('@/features/preview/QuickLook').then((m) => ({ default: m.QuickLook })));
+const ShareDialog = lazy(() => import('@/features/shares/ShareDialog').then((m) => ({ default: m.ShareDialog })));
 
 const FOLDER_ID = /^(root|d_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const VIEW_KEY = 'synclet.files.view';
@@ -60,7 +61,7 @@ const notify = {
   error: (msg: string) => toast.error(msg, { position: 'bottom-center' }),
 };
 
-type DialogState = { kind: 'newFolder' } | { kind: 'rename' | 'move' | 'delete'; item: SyncItem };
+type DialogState = { kind: 'newFolder' } | { kind: 'rename' | 'move' | 'delete' | 'share'; item: SyncItem };
 
 export function FilesPage() {
   const { folderId = ROOT_ID } = useParams();
@@ -194,7 +195,9 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
     rename: (item) => { setSelectedId(item.id); if (item.capabilities.rename) openDialog({ kind: 'rename', item }); },
     move: (item) => { setSelectedId(item.id); if (item.capabilities.move) openDialog({ kind: 'move', item }); },
     remove: (item) => { setSelectedId(item.id); if (item.capabilities.delete) openDialog({ kind: 'delete', item }); },
+    share: (item) => { setSelectedId(item.id); if (item.kind !== 'root') openDialog({ kind: 'share', item }); },
   };
+  const selectedItem = items.find((i) => i.id === selectedId) ?? null;
   const startUpload = () => fileInput.current?.click();
   const newFolder = () => { if (canAdd) openDialog({ kind: 'newFolder' }); };
   const enqueue = (files: File[]) => { if (canAdd && files.length) queue.enqueue(files, folderId); };
@@ -258,6 +261,22 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
         <Breadcrumbs chain={ancestors.data ?? (ancestors.isError ? [] : undefined)} />
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
+        {selectedItem && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => actions.share(selectedItem)}
+                aria-label={t('shares.shareItem', { name: selectedItem.name })}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <Share2 /><span className="max-lg:hidden">{t('shares.share')}</span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>{t('shares.shareItem', { name: selectedItem.name })}</TooltipContent>
+          </Tooltip>
+        )}
         <ToggleGroup
           type="single"
           size="sm"
@@ -361,6 +380,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
             onClosed={(id) => { setQuickLook(null); focusItem(id); }}
             resolveSource={syncPreviewSource}
             onDownload={download}
+            onShare={actions.share}
           />
         )}
         {d?.kind === 'newFolder' && (
@@ -423,6 +443,16 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
               setSelectedId(next);
               notify.success(t('files.toast.deleted', { name: d.item.name }));
             }}
+          />
+        )}
+        {d?.kind === 'share' && (
+          <ShareDialog
+            key={d.n}
+            open={d.open}
+            onOpenChange={onDialogOpenChange}
+            // Opened from QuickLook: Radix hands focus back to QuickLook's share button.
+            onClosed={quickLook?.open ? undefined : restoreFocus}
+            item={d.item}
           />
         )}
       </Suspense>

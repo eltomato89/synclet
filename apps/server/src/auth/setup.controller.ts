@@ -6,6 +6,7 @@ import { ZodPipe } from '../common/zod.pipe';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from './auth.service';
 import { setRefreshCookie } from './auth.controller';
+import { RateLimits } from './rate-limit';
 import { UsersService } from './users.service';
 
 const SetupBody = z.object({
@@ -17,7 +18,7 @@ const SetupBody = z.object({
 
 @Controller('setup')
 export class SetupController {
-  constructor(private readonly prisma: PrismaService, private readonly users: UsersService, private readonly auth: AuthService) {}
+  constructor(private readonly prisma: PrismaService, private readonly users: UsersService, private readonly auth: AuthService, private readonly limits: RateLimits) {}
 
   @Get('status')
   async status() {
@@ -27,6 +28,7 @@ export class SetupController {
   @Post()
   @HttpCode(201)
   async setup(@Body(new ZodPipe(SetupBody)) body: z.infer<typeof SetupBody>, @Req() req: FastifyRequest, @Res({ passthrough: true }) reply: FastifyReply) {
+    this.limits.takeIp(req.ip, reply);
     if ((await this.prisma.user.count()) > 0) throw new SyncError('setup_done', 'setup already completed');
     const user = await this.users.create({ ...body, role: 'admin' });
     const { access, refreshToken } = await this.auth.issue(user, req.headers['user-agent']);

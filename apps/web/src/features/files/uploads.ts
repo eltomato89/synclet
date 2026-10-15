@@ -98,13 +98,23 @@ export class UploadQueue {
     xhr.onload = () => {
       this.xhrs.delete(t.id);
       if (xhr.status >= 200 && xhr.status < 300) {
-        t.status = 'done'; t.progress = 1; t.result = JSON.parse(xhr.responseText) as SyncItem;
-        this.onDone(t.parentId);
+        try {
+          t.result = JSON.parse(xhr.responseText) as SyncItem;
+          t.status = 'done'; t.progress = 1;
+          this.onDone(t.parentId);
+        } catch {
+          this.fail(t, 'server_error'); // 2xx with an unexpected body (proxy page, truncated response)
+        }
       } else if (xhr.status === 401 && !refreshed && this.refresh) {
         t.progress = 0;
         void this.refresh().then((ok) => {
           if (!this.tasks.includes(t)) return; // cancelled meanwhile
           if (ok) this.start(t, true); else this.fail(t, 'unauthorized');
+          this.pump();
+        }, () => {
+          // Transient refresh failure (network/5xx): fail the task instead of leaving it stuck in `uploading`.
+          if (!this.tasks.includes(t)) return;
+          this.fail(t, 'network');
           this.pump();
         });
         return;
