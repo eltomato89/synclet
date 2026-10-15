@@ -281,15 +281,37 @@ public final class SyncAPIClient: Sendable {
     /// Loads a thumbnail; `nil` when the server has none (yet) (404, 415).
     /// - Throws: ``SyncAPIError/notModified`` when `ifNoneMatch` still matches.
     public func thumbnail(itemID: String, size: Int = 256, ifNoneMatch: String? = nil) async throws -> SyncThumbnail? {
+        if case .thumbnail(let thumbnail) = try await thumbnailResult(itemID: itemID, size: size, ifNoneMatch: ifNoneMatch) {
+            return thumbnail
+        }
+        return nil
+    }
+
+    /// Outcome of `GET /items/:id/thumbnail` that keeps "not rendered yet" (404) apart from
+    /// "unsupported" (415), for the client's polling backoff (§9.1).
+    enum ThumbnailResult: Sendable, Equatable {
+        case thumbnail(SyncThumbnail)
+        /// `404`: not rendered yet, or never for this type.
+        case notRendered
+        /// `415`: the type has no thumbnails.
+        case unsupported
+    }
+
+    func thumbnailResult(itemID: String, size: Int, ifNoneMatch: String?) async throws -> ThumbnailResult {
         var request = try await makeRequest(.get, sync(["items", itemID, "thumbnail"]), query: [("size", String(size))])
         request.setValue("image/webp, */*", forHTTPHeaderField: "Accept")
+        // The caller caches (ThumbnailCache). With URLCache in the way, a `304` to our
+        // `If-None-Match` would be turned back into the cached `200` (the server sends
+        // `immutable, max-age=1y`), hiding the revalidation and caching the bytes twice.
+        request.cachePolicy = .reloadIgnoringLocalCacheData
         if let ifNoneMatch { request.setValue(Self.quoted(ifNoneMatch), forHTTPHeaderField: "If-None-Match") }
         let (data, response) = try await perform { try await self.session.data(for: request) }
         let http = try Self.httpResponse(response)
         switch http.statusCode {
-        case 200: return SyncThumbnail(data: data, etag: http.value(forHTTPHeaderField: "ETag").map(Self.unquoted))
+        case 200: return .thumbnail(SyncThumbnail(data: data, etag: http.value(forHTTPHeaderField: "ETag").map(Self.unquoted)))
         case 304: throw SyncAPIError.notModified
-        case 404, 415: return nil
+        case 404: return .notRendered
+        case 415: return .unsupported
         default: throw Self.error(http, data: data)
         }
     }

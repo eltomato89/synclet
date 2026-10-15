@@ -15,7 +15,8 @@ Sources/SyncletKit/
   FileProvider/  SyncletReplicatedExtension (base class of the extension), FileProviderEnumerator,
                  TopLevelEnumerator, FileProviderItem, SpaceLayout (virtual top level),
                  ItemMapping, ErrorMapping, ConflictNaming
-  Transfer/      TransferEngine (uploads: ≤ 32 MiB single request, above tus; replace via PUT),
+  Transfer/      TransferEngine (≤ 32 MiB single request – POST upload / PUT replace; above tus,
+                 replace with itemId + ifMatch),
                  TusUploader (tus 1.0, 16 MiB chunks), UploadStateStore (resume state),
                  RangeDownloader (streamed, resumable downloads)
   Pinning/       PinStore (offline pins per account/space), PinPolicy (content policy decision),
@@ -47,7 +48,7 @@ Key rules:
 cd apps/apple/SyncletKit && swift test
 ```
 
-A live transfer check (200 MB tus upload, optionally interrupted) runs against a real server:
+Live transfer checks (200 MB tus upload and 100 MB tus replace, optionally interrupted) run against a real server:
 `SYNCLET_LIVE_URL=… SYNCLET_LIVE_USER=… SYNCLET_LIVE_PASSWORD=… SYNCLET_LIVE_INTERRUPT='docker restart <container>' swift test --filter LiveTransferTests`.
 
 The iOS build can be checked with

@@ -121,6 +121,16 @@
         }
       }
     },
+    "Clear List": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Liste leeren"
+          }
+        }
+      }
+    },
     "Connect Synclet": {
       "localizations": {
         "de": {
@@ -131,12 +141,42 @@
         }
       }
     },
+    "Connected": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verbunden"
+          }
+        }
+      }
+    },
     "Connected as %@": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
             "value": "Verbunden als %@"
+          }
+        }
+      }
+    },
+    "Connected · Synced %@": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verbunden · Synchronisiert %@"
+          }
+        }
+      }
+    },
+    "Connecting…": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verbinde…"
           }
         }
       }
@@ -157,6 +197,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ganzer Bereich offline"
+          }
+        }
+      }
+    },
+    "Error": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fehler"
           }
         }
       }
@@ -291,6 +341,16 @@
         }
       }
     },
+    "Recent Problems": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Letzte Probleme"
+          }
+        }
+      }
+    },
     "Right-click a file or folder in Finder: “Download Now” loads it, “Remove Download” frees the space.": {
       "localizations": {
         "de": {
@@ -397,6 +457,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Bei Anmeldung starten"
+          }
+        }
+      }
+    },
+    "Status unknown": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Status unbekannt"
           }
         }
       }

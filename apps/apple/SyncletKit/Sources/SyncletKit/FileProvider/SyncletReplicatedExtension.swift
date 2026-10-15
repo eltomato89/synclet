@@ -63,7 +63,7 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
 
     public let domain: NSFileProviderDomain
     private let contextProvider: @Sendable () -> Context?
-    private let temporaryDirectoryOverride: URL?
+    let temporaryDirectoryOverride: URL?
     /// Clock for conflict names (injected by tests).
     let now: @Sendable () -> Date
 
@@ -115,6 +115,10 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
     }
 
     open func invalidate() {}
+
+    /// A user-visible problem of a create/modify (``ErrorMapping/problem(for:fileName:itemIdentifier:)``)
+    /// or a conflict copy. The platform subclass records it for the app (default: nothing).
+    open func report(_ problem: SyncProblem) {}
 
     // MARK: - Helpers
 
@@ -277,6 +281,10 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
                                                                          contentVersion: template.value.itemVersion?.contentVersion))
                 done.value(await context.withPolicy(FileProviderItem(created, layout: context.layout)), [], false, nil)
             } catch {
+                if let problem = ErrorMapping.problem(for: error, fileName: template.value.filename,
+                                                      itemIdentifier: template.value.itemIdentifier.rawValue) {
+                    report(problem)
+                }
                 done.value(nil, [], false, ErrorMapping.fileProviderError(error))
             }
         }
@@ -351,17 +359,22 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
                                               contents: newContents, context: context, progress: progressBox.value)
                 done.value(await context.withPolicy(result.item), [], result.shouldFetchContent, nil)
             } catch {
+                if let problem = ErrorMapping.problem(for: error, fileName: itemBox.value.filename,
+                                                      itemIdentifier: itemBox.value.itemIdentifier.rawValue) {
+                    report(problem)
+                }
                 done.value(nil, [], false, ErrorMapping.fileProviderError(error))
             }
         }
     }
 
-    /// Core of `modifyItem`: rename/move via PATCH, content via PUT with `If-Match`.
+    /// Core of `modifyItem`: rename/move via PATCH, content via ``TransferEngine/replace(file:itemId:baseEtag:modifiedAt:progress:resumeKey:)``
+    /// (`PUT` with `If-Match` up to 32 MiB, resumable tus replace above).
     ///
     /// - Root container and space folders: renaming/moving/new content →
     ///   `CocoaError(.featureUnsupported)`; other fields are ignored.
     /// - Moving into the root container → ``SpaceLayoutError/readOnlyTopLevel``.
-    /// - `412` on PUT: the local content is uploaded as a conflict copy
+    /// - `412` (PUT, or tus replace at creation or completion): the local content is uploaded as a conflict copy
     ///   `"<base> (Konflikt <device> <date>).<ext>"` into the same folder and the server
     ///   state is returned (`shouldFetchContent`).
     /// - `404` on PUT (deleted remotely, changed locally): the local content is uploaded as
@@ -444,16 +457,20 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
                     server = try await client.item(id: id)
                 }
                 let copyName = ConflictNaming.name(original: server.name, device: context.deviceName, date: now())
-                Log.fileProvider.info("conflict on \(id, privacy: .public): uploading copy \(copyName, privacy: .private)")
                 let parentID = server.parentId ?? newParent ?? (try? layout.serverParentId(for: item.parentItemIdentifier))
                     ?? SyncItem.rootID
-                // Keyed by the item, not the name: the copy's name contains the minute, so a
-                // retry after the minute boundary still resumes the same upload.
-                _ = try await transfers.upload(file: newContents, newIn: parentID, name: copyName,
+                // Keyed by the item, not the name, and `nameMayChange`: the copy's name contains
+                // the minute, so a retry after the minute boundary resumes the same upload and
+                // keeps the name of its first attempt (also when the original was renamed on the
+                // server meanwhile – the copy then keeps the old base name).
+                let copy = try await transfers.upload(file: newContents, newIn: parentID, name: copyName,
                                                modifiedAt: modifiedAt, progress: nil,
                                                resumeKey: Self.resumeKey(NSFileProviderItemIdentifier("conflict:" + item.itemIdentifier.rawValue),
                                                                          contentVersion: baseVersion.contentVersion),
-                                               reuseIdentical: false)
+                                               reuseIdentical: false, nameMayChange: true)
+                Log.fileProvider.info("conflict on \(id, privacy: .public): uploaded copy \(copy.name, privacy: .private)")
+                report(SyncProblem(code: .conflictCopy, fileName: server.name,
+                                   itemIdentifier: layout.providerIdentifier(forServerID: copy.id).rawValue, detail: copy.name))
                 signalWorkingSet()
                 return (FileProviderItem(server, layout: layout), true)
             } catch SyncAPIError.notFound {
