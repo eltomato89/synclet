@@ -635,6 +635,37 @@ final class ExtensionTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: result.url, encoding: .utf8), "Stand 2")
     }
 
+    /// M4: a keychain read error is transient (`serverUnreachable`); only a missing token
+    /// means "sign in again" (`notAuthenticated`, which writes the auth-failure marker).
+    func testKeychainReadFailureIsTransientNotSignInRequired() throws {
+        let accounts = AccountStore(directory: tempDir)
+        let stored = try accounts.upsert(StoredAccount(key: "srv1:u1", serverURL: Fixtures.server, userId: "u1",
+                                                      username: "jens", displayName: "Jens", spaces: [Fixtures.personal]))
+        let domain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(stored.key16), displayName: "x")
+        func ext(_ storage: SecureStorage) -> SyncletReplicatedExtension {
+            let provider = SyncletReplicatedExtension.makeContextProvider(domain: domain, accounts: accounts,
+                                                                         credentials: CredentialStore(storage: storage))
+            return SyncletReplicatedExtension(domain: domain, temporaryDirectory: tempDir, contextProvider: provider)
+        }
+        func code(_ ext: SyncletReplicatedExtension) -> Int? {
+            do {
+                _ = try ext.context()
+                return nil
+            } catch {
+                return (ErrorMapping.fileProviderError(error) as NSError).code
+            }
+        }
+
+        XCTAssertEqual(code(ext(LockedKeychain())), NSFileProviderError.Code.serverUnreachable.rawValue)
+        XCTAssertEqual(code(ext(InMemorySecureStorage())), NSFileProviderError.Code.notAuthenticated.rawValue)
+        let ok = InMemorySecureStorage()
+        ok.write("syd_x", account: "srv1:u1")
+        XCTAssertNil(code(ext(ok)))
+        XCTAssertThrowsError(try ext(LockedKeychain()).enumerator(for: personal, request: NSFileProviderRequest())) { error in
+            XCTAssertEqual((ErrorMapping.fileProviderError(error) as NSError).code, NSFileProviderError.Code.serverUnreachable.rawValue)
+        }
+    }
+
     func testEnumeratorsAndMissingCredentials() throws {
         let domain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier("0123456789abcdef"), displayName: "x")
         let signedOut = SyncletReplicatedExtension(domain: domain) { nil }
@@ -666,3 +697,11 @@ final class ReportRecordingExtension: SyncletReplicatedExtension, @unchecked Sen
     }
 }
 
+
+/// A keychain that cannot be read right now (`errSecInteractionNotAllowed`).
+struct LockedKeychain: SecureStorage {
+    func read(account: String) -> String? { nil }
+    func lookup(account: String) -> SecureLookup { .failed(errSecInteractionNotAllowed) }
+    func write(_ value: String, account: String) -> OSStatus { errSecInteractionNotAllowed }
+    func remove(account: String) {}
+}

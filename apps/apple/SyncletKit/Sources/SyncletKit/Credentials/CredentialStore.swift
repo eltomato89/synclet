@@ -72,6 +72,12 @@ public final class CredentialStore: Sendable {
         storage.read(account: accountKey)
     }
 
+    /// The device token, or why there is none: ``SecureLookup/notFound`` means signed out,
+    /// ``SecureLookup/failed(_:)`` a transient keychain error (retry, do not ask for a sign-in).
+    public func lookupToken(for accountKey: String) -> SecureLookup {
+        storage.lookup(account: accountKey)
+    }
+
     /// Deletes the device token of an account.
     public func delete(for accountKey: String) {
         storage.remove(account: accountKey)

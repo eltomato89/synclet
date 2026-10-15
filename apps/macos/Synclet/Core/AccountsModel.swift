@@ -87,7 +87,8 @@ final class AccountsModel {
     func reload() {
         entries = manager.accounts.all().map { account in
             let failed = AuthFailureSignal.pending(container: container, key16: account.key16) != nil
-            let missingToken = manager.credentials.token(for: account.key) == nil
+            // Only a missing token asks for a sign-in; a keychain read error is transient.
+            let missingToken = manager.credentials.lookupToken(for: account.key) == .notFound
             return AccountEntry(account: account, status: failed || missingToken ? .needsLogin : .ok)
         }
         syncMonitors()

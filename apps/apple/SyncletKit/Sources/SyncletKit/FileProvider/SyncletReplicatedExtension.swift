@@ -63,14 +63,19 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
     open class var sharedConfiguration: SharedConfiguration { .fromInfoPlist() }
 
     public let domain: NSFileProviderDomain
-    private let contextProvider: @Sendable () -> Context?
+    /// `nil` ⇒ signed out (`notAuthenticated`); throws for transient failures (keychain).
+    private let contextProvider: @Sendable () throws -> Context?
     let temporaryDirectoryOverride: URL?
     /// Clock for conflict names (injected by tests).
     let now: @Sendable () -> Date
 
     public required init(domain: NSFileProviderDomain) {
         self.domain = domain
-        self.contextProvider = Self.makeContextProvider(domain: domain, configuration: Self.sharedConfiguration)
+        let configuration = Self.sharedConfiguration
+        if configuration.appGroup == nil { Log.fileProvider.error("SyncletAppGroup missing in the Info.plist") }
+        self.contextProvider = Self.makeContextProvider(domain: domain,
+                                                        accounts: configuration.appGroup.map { AccountStore(appGroup: $0) },
+                                                        credentials: CredentialStore(configuration: configuration))
         self.temporaryDirectoryOverride = nil
         self.now = { Date() }
         super.init()
@@ -95,7 +100,7 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
     /// For tests and custom wiring: context, temp directory and clock given.
     public init(domain: NSFileProviderDomain, temporaryDirectory: URL? = nil,
                 now: @escaping @Sendable () -> Date = { Date() },
-                contextProvider: @escaping @Sendable () -> Context?) {
+                contextProvider: @escaping @Sendable () throws -> Context?) {
         self.domain = domain
         self.temporaryDirectoryOverride = temporaryDirectory
         self.contextProvider = contextProvider
@@ -103,22 +108,32 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
         super.init()
     }
 
+    /// The keychain could not be read (not "no token"): retry later, never "sign in again".
+    static let keychainUnavailableError = SyncAPIError.transport(
+        .resourceUnavailable, message: "The keychain is not available right now. It will be retried.")
+
     /// Reads the account (app group) and token (keychain group) of `domain` on every call.
-    private static func makeContextProvider(domain: NSFileProviderDomain,
-                                            configuration: SharedConfiguration) -> @Sendable () -> Context? {
-        let credentials = CredentialStore(configuration: configuration)
-        let accounts = configuration.appGroup.map { AccountStore(appGroup: $0) }
-        if accounts == nil { Log.fileProvider.error("SyncletAppGroup missing in the Info.plist") }
+    /// No account or no token ⇒ `nil` (sign-in required); a keychain read error ⇒ a
+    /// transient error (`serverUnreachable`, no auth-failure marker).
+    static func makeContextProvider(domain: NSFileProviderDomain, accounts: AccountStore?,
+                                    credentials: CredentialStore) -> @Sendable () throws -> Context? {
         let key16 = domain.identifier.rawValue
         return {
-            guard let accounts, let account = accounts.account(key16: key16),
-                  credentials.token(for: account.key) != nil else { return nil }
+            guard let accounts, let account = accounts.account(key16: key16) else { return nil }
+            switch credentials.lookupToken(for: account.key) {
+            case .found: break
+            case .notFound: return nil
+            case .failed(let status):
+                Log.fileProvider.error("keychain read failed (\(status, privacy: .public)): retrying later")
+                throw keychainUnavailableError
+            }
             let key = account.key
             let client = SyncAPIClient(baseURL: account.serverURL, token: {
-                guard let token = credentials.token(for: key) else {
-                    throw SyncAPIError.unauthorized(message: "no device token")
+                switch credentials.lookupToken(for: key) {
+                case .found(let token): return token
+                case .notFound: throw SyncAPIError.unauthorized(message: "no device token")
+                case .failed: throw keychainUnavailableError
                 }
-                return token
             })
             return Context(client: client, deviceName: account.deviceName ?? "Mac",
                            layout: SpaceLayout(spaces: account.spaces),
@@ -142,7 +157,7 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
     // MARK: - Helpers
 
     func context() throws -> Context {
-        guard let context = contextProvider() else { throw NSFileProviderError(.notAuthenticated) }
+        guard let context = try contextProvider() else { throw NSFileProviderError(.notAuthenticated) }
         return context
     }
 
@@ -216,7 +231,7 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
         if containerItemIdentifier == .trashContainer { throw NSFileProviderError(.noSuchItem) }
         let context = try context()
         let fallback = context.layout
-        let layout: @Sendable () -> SpaceLayout = { [contextProvider] in contextProvider()?.layout ?? fallback }
+        let layout: @Sendable () -> SpaceLayout = { [contextProvider] in (try? contextProvider())??.layout ?? fallback }
         if containerItemIdentifier == .rootContainer {
             let store = context.pinning?.store
             return TopLevelEnumerator(layout: layout, pins: { store?.allPins(spaces: layout().spaces.map(\.id)) ?? [:] })
