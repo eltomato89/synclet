@@ -148,5 +148,6 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     // Last: tombstones purged above no longer keep their derivatives alive.
     const gc = await this.derivativesGc.run();
     if (gc.dirs || gc.jobs || gc.texts) this.log.log(`derivatives gc: ${gc.dirs} dirs, ${gc.jobs} job rows, ${gc.texts} extracted texts removed`);
+    if (gc.requeued) this.log.log(`derivatives gc: ${gc.requeued} thumbnail job(s) with missing files requeued`);
   }
 }

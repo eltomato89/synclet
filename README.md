@@ -37,7 +37,7 @@ The `worker` service runs the same image in the worker role (`SYNCLET_ROLE=worke
 
 ### Disk usage and privacy
 
-- `/meta/derived` holds thumbnails and previews, typically a few percent of the size of your media. It can be deleted at any time; the worker regenerates it.
+- `/meta/derived` holds thumbnails and previews, typically a few percent of the size of your media. It can be deleted at any time; the worker regenerates it (a thumbnail is requeued as soon as it is requested and found missing, the rest in batches by the daily maintenance run, which also runs at every server start).
 - `/meta/uploads` holds partial resumable uploads. Abandoned uploads are removed after 24 hours. Nothing appears in `SYNCLET_DATA` until an upload completes.
 - Thumbnails and extracted text (used for search) are stored in `/meta` and in the database. When a file is deleted for good (trash expiry or emptying the trash), its derivatives and extracted text are removed by garbage collection.
 

@@ -9,6 +9,7 @@ import { assignDisplayNames } from '../common/names';
 import { SyncError } from '../common/sync-error';
 import type { IndexUser } from '../common/types';
 import { APP_CONFIG, AppConfig } from '../config';
+import { DerivativesGc } from '../derivatives/derivatives-gc';
 import { DerivedStore } from '../derivatives/derived-store';
 import { FilesService } from '../files/files.service';
 import { ItemStore } from '../journal/item-store';
@@ -47,6 +48,7 @@ export class SharesService {
     private readonly files: FilesService,
     private readonly store: ItemStore,
     private readonly derived: DerivedStore,
+    private readonly gc: DerivativesGc,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -229,7 +231,10 @@ export class SharesService {
     const job = await this.prisma.derivativeJob.findUnique({ where: { sha_kind: { sha, kind: 'thumb' } } });
     if (job?.status !== 'done') throw new SyncError('not_found');
     const file = this.derived.pathFor(sha, 'thumb', size);
-    if (!(await this.derived.has(file))) throw new SyncError('not_found');
+    if (!(await this.derived.has(file))) {
+      await this.gc.requeueThumb(sha); // derived files lost: regenerate
+      throw new SyncError('not_found');
+    }
     return { path: file, sha };
   }
 

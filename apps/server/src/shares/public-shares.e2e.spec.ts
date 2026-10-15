@@ -456,10 +456,14 @@ describe('Share links', () => {
       expect(res.headers['x-content-type-options']).toBe('nosniff');
       expect(res.headers['cache-control']).toBe('private, no-store');
       expect(res.body).toBe('webp-256');
-      expect((await pub('GET', `${s.token}/items/${img.id}/thumbnail?size=1024`)).statusCode).toBe(404);
       expect((await pub('GET', `${s.token}/items/${img.id}/thumbnail?size=999`)).statusCode).toBe(400);
       const listed = (await pub('GET', `${s.token}/items`)).json().find((e: { id: string }) => e.id === img.id);
       expect(listed.hasThumbnail).toBe(true);
+      // A done job whose file is missing (derived store deleted): 404 and the job is requeued.
+      expect((await pub('GET', `${s.token}/items/${img.id}/thumbnail?size=1024`)).statusCode).toBe(404);
+      expect(await ctx.prisma.derivativeJob.findUnique({ where: { sha_kind: { sha, kind: 'thumb' } } })).toMatchObject({ status: 'pending', attempts: 0 });
+      const relisted = (await pub('GET', `${s.token}/items`)).json().find((e: { id: string }) => e.id === img.id);
+      expect(relisted.hasThumbnail).toBe(false);
     });
 
     it('external upload lands in the shared folder or a subfolder, renames on conflict, and is journaled', async () => {

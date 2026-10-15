@@ -318,6 +318,32 @@ describe('derivative worker (DB)', () => {
       expect(await job(sha, 'thumb')).not.toBeNull(); // left for the job pass of the next run
     });
 
+    it('requeues done thumbnail jobs whose files are missing (e.g. /meta/derived deleted)', async () => {
+      const intact = await addFile('a.png', { fixture: 'sample.png' }, { hash: true });
+      const lost = await addFile('b.png', 'other bytes', { hash: true });
+      const half = fakeSha('9');
+      await ctx.prisma.derivativeJob.createMany({
+        data: [
+          { sha: intact.contentHash!, kind: 'thumb', status: 'done', attempts: 1 },
+          { sha: lost.contentHash!, kind: 'thumb', status: 'done', attempts: 2 },
+          { sha: lost.contentHash!, kind: 'text', status: 'done', attempts: 1 },
+          { sha: half, kind: 'thumb', status: 'done', attempts: 1 },
+        ],
+      });
+      for (const size of [256, 1024] as const) await store.writeAtomic(store.pathFor(intact.contentHash!, 'thumb', size), Buffer.from('x'));
+      await store.writeAtomic(store.pathFor(half, 'thumb', 256), Buffer.from('x')); // 1024 missing
+      await ctx.prisma.trashEntry.create({ // keeps `half` referenced
+        data: { ownerId: user.id, itemId: '00000000-0000-4000-8000-000000000003', type: 'file', name: 'h.png', originalPath: 'h.png', size: 1n, storePath: '/z',
+          manifest: [{ id: 'h', type: 'file', path: 'h.png', name: 'h.png', mtime: new Date().toISOString(), size: 1, contentHash: half }] },
+      });
+      const res = await ctx.app.get(DerivativesGc).run();
+      expect(res.requeued).toBe(2);
+      expect(await job(intact.contentHash!, 'thumb')).toMatchObject({ status: 'done' });
+      expect(await job(lost.contentHash!, 'thumb')).toMatchObject({ status: 'pending', attempts: 0, lockedAt: null });
+      expect(await job(lost.contentHash!, 'text')).toMatchObject({ status: 'done' }); // text lives in the DB
+      expect(await job(half, 'thumb')).toMatchObject({ status: 'pending', attempts: 0 });
+    });
+
     it('keeps shas of live items, trash manifests and unfinished jobs; removes others and their job rows', async () => {
       const live = await addFile('live.png', { fixture: 'sample.png' }, { hash: true });
       const trashed = fakeSha('b'); const inFlight = fakeSha('c'); const dead = fakeSha('d'); const oldFormat = fakeSha('e');
@@ -341,7 +367,9 @@ describe('derivative worker (DB)', () => {
         ],
       });
       await ctx.prisma.itemText.createMany({ data: [live.contentHash!, trashed, inFlight, dead, oldFormat].map((sha) => ({ sha, content: `text ${sha}` })) });
-      for (const s of [live.contentHash!, trashed, inFlight, dead, oldFormat]) await store.writeAtomic(store.pathFor(s, 'thumb', 256), Buffer.from('x'));
+      for (const s of [live.contentHash!, trashed, inFlight, dead, oldFormat]) {
+        for (const size of [256, 1024] as const) await store.writeAtomic(store.pathFor(s, 'thumb', size), Buffer.from('x'));
+      }
       // Stale temp leftovers (> 1 h) go, fresh ones (a write in progress) stay.
       const old = new Date(Date.now() - 2 * 3600_000);
       await mkdir(path.join(store.root, '.tmp', 'job-old'), { recursive: true });
@@ -352,7 +380,7 @@ describe('derivative worker (DB)', () => {
       await utimes(staleTmp, old, old);
 
       const res = await ctx.app.get(DerivativesGc).run();
-      expect(res).toEqual({ dirs: 2, jobs: 3, texts: 2 });
+      expect(res).toEqual({ dirs: 2, jobs: 3, texts: 2, requeued: 0 });
       expect((await ctx.prisma.itemText.findMany()).map((t) => t.sha).sort()).toEqual([live.contentHash!, trashed, inFlight].sort());
       for (const s of [live.contentHash!, trashed, inFlight]) expect(await store.has(store.pathFor(s, 'thumb', 256))).toBe(true);
       for (const s of [dead, oldFormat]) expect(await store.has(store.pathFor(s, 'thumb', 256))).toBe(false);
