@@ -75,7 +75,8 @@ export class AuthService {
     return this.issue(u, userAgent);
   }
 
-  async login(login: string, password: string, userAgent?: string) {
+  /** Verifies login (username or email) + local password; throws `unauthorized` otherwise. */
+  async verifyCredentials(login: string, password: string): Promise<User> {
     const key = login.trim().toLowerCase();
     const user = await this.prisma.user.findFirst({
       where: { disabledAt: null, OR: [{ email: key }, { username: { equals: login.trim(), mode: 'insensitive' } }] },
@@ -85,6 +86,11 @@ export class AuthService {
     // Always run one argon2 verification so unknown/disabled users are not distinguishable by timing.
     const valid = await argon2.verify(hash ?? (await dummyHash()), password).catch(() => false);
     if (!user || !hash || !valid) throw new SyncError('unauthorized', 'invalid credentials');
+    return user;
+  }
+
+  async login(login: string, password: string, userAgent?: string) {
+    const user = await this.verifyCredentials(login, password);
     // Checked only after a valid password, so the rule does not reveal which accounts exist or are admins.
     if (!(await this.sso.isPasswordLoginAllowed(user))) throw new SyncError('password_login_disabled', 'password login is disabled, use single sign-on');
     return this.issueLogin(user, userAgent);
