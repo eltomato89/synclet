@@ -1,10 +1,9 @@
-import { Inject, Injectable } from '@nestjs/common';
-import type { User } from '@prisma/client';
+import { Injectable } from '@nestjs/common';
 import type { AppTokenResponse } from '@synclet/shared';
 import { createHash, randomBytes } from 'node:crypto';
-import { APP_CONFIG, AppConfig } from '../config';
 import { SyncError } from '../common/sync-error';
 import { PrismaService } from '../prisma/prisma.service';
+import { SsoSettingsService } from '../sso/sso-settings.service';
 import { resolveAppClient } from './app-clients';
 import { AuthService } from './auth.service';
 
@@ -39,7 +38,7 @@ export class AppLoginService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auth: AuthService,
-    @Inject(APP_CONFIG) private readonly config: AppConfig,
+    private readonly sso: SsoSettingsService,
   ) {}
 
   client(clientId: string, redirectUri: string) {
@@ -48,18 +47,11 @@ export class AppLoginService {
     return { id: client.id, name: client.name };
   }
 
-  /** Same semantics as the admin setting: non-admins are blocked when password login is off, unless SSO emergency mode. */
-  async passwordLoginAllowed(user: Pick<User, 'role'>): Promise<boolean> {
-    if (user.role === 'admin' || this.config.ssoEmergency) return true;
-    const settings = await this.prisma.authSettings.findUnique({ where: { id: 1 }, select: { passwordLoginForUsers: true } });
-    return settings?.passwordLoginForUsers ?? true;
-  }
-
   /** Password path: verifies credentials and applies the password-login rule, then issues a code. */
   async authorizeWithPassword(login: string, password: string, params: AuthorizeParams): Promise<{ code: string }> {
     this.client(params.clientId, params.redirectUri);
     const user = await this.auth.verifyCredentials(login, password);
-    if (!(await this.passwordLoginAllowed(user))) throw new SyncError('password_login_disabled', 'password login is disabled for users');
+    if (!(await this.sso.isPasswordLoginAllowed(user))) throw new SyncError('password_login_disabled', 'password login is disabled for users');
     return this.issueCode(user.id, params);
   }
 
@@ -97,8 +89,7 @@ export class AppLoginService {
 
     const user = await this.prisma.user.findUnique({ where: { id: entry.userId } });
     if (!user || user.disabledAt) throw new SyncError('unauthorized');
-    await this.prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
-    const { access, refreshToken } = await this.auth.issue(user, userAgent);
+    const { access, refreshToken } = await this.auth.issueLogin(user, userAgent);
     return { ...access, refreshToken };
   }
 

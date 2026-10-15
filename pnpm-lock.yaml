@@ -92,6 +92,9 @@ importers:
       jest:
         specifier: ^29.7.0
         version: 29.7.0(@types/node@24.19.2)
+      jose:
+        specifier: 6.2.12
+        version: 6.2.12
       prisma:
         specifier: ^6.0.0
         version: 6.19.3(typescript@5.9.3)
