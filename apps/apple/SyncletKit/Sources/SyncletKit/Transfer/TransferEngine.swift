@@ -139,6 +139,15 @@ public final class TransferEngine: Sendable {
                     && existing.sha256 != nil && existing.sha256 == (try? Self.sha256(of: file)) {
             return existing
         } catch SyncAPIError.nameConflict {
+            // Another file has the name. An earlier attempt may already have been published
+            // under a server-picked `(n)` name with its response lost: reuse that one
+            // (size + sha256, and `modifiedAt` when known) instead of uploading `(n+1)`.
+            if let published = try await findIdentical(name: name, parentId: parentId, modifiedAt: modifiedAt,
+                                                       size: try Self.fileInfo(file).size, hash: LazyHash(file: file),
+                                                       allowSuffixed: true) {
+                progress?.completedUnitCount = published.size
+                return published
+            }
             return try await api.uploadNewFile(parentID: parentId, name: name, from: file, onConflict: .rename,
                                                modifiedAt: modifiedAt, progress: progress)
         }

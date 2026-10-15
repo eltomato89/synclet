@@ -474,7 +474,10 @@ final class ExtensionTests: XCTestCase {
     func testCreateFileNameConflictRenamesUnlessIdentical() async throws {
         let existing = Fixtures.itemJSON(id: "f_old", parentId: "d_1", name: "Notiz.txt", sha256: "0000")
         MockURLProtocol.reset { request in
-            request.query["onConflict"] == "fail"
+            if request.method == "GET" { // children lookup for an earlier published "(n)" copy
+                return .json(200, #"{"items":[\#(existing)],"nextPageToken":null,"cursor":"1"}"#)
+            }
+            return request.query["onConflict"] == "fail"
                 ? .error(409, "name_conflict", item: existing)
                 : .json(201, Fixtures.itemJSON(id: "f_new", parentId: "d_1", name: "Notiz (2).txt"))
         }
@@ -482,7 +485,7 @@ final class ExtensionTests: XCTestCase {
         let created = try await makeExtension().create(template: template, contents: Fixtures.tempFile("x"), modifiedAt: nil,
                                                        mayAlreadyExist: false, context: context, progress: nil)
         XCTAssertEqual(created.name, "Notiz (2).txt")
-        XCTAssertEqual(MockURLProtocol.requests.map { $0.query["onConflict"] }, ["fail", "rename"])
+        XCTAssertEqual(MockURLProtocol.requests.filter { $0.method == "POST" }.map { $0.query["onConflict"] }, ["fail", "rename"])
     }
 
     func testCreateReusesIdenticalExistingFile() async throws {
