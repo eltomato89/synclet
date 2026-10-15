@@ -11,10 +11,10 @@ export function useTrash() {
 /**
  * Everything a trash operation can change: the trash itself, used storage, and every folder
  * listing (a restore lands wherever the original parent is now, or at the root). Share links
- * follow their item, so they reappear or vanish with it.
+ * follow their item, so they reappear or vanish with it; recent files and search results too.
  */
 export function invalidateAfterTrashChange(qc: QueryClient) {
-  for (const key of [TRASH_KEY, ['account'], ['folder'], ['subfolders'], ['shares']]) {
+  for (const key of [TRASH_KEY, ['account'], ['folder'], ['subfolders'], ['shares'], ['recent'], ['search']]) {
     void qc.invalidateQueries({ queryKey: key });
   }
 }

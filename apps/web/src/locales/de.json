@@ -160,7 +160,8 @@
       "unauthorized": "Deine Sitzung ist abgelaufen. Melde dich erneut an.",
       "server_error": "Der Server hat unerwartet geantwortet.",
       "network": "Keine Verbindung zum Server.",
-      "unknown": "Das hat nicht geklappt. Versuch es noch einmal."
+      "unknown": "Das hat nicht geklappt. Versuch es noch einmal.",
+      "upload_expired": "Der unterbrochene Upload ist abgelaufen. Lade die Datei noch einmal hoch."
     },
     "uploads": {
       "region": "Uploads",
@@ -467,5 +468,45 @@
       "network": "Keine Verbindung zum Server. Prüfe deine Internetverbindung und versuch es erneut.",
       "unknown": "Der Download hat nicht geklappt. Versuch es erneut."
     }
+  },
+  "search": {
+    "open": "Suchen",
+    "title": "Suchen",
+    "placeholder": "Dateien und Inhalte durchsuchen",
+    "placeholderShort": "Suchen",
+    "placeholderIn": "In „{{name}}“ suchen",
+    "clear": "Suche leeren",
+    "results": "Suchergebnisse",
+    "scopeLabel": "Suchen in",
+    "scopeAll": "Allen Dateien",
+    "scopeFolder": "„{{name}}“",
+    "groupNames": "Namen",
+    "groupContents": "Inhalte",
+    "recentSearches": "Letzte Suchen",
+    "clearRecent": "Verlauf löschen",
+    "emptyTitle": "Wonach suchst du?",
+    "emptyBody": "Gib einen Dateinamen ein oder ein Wort, das in einem Dokument vorkommt.",
+    "noResultsTitle": "Nichts gefunden für „{{query}}“",
+    "noResultsBody": "Prüfe die Schreibweise oder versuch ein anderes Wort. Inhalte neuer Dateien sind nach kurzer Zeit durchsuchbar.",
+    "noResultsInFolder": "In „{{name}}“ und seinen Unterordnern gibt es keinen Treffer.",
+    "searchEverywhere": "In allen Dateien suchen",
+    "errorTitle": "Die Suche hat nicht geklappt",
+    "hintMove": "Auswählen",
+    "hintOpen": "Öffnen",
+    "hintClose": "Schließen",
+    "count_one": "{{count}} Treffer",
+    "count_other": "{{count}} Treffer",
+    "countOf_one": "{{count}} von {{total}} Treffern",
+    "countOf_other": "{{count}} von {{total}} Treffern"
+  },
+  "recent": {
+    "title": "Zuletzt geändert",
+    "reveal": "Im Ordner zeigen",
+    "revealItem": "„{{name}}“ im Ordner zeigen",
+    "loadError": "Die zuletzt geänderten Dateien konnten nicht geladen werden",
+    "emptyTitle": "Noch keine Dateien",
+    "emptyBody": "Was du hochlädst oder änderst, erscheint hier – über alle Ordner hinweg, das Neueste zuerst.",
+    "emptyAction": "Zu meinen Dateien",
+    "limitNote": "Die {{count}} zuletzt geänderten Dateien"
   }
 }

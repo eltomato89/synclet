@@ -3,6 +3,7 @@ import { createContext, type ReactNode, useContext, useLayoutEffect, useRef, use
 import { useTranslation } from 'react-i18next';
 import { LogoMark } from '@/components/brand/Logo';
 import { Button } from '@/components/ui/button';
+import { SearchLauncher } from '@/features/search/CommandPalette';
 
 /**
  * Topbar slot: pages render their breadcrumb and actions into the shell's topbar with
@@ -62,6 +63,8 @@ export function Topbar({ onOpenNavigation }: { onOpenNavigation(): void }) {
       </Button>
       <LogoMark className="size-6 md:hidden" />
       <TopbarSlot />
+      <div className="ml-1 h-5 w-px shrink-0 bg-border max-sm:hidden" aria-hidden />
+      <SearchLauncher />
     </header>
   );
 }

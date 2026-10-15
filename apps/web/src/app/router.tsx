@@ -3,6 +3,7 @@ import { AppShell } from '@/components/app-shell/AppShell';
 import { ConnectionError } from '@/components/ConnectionError';
 import { FullPageSpinner } from '@/components/FullPageSpinner';
 import { PublicSharePage } from '@/features/public/PublicSharePage';
+import { RecentPage } from '@/features/recent/RecentPage';
 import { SharedPage } from '@/features/shares/SharedPage';
 import { TrashPage } from '@/features/trash/TrashPage';
 import { AuthProvider, useAuth } from '@/lib/auth';
@@ -48,6 +49,7 @@ export const routes: RouteObject[] = [
             children: [
               { path: '/files', element: <FilesPage /> },
               { path: '/files/:folderId', element: <FilesPage /> },
+              { path: '/recent', element: <RecentPage /> },
               { path: '/shared', element: <SharedPage /> },
               { path: '/trash', element: <TrashPage /> },
             ],
