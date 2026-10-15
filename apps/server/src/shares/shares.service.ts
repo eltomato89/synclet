@@ -17,7 +17,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { openNoFollow } from '../sync/http-content';
 import { mimeFor } from '../sync/serializer.service';
 import { toSyncId, UUID } from '../sync/sync-ids';
-import { decryptToken, encryptToken, parseItemId, ResolvedShare, ShareAuth } from './share-auth';
+import { parseItemId, ResolvedShare, ShareAuth } from './share-auth';
 import { zipEntryName, type ZipEntrySource } from './zip';
 
 export interface SharePatch {
@@ -57,7 +57,7 @@ export class SharesService {
   private async toWire(share: ShareLink, item: Pick<Item, 'id' | 'name' | 'type'>, itemTrashed = false): Promise<ShareLinkWire> {
     let url = '';
     try {
-      url = this.auth.url(decryptToken(await this.auth.tokenKey(), share.tokenEnc, share.id));
+      url = this.auth.url(await this.auth.openToken(share.tokenEnc, share.id));
     } catch (e) {
       // Only if the server secret changed: the link still works, but the owner must rotate to copy it.
       this.log.error(`cannot decrypt token of share ${share.id}: ${(e as Error).message}`);
@@ -102,7 +102,7 @@ export class SharesService {
     const token = newToken();
     const share = await this.prisma.shareLink.create({
       data: {
-        id, ownerId: user.id, itemId: item.id, tokenHash: hashToken(token), tokenEnc: encryptToken(await this.auth.tokenKey(), token, id),
+        id, ownerId: user.id, itemId: item.id, tokenHash: hashToken(token), tokenEnc: await this.auth.sealToken(token, id),
         passwordHash: input.password ? await SharesService.hashPassword(input.password) : null,
         expiresAt: futureDate(input.expiresAt) ?? null,
         allowDownload: input.allowDownload ?? true, allowUpload: input.allowUpload ?? false,
@@ -170,7 +170,7 @@ export class SharesService {
     const token = newToken();
     const updated = await this.prisma.shareLink.update({
       where: { id: share.id },
-      data: { tokenHash: hashToken(token), tokenEnc: encryptToken(await this.auth.tokenKey(), token, share.id) },
+      data: { tokenHash: hashToken(token), tokenEnc: await this.auth.sealToken(token, share.id) },
     });
     return this.toWire(updated, item);
   }

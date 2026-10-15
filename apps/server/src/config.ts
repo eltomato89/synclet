@@ -23,6 +23,19 @@ export interface AppConfig {
   workerConcurrency: number;
   /** Files above this size get no derivative (thumbnail / extracted text). */
   previewMaxBytes: number;
+  /** Keep superseded file contents as versions (off by default). */
+  versions: boolean;
+  /** Per-user cap for stored version bytes (0 = unlimited). */
+  versionsMaxBytes: number;
+  /** Browser-facing Document Server URL, e.g. https://office.example.com (null = office disabled). */
+  officeUrl: string | null;
+  officeJwtSecret: string | null;
+  /** This server as seen by the Document Server. */
+  officeApiUrl: string;
+  /** Document Server as seen by this server. */
+  officeInternalUrl: string;
+  /** Ignore OIDC/forward-auth and allow password login for everyone. */
+  ssoEmergency: boolean;
   /** Process role; set by the entrypoint, not by the environment. */
   role: 'server' | 'worker';
 }
@@ -51,6 +64,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     searchLanguage: env.SYNCLET_SEARCH_LANGUAGE || 'simple',
     workerConcurrency: int(env.SYNCLET_WORKER_CONCURRENCY, 2),
     previewMaxBytes: int(env.SYNCLET_PREVIEW_MAX_BYTES, 2 * 1024 ** 3),
+    versions: bool(env.SYNCLET_VERSIONS, false),
+    versionsMaxBytes: int(env.SYNCLET_VERSIONS_MAX_BYTES, 0),
+    officeUrl: env.OFFICE_URL || null,
+    officeJwtSecret: env.OFFICE_JWT_SECRET || null,
+    officeApiUrl: env.OFFICE_API_URL || 'http://server:3000/api',
+    officeInternalUrl: env.OFFICE_INTERNAL_URL || 'http://office',
+    ssoEmergency: env.SYNCLET_SSO_EMERGENCY === '1',
     role: 'server',
   };
 }

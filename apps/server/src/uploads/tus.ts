@@ -17,6 +17,7 @@ import { SyncError } from '../common/sync-error';
 import type { AuthUser } from '../common/types';
 import { FilesService, OnConflict } from '../files/files.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { importEsm } from '../common/import-esm';
 import { SerializerService } from '../sync/serializer.service';
 import { parseSyncId, ROOT_ID } from '../sync/sync-ids';
 
@@ -26,14 +27,6 @@ export const UPLOAD_EXPIRY_MS = 24 * 3600 * 1000;
 
 type TusRequest = Parameters<NonNullable<ServerOptions['onIncomingRequest']>>[0];
 type TusError = { status_code: number; body: string };
-
-/**
- * @tus/* are ESM-only. A plain `import()` would be compiled to `require()` (module: commonjs),
- * which Jest's CJS runtime cannot use for ES modules; Node itself handles both. The unique
- * comment defeats V8's compile cache for Function sources, which would otherwise bind the import
- * to the first Jest test environment that evaluated this file (no effect outside tests).
- */
-const importEsm = new Function('s', `return import(s); // ${randomBytes(8).toString('hex')}`) as <T>(specifier: string) => Promise<T>;
 
 type TusModules = { Server: typeof import('@tus/server').Server; FileStore: typeof import('@tus/file-store').FileStore };
 let tusModules: Promise<TusModules> | undefined;
