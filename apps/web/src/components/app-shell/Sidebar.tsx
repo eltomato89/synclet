@@ -20,10 +20,9 @@ import { ThemeToggle } from './ThemeToggle';
 interface NavEntry { to?: string; label: string; icon: LucideIcon }
 const NAV: NavEntry[] = [
   { to: '/files', label: 'shell.myFiles', icon: Folder },
-  // Phase 1b
   { label: 'shell.recent', icon: Clock },
-  { label: 'shell.shared', icon: Share2 },
-  { label: 'shell.trash', icon: Trash2 },
+  { to: '/shared', label: 'shell.shared', icon: Share2 },
+  { to: '/trash', label: 'shell.trash', icon: Trash2 },
 ];
 
 const itemBase = 'flex h-8 items-center gap-2.5 rounded-md px-2.5 text-sm font-medium outline-none focus-visible:ring-3 focus-visible:ring-ring/50';

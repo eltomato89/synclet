@@ -179,5 +179,182 @@
       "close": "Close uploads",
       "dismiss": "Remove from list"
     }
+  },
+  "trash": {
+    "columns": {
+      "location": "Original location",
+      "deleted": "Deleted",
+      "expires": "Deleted for good"
+    },
+    "expiresIn_one": "in {{count}} day",
+    "expiresIn_other": "in {{count}} days",
+    "expiresToday": "within a day",
+    "keptForever": "Kept until you delete it",
+    "restore": "Restore",
+    "restoreItem": "Restore {{name}}",
+    "deleteItem": "Delete {{name}} forever",
+    "deleteForever": "Delete forever",
+    "summary_one": "{{count}} item in the trash, {{size}}.",
+    "summary_other": "{{count}} items in the trash, {{size}}.",
+    "retention_one": "Items are deleted for good {{count}} day after they were moved here.",
+    "retention_other": "Items are deleted for good {{count}} days after they were moved here.",
+    "loadError": "The trash couldn't be loaded",
+    "emptyState": {
+      "title": "The trash is empty",
+      "body": "Deleted files and folders land here. You can restore them until they're deleted for good."
+    },
+    "empty": {
+      "action": "Empty trash",
+      "title": "Empty the trash?",
+      "body_one": "{{count}} item is deleted for good. This can't be undone.",
+      "body_other": "All {{count}} items are deleted for good. This can't be undone.",
+      "submitting": "Emptying …"
+    },
+    "deleteDialog": {
+      "title": "Delete “{{name}}” forever?",
+      "fileBody": "The file is removed from the server. This can't be undone.",
+      "folderBody": "The folder and everything in it are removed from the server. This can't be undone.",
+      "submitting": "Deleting …"
+    },
+    "toast": {
+      "restored": "“{{name}}” restored",
+      "restoredAs": "“{{name}}” restored as “{{newName}}”",
+      "location": "In {{location}}",
+      "renamedHint": "The original name was taken in {{location}}.",
+      "show": "Show",
+      "deleted": "“{{name}}” deleted for good",
+      "emptied_one": "{{count}} item deleted for good",
+      "emptied_other": "{{count}} items deleted for good"
+    },
+    "errors": {
+      "conflict": "This item is still being moved to the trash. Try again in a moment.",
+      "not_found": "This item isn't in the trash anymore."
+    }
+  },
+  "shares": {
+    "action": "Share …",
+    "share": "Share",
+    "shareItem": "Share “{{name}}”",
+    "copy": "Copy link",
+    "copied": "Copied",
+    "copyItem": "Copy link to {{name}}",
+    "edit": "Edit link",
+    "linkActions": "Link actions",
+    "linkActionsFor": "Link actions for {{name}}",
+    "createdOn": "Created {{date}}",
+    "expiry": {
+      "never": "No expiry",
+      "until": "Expires {{date}}",
+      "expiredOn": "Expired {{date}}"
+    },
+    "badges": {
+      "password": "Password",
+      "upload": "Uploads",
+      "noDownload": "No download"
+    },
+    "dialog": {
+      "title": "Share “{{name}}”",
+      "editTitle": "Edit link",
+      "editDescription": "Changes apply to the existing link for “{{name}}”. The address stays the same.",
+      "fileDescription": "Anyone with the link can open this file. No account needed.",
+      "folderDescription": "Anyone with the link can browse this folder and everything in it. No account needed.",
+      "links": "Links",
+      "createAnother": "Create another link",
+      "showAll": "Show all links",
+      "done": "Done",
+      "back": "Back"
+    },
+    "form": {
+      "password": "Password",
+      "passwordHint": "Recipients have to enter it before they see anything.",
+      "passwordLabel": "Password for the link",
+      "passwordPlaceholder": "At least {{count}} characters",
+      "passwordKeep": "Leave empty to keep the current password",
+      "expiry": "Expires",
+      "expiryHint": "After that the link stops working.",
+      "expiryCurrent": "{{text}}. Pick a new date to change it.",
+      "expiryNone": "Never",
+      "expiry1d": "1 day",
+      "expiry7d": "7 days",
+      "expiry30d": "30 days",
+      "expiryCustom": "Date",
+      "expiryDate": "Expiry date",
+      "allowDownload": "Allow download",
+      "allowDownloadHint": "Without it, recipients can only view the file in the browser.",
+      "allowDownloadFolderHint": "Without it, recipients can only view files in the browser.",
+      "allowUpload": "Allow upload",
+      "allowUploadHint": "Recipients can add files to this folder. Existing files are never replaced.",
+      "create": "Create link",
+      "creating": "Creating …",
+      "save": "Save changes",
+      "saving": "Saving …",
+      "errors": {
+        "password_required": "Enter a password or turn the password off.",
+        "password_too_short": "The password needs at least {{count}} characters.",
+        "expiry_required": "Pick a date.",
+        "expiry_past": "The date is in the past. Pick a date from today on."
+      }
+    },
+    "created": {
+      "title": "Link created",
+      "body": "Copy it and send it to the people you want to share with.",
+      "rotatedTitle": "New link created",
+      "rotatedBody": "The previous link no longer works. Send this one instead.",
+      "urlLabel": "Share link"
+    },
+    "rotate": {
+      "action": "Create new link",
+      "title": "Create a new link?",
+      "body": "The current link to “{{name}}” stops working immediately. Anyone who should keep access needs the new link.",
+      "submit": "Create new link",
+      "submitting": "Creating …"
+    },
+    "revoke": {
+      "action": "Revoke link",
+      "title": "Revoke this link?",
+      "body": "The link to “{{name}}” stops working immediately. This can't be undone.",
+      "submit": "Revoke link",
+      "submitting": "Revoking …"
+    },
+    "toast": {
+      "copied": "Link copied",
+      "updated": "Link updated",
+      "rotated": "New link created. The old one no longer works.",
+      "revoked": "Link revoked"
+    },
+    "errors": {
+      "invalid": "The server didn't accept these settings. Check the expiry date and try again.",
+      "not_found": "This link or item doesn't exist anymore.",
+      "copy": "The link couldn't be copied. Select it and copy it manually.",
+      "noUrl": "This link can't be shown anymore. Create a new link to get a copyable address.",
+      "noUrlShort": "Address unavailable"
+    },
+    "columns": {
+      "item": "Shared item",
+      "created": "Created",
+      "expires": "Expiry",
+      "hits": "Opened"
+    },
+    "page": {
+      "title": "Shared links",
+      "filter": "Show links",
+      "filters": {
+        "active": "Active",
+        "expired": "Expired",
+        "all": "All"
+      },
+      "count_one": "{{count}} link",
+      "count_other": "{{count}} links",
+      "loadError": "Your links couldn't be loaded",
+      "emptyTitle": "No shared links yet",
+      "emptyBody": "Share a file or folder from My files to get a link that anyone can open, with an optional password and expiry date.",
+      "goToFiles": "Go to my files",
+      "noneTitle": {
+        "active": "No active links",
+        "expired": "No expired links",
+        "all": "No links"
+      },
+      "noneBody": "Revoked links aren't listed."
+    }
   }
 }
