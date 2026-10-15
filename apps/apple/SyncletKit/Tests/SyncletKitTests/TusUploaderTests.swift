@@ -12,6 +12,20 @@ final class TusUploaderTests: XCTestCase {
         XCTAssertFalse(metadata.headerValue.contains("Bericht"), "values are base64")
     }
 
+    func testReplaceMetadataHasOnlyItemIdIfMatchAndModifiedAt() {
+        let metadata = TusUploadMetadata.replace(itemId: "f_1", ifMatch: "v3", modifiedAt: Date(timeIntervalSince1970: 1_700_000_000))
+        XCTAssertEqual(FakeTusServer.decodeMetadata(metadata.headerValue),
+                       ["itemId": "f_1", "ifMatch": "v3", "modifiedAt": "2023-11-14T22:13:20.000Z"])
+        XCTAssertNil(metadata.name)
+        XCTAssertNil(metadata.parentId)
+        XCTAssertEqual(metadata.ifMatch, "v3")
+        XCTAssertEqual(FakeTusServer.decodeMetadata(TusUploadMetadata.replace(itemId: "f_1", ifMatch: "v3").headerValue),
+                       ["itemId": "f_1", "ifMatch": "v3"])
+        // Round trip through the state store's JSON.
+        let decoded = try? JSONDecoder().decode(TusUploadMetadata.self, from: JSONEncoder().encode(metadata))
+        XCTAssertEqual(decoded, metadata)
+    }
+
     func testCreateResolvesPathOnlyLocationAndSendsTusHeaders() async throws {
         let server = FakeTusServer()
         let tus = TusUploader(api: FakeServerProtocol.client())
@@ -53,9 +67,10 @@ final class TusUploaderTests: XCTestCase {
         guard case .created(let url) = try await tus.create(length: 3, metadata: TusUploadMetadata(name: "a.txt", parentId: "d_9")) else {
             return XCTFail("created expected")
         }
-        guard case .completed(let item) = try await tus.patch(url, offset: 0, chunk: Data("abc".utf8)) else {
+        guard case .completed(let item, let fromResponse) = try await tus.patch(url, offset: 0, chunk: Data("abc".utf8)) else {
             return XCTFail("completed expected")
         }
+        XCTAssertTrue(fromResponse)
         XCTAssertEqual(item.name, "a.txt")
         XCTAssertEqual(item.parentId, "d_9")
         XCTAssertEqual(server.publishedData, Data("abc".utf8))
@@ -73,7 +88,8 @@ final class TusUploaderTests: XCTestCase {
         let tus = TusUploader(api: FakeServerProtocol.client())
         let result = try await tus.patch(URL(string: "https://synclet.example.test/api/sync/v1/uploads/u1")!,
                                          offset: 0, chunk: Data("x".utf8))
-        guard case .completed(let item) = result else { return XCTFail("completed expected") }
+        guard case .completed(let item, let fromResponse) = result else { return XCTFail("completed expected") }
+        XCTAssertFalse(fromResponse, "fetched via X-Synclet-Item, not the completion body")
         XCTAssertEqual(item.id, "f_7")
     }
 
