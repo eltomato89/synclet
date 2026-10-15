@@ -511,8 +511,8 @@ describe('Versions HTTP API', () => {
       },
       ...(opts.body !== undefined ? { body: opts.body } : {}),
     });
-  const start = async (versions: boolean) => {
-    ctx = await createTestApp({ versions, officeUrl: versions ? 'https://office.example.com' : null });
+  const start = async (versions: boolean, office: { officeUrl?: string | null; officeJwtSecret?: string | null } = {}) => {
+    ctx = await createTestApp({ versions, officeUrl: versions ? 'https://office.example.com' : null, officeJwtSecret: versions ? 'office-secret' : null, ...office });
     const res = await ctx.app.inject({ method: 'POST', url: '/api/setup', payload: { username: 'jens', displayName: 'Jens', password: 'correct horse battery' } });
     token = res.json().accessToken;
   };
@@ -564,6 +564,11 @@ describe('Versions HTTP API', () => {
     expect((await api('POST', `/items/${item.id}/versions/${id}/restore`)).json().message).toBe('versions disabled');
     expect((await api('GET', '/capabilities')).json()).toEqual({ versions: false, office: { enabled: false, url: null } });
     expect(await ctx.prisma.fileVersion.count()).toBe(0);
+  });
+
+  it('office capability needs both the Document Server URL and the shared secret', async () => {
+    await start(false, { officeUrl: 'https://office.example.com', officeJwtSecret: null });
+    expect((await api('GET', '/capabilities')).json()).toEqual({ versions: false, office: { enabled: false, url: null } });
   });
 
   it('requires authentication and rejects folder ids', async () => {

@@ -1113,8 +1113,12 @@ components:
           type: object
           required: [enabled, url]
           properties:
-            enabled: { type: boolean }
-            url: { type: [string, 'null'] }
+            enabled:
+              type: boolean
+              description: True only when the Document Server URL and its shared secret are both configured.
+            url:
+              type: [string, 'null']
+              description: Browser-facing Document Server URL; null when office editing is disabled.
 
     SyncDevice:
       type: object

@@ -188,7 +188,8 @@ SyncAccount = {
 `{ versions: boolean, office: { enabled: boolean, url: string | null } }`.
 A server that answers `404` on this route (no `code`) predates Phase 1c: treat it as
 `{ versions: false, office: { enabled: false, url: null } }`. Clients hide version UI when
-`versions` is false. `office` concerns the web editor only.
+`versions` is false. `office` concerns the web editor only; `enabled` is true only when the
+Document Server URL and its shared secret are both configured (`url` is `null` otherwise).
 
 ---
 
