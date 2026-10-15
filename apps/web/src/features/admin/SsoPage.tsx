@@ -182,6 +182,9 @@ export function SsoForm({ wire, onSaved }: { wire: SsoSettingsWire; onSaved(): v
             errors={errors}
             onChange={(patch) => setOidc(patch)}
           />
+          {v.oidc.enabled && v.oidc.allowedGroups.length === 0 && (
+            <Callout tone="warn" icon={<TriangleAlert />}>{t('admin.sso.groups.emptyWarning')}</Callout>
+          )}
           <div>
             <Toggle
               id={id('link')}

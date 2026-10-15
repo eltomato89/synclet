@@ -111,7 +111,7 @@ export function UserDetailPage() {
           error={sessions.error}
           empty={t('admin.detail.noSessions')}
           label={t('admin.detail.sessions')}
-          head={[t('admin.detail.client'), t('admin.detail.signedIn'), t('admin.detail.expires')]}
+          head={[t('admin.detail.client'), t('admin.detail.lastActive'), t('admin.detail.expires')]}
           rows={(sessions.data ?? []).map((s) => ({
             id: s.id,
             cells: [

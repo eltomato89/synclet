@@ -781,7 +781,7 @@
       "revokeAll": "Sign out everywhere",
       "noSessions": "No active sessions.",
       "client": "Browser",
-      "signedIn": "Signed in",
+      "lastActive": "Last active",
       "expires": "Expires",
       "revoke": "Revoke",
       "revokeSessionFor": "Revoke session {{client}}",
@@ -982,7 +982,8 @@
       },
       "groups": {
         "allowed": "Allowed groups",
-        "allowedHint": "Only members of these groups can sign in. Empty: everyone.",
+        "allowedHint": "Only members of these groups can sign in. Empty: everyone. Removing someone from a group only blocks new sign-ins; to end their access now, disable the user.",
+        "emptyWarning": "No allowed groups: anyone with an account at this identity provider can sign in and gets a Synclet account with its own folder. With a public provider (Google, Microsoft, GitLab.com, ...) that means anyone on the internet. Enter at least one allowed group unless that is what you want.",
         "admin": "Administrator groups",
         "adminHint": "Members become administrators; others become users at their next sign-in.",
         "placeholder": "Type a group, press Enter"

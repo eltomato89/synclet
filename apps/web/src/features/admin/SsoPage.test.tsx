@@ -147,3 +147,14 @@ it('warns when linking by email is turned on', () => {
   fireEvent.click(screen.getByRole('switch', { name: 'Link existing accounts by email' }));
   expect(screen.getByText(/takes over the Synclet account/)).toBeInTheDocument();
 });
+
+it('warns that empty allowed groups let anyone at the IdP sign up, only while OIDC is on', () => {
+  renderForm();
+  expect(screen.getByText(/No allowed groups: anyone with an account/)).toBeInTheDocument();
+  cleanup();
+  renderForm({ ...wire, oidc: { ...wire.oidc, allowedGroups: ['staff'] } });
+  expect(screen.queryByText(/No allowed groups: anyone with an account/)).toBeNull();
+  cleanup();
+  renderForm({ ...wire, oidc: { ...wire.oidc, enabled: false } });
+  expect(screen.queryByText(/No allowed groups: anyone with an account/)).toBeNull();
+});

@@ -781,7 +781,7 @@
       "revokeAll": "Überall abmelden",
       "noSessions": "Keine aktiven Sitzungen.",
       "client": "Browser",
-      "signedIn": "Angemeldet",
+      "lastActive": "Zuletzt aktiv",
       "expires": "Läuft ab",
       "revoke": "Widerrufen",
       "revokeSessionFor": "Sitzung {{client}} widerrufen",
@@ -982,7 +982,8 @@
       },
       "groups": {
         "allowed": "Erlaubte Gruppen",
-        "allowedHint": "Nur Mitglieder dieser Gruppen können sich anmelden. Leer: alle.",
+        "allowedHint": "Nur Mitglieder dieser Gruppen können sich anmelden. Leer: alle. Wer aus einer Gruppe entfernt wird, kann sich nur nicht mehr neu anmelden; um den Zugriff sofort zu beenden, deaktiviere den Benutzer.",
+        "emptyWarning": "Keine erlaubten Gruppen: Jede Person mit einem Konto bei diesem Identitätsanbieter kann sich anmelden und bekommt ein Synclet-Konto mit eigenem Ordner. Bei einem öffentlichen Anbieter (Google, Microsoft, GitLab.com, ...) ist das jeder im Internet. Trage mindestens eine erlaubte Gruppe ein, wenn du das nicht willst.",
         "admin": "Administratorgruppen",
         "adminHint": "Mitglieder werden Administratoren, alle anderen bei der nächsten Anmeldung Benutzer.",
         "placeholder": "Gruppe eingeben, Enter drücken"
