@@ -41,6 +41,8 @@ export interface AppConfig {
    * Without it, issuers must use https.
    */
   ssoAllowHttpIssuer: boolean;
+  /** Interval of the `: ping` comment on SSE event streams; the token is re-checked before each ping. */
+  eventsPingSeconds: number;
   /** Process role; set by the entrypoint, not by the environment. */
   role: 'server' | 'worker';
 }
@@ -58,6 +60,9 @@ const byteCount = (name: string, v: string | undefined, dflt: number) => {
   if (!/^\d+$/.test(v)) throw new Error(`${name} must be a plain number of bytes (digits only, e.g. 53687091200), got "${v}"`);
   return Number(v);
 };
+
+/** At least 1 s (0 and negative values mean 1 s); unparsable values fall back to 25 s. */
+const pingSeconds = (v: number) => (Number.isFinite(v) ? Math.max(1, v) : 25);
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const publicUrl = env.SYNCLET_PUBLIC_URL || null;
@@ -87,6 +92,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     officeInternalUrl: env.OFFICE_INTERNAL_URL || 'http://office',
     ssoEmergency: bool(env.SYNCLET_SSO_EMERGENCY, false),
     ssoAllowHttpIssuer: env.SYNCLET_SSO_ALLOW_HTTP_ISSUER === '1',
+    eventsPingSeconds: pingSeconds(int(env.SYNCLET_EVENTS_PING_SECONDS, 25)),
     role: 'server',
   };
 }

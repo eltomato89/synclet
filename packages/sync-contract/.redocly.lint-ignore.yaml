@@ -6,3 +6,10 @@ openapi.yaml:
   operation-4xx-response:
     - '#/paths/~1setup~1status/get/responses'
     - '#/paths/~1sync~1v1~1uploads/options/responses'
+  # `data` payloads of the SSE events of GET /sync/v1/events: OpenAPI 3.1 cannot attach schemas to
+  # the items of a text/event-stream response, so nothing references them; the conformance suite
+  # validates the events against them (tests/events.test.ts).
+  no-unused-components:
+    - '#/components/schemas/EventHello'
+    - '#/components/schemas/EventChanges'
+    - '#/components/schemas/EventBye'
