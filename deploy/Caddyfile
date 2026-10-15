@@ -21,8 +21,10 @@
 		# Forward-auth identity headers are only honored from the direct peers in
 		# SYNCLET_TRUSTED_PROXIES (an authenticating outer proxy); from anyone else they are removed
 		# before reaching the server, which trusts Caddy as its forward-auth proxy.
-		# remote_ip = the direct connection, never X-Forwarded-For. Without SYNCLET_TRUSTED_PROXIES
-		# nothing is trusted (192.0.2.255 is a documentation address that never connects).
+		# remote_ip = the direct connection, never X-Forwarded-For. While SYNCLET_TRUSTED_PROXIES is
+		# unset or empty (compose always passes the variable, empty by default) Caddy falls back to the
+		# default after the colon: 192.0.2.255 is a documentation address that never connects, so
+		# nothing is trusted and the headers are always removed.
 		# Custom header names configured in the admin UI (SSO > forward-auth) must be added here too.
 		@untrusted_auth_headers not remote_ip {$SYNCLET_TRUSTED_PROXIES:192.0.2.255/32}
 		request_header @untrusted_auth_headers -Remote-User
@@ -42,12 +44,20 @@
 	}
 
 	handle {
+		# Euro-Office origin for the CSP below. Empty without compose.office.yml (strict CSP); with it
+		# SYNCLET_OFFICE_PUBLIC_URL (https://office.example.com) allows the editor script, frame and
+		# its websocket (wss://...) from exactly that origin. `map` derives the ws(s) origin (the "#"
+		# keeps the source non-empty, `map` rejects an empty argument).
+		map "{$SYNCLET_OFFICE_PUBLIC_URL:}#" {office_ws} {
+			~^http(s?)://([^/#]+)/?#$ ws${1}://${2}
+			default ""
+		}
 		encode zstd gzip
 		root * /srv/web
 		try_files {path} /index.html
 		file_server
 		# CSP for the SPA only; /api/* content responses carry their own (sandbox) CSP.
-		header Content-Security-Policy "default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; frame-src 'self' blob:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'"
+		header Content-Security-Policy "default-src 'self'; script-src 'self' {$SYNCLET_OFFICE_PUBLIC_URL:}; connect-src 'self' {$SYNCLET_OFFICE_PUBLIC_URL:} {office_ws}; img-src 'self' blob: data:; media-src 'self' blob:; frame-src 'self' blob: {$SYNCLET_OFFICE_PUBLIC_URL:}; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'"
 		header /assets/* Cache-Control "public, max-age=31536000, immutable"
 	}
 
