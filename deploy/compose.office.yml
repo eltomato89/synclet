@@ -33,6 +33,8 @@ services:
   caddy:
     environment:
       SYNCLET_OFFICE_SITE_ADDRESS: ${SYNCLET_OFFICE_SITE_ADDRESS:?set SYNCLET_OFFICE_SITE_ADDRESS}
+      # Added to script-src, frame-src and connect-src (https + wss) of the main site's CSP.
+      SYNCLET_OFFICE_PUBLIC_URL: ${SYNCLET_OFFICE_PUBLIC_URL:?set SYNCLET_OFFICE_PUBLIC_URL (browser-facing https URL of the office site)}
     volumes:
       - ./Caddyfile.office:/etc/caddy/conf.d/office.caddy:ro
     depends_on: [office]
