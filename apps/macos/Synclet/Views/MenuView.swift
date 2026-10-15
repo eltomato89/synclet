@@ -11,25 +11,34 @@ struct AppActions {
     var signOut: (String) -> Void
     var showSettings: () -> Void
     var quit: () -> Void
+    /// Opens Finder at the file of a "Letzte Probleme" entry.
+    var revealProblem: (ErrorLogEntry) -> Void = { _ in }
+    var clearProblems: () -> Void = {}
 }
 
 /// Content of the menu bar menu (`MenuBarExtra`, menu style).
 ///
-/// Structure: one section per account (title `<user>@<host>`, status line, actions), then the
-/// global items. T8 extends the account sections (sync status, last errors).
+/// Structure: one section per account (title `<user>@<host>`, status line, actions), then
+/// "Letzte Probleme" (when there are any), then the global items.
 struct MenuView: View {
     let accounts: AccountsModel
+    let problems: ProblemsModel
     let actions: AppActions
 
     var body: some View {
+        let now = Date()
         if accounts.isEmpty {
             Text("No account connected")
         }
         ForEach(accounts.entries) { entry in
             Section(entry.title) {
-                AccountMenuSection(entry: entry, actions: actions)
+                AccountStatusView(entry: entry, state: accounts.menuState(for: entry, problems: problems.entries, now: now),
+                                  actions: actions, now: now)
             }
         }
+        ErrorListView(problems: problems.entries,
+                      accountTitles: Dictionary(accounts.entries.map { ($0.id, $0.title) }, uniquingKeysWith: { a, _ in a }),
+                      actions: actions)
         Divider()
         Button("Add Account…") { actions.signIn(nil) }
             .keyboardShortcut("n")
@@ -41,20 +50,8 @@ struct MenuView: View {
     }
 }
 
-/// The items of one account in the menu.
-struct AccountMenuSection: View {
-    let entry: AccountEntry
-    let actions: AppActions
-
-    var body: some View {
-        Label(entry.status.label, systemImage: Self.symbol(for: entry.status))
-        if entry.status == .needsLogin {
-            Button("Sign In Again…") { actions.signIn(entry.account) }
-        }
-        Button("Open in Finder") { actions.openInFinder(entry.id) }
-        Button("Open Web") { actions.openWeb(entry.id) }
-    }
-
+/// Status symbol of an account in the settings list.
+enum AccountMenuSection {
     static func symbol(for status: AccountStatus) -> String {
         switch status {
         case .ok: return "checkmark.circle"
@@ -63,12 +60,14 @@ struct AccountMenuSection: View {
     }
 }
 
-/// Menu bar icon (with a hint when an account needs attention).
+/// Menu bar icon, with a badge when an account must sign in again or a problem is recent.
 struct MenuBarLabel: View {
     let accounts: AccountsModel
+    let problems: ProblemsModel
 
     var body: some View {
-        Image(systemName: accounts.hasProblem ? "exclamationmark.arrow.triangle.2.circlepath" : "arrow.triangle.2.circlepath")
-            .accessibilityLabel(accounts.hasProblem ? Text("Synclet – needs attention") : Text("Synclet"))
+        let badge = AccountMenuState.showsBadge(statuses: accounts.entries.map(\.status), problems: problems.entries, now: Date())
+        Image(systemName: badge ? "exclamationmark.arrow.triangle.2.circlepath" : "arrow.triangle.2.circlepath")
+            .accessibilityLabel(badge ? Text("Synclet – needs attention") : Text("Synclet"))
     }
 }

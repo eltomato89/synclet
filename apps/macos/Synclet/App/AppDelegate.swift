@@ -7,6 +7,7 @@ import SyncletKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let accounts: AccountsModel
+    let problems: ProblemsModel
     let loginItem = LoginItemController()
 
     private var loginWindow: NSWindow?
@@ -23,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let store = AccountStore(appGroup: configuration.appGroup ?? "group.tech.jensk.synclet")
         let manager = AccountManager(credentials: CredentialStore(configuration: configuration), accounts: store)
         accounts = AccountsModel(manager: manager)
+        problems = ProblemsModel(container: store.directory)
         super.init()
         accounts.onFirstAccountAdded = { [loginItem] in loginItem.enableByDefaultIfUnconfigured() }
     }
@@ -43,7 +45,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Task { await self.confirmSignOut(key: key) }
             },
             showSettings: { [weak self] in self?.showSettings() },
-            quit: { NSApp.terminate(nil) }
+            quit: { NSApp.terminate(nil) },
+            revealProblem: { [weak self] entry in
+                guard let self else { return }
+                Task {
+                    await self.problems.reveal(entry, accounts: self.accounts)
+                    self.presentActionError()
+                }
+            },
+            clearProblems: { [weak self] in self?.problems.clear() }
         )
     }
 
@@ -121,6 +131,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Task { @MainActor in delegate.accounts.processAuthFailures() }
             },
             AuthFailureSignal.notificationName as CFString, nil, .deliverImmediately
+        )
+        CFNotificationCenterAddObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(), observer,
+            { _, observer, _, _, _ in
+                guard let observer else { return }
+                let delegate = Unmanaged<AppDelegate>.fromOpaque(observer).takeUnretainedValue()
+                Task { @MainActor in delegate.problems.reload() }
+            },
+            ErrorLog.notificationName as CFString, nil, .deliverImmediately
         )
     }
 

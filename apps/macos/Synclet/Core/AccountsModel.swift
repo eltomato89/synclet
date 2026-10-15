@@ -50,6 +50,8 @@ final class AccountsModel {
     @ObservationIgnored var openURL: (URL) -> Void = { NSWorkspace.shared.open($0) }
     /// Called once an account was added and the list was empty before (login item default).
     @ObservationIgnored var onFirstAccountAdded: () -> Void = {}
+    /// Connection state per account for the menu (T6: the account's `ChangeMonitor`).
+    @ObservationIgnored var statusProvider: (AccountEntry) -> any AccountStatusProviding = { FallbackAccountStatus(entry: $0) }
 
     init(manager: AccountManager, finder: FinderIntegrating = SystemFinderIntegration()) {
         self.manager = manager
@@ -63,6 +65,13 @@ final class AccountsModel {
     var container: URL { manager.accounts.directory }
 
     func entry(key: String) -> AccountEntry? { entries.first { $0.id == key } }
+
+    /// The menu's status line of an account.
+    func menuState(for entry: AccountEntry, problems: [ErrorLogEntry], now: Date = Date()) -> AccountMenuState {
+        let provider = statusProvider(entry)
+        return AccountMenuState.derive(status: entry.status, connection: provider.connectionState, lastSync: provider.lastSync,
+                                       problems: problems, accountKey: entry.id, now: now)
+    }
 
     // MARK: - List
 
@@ -108,6 +117,7 @@ final class AccountsModel {
         let key16 = AccountStore.key16(for: key)
         await manager.remove(key: key)
         AuthFailureSignal.clear(container: container, key16: key16)
+        ErrorLog(container: container).remove(accountKey: key)
         reload()
     }
 

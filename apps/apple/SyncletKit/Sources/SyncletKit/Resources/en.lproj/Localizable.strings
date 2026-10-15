@@ -22,3 +22,10 @@
 "error.http" = "The server is not reachable right now (error %d). Please try again later.";
 "error.invalidResponse" = "Unexpected response from the server. Please try again later.";
 "error.httpClient" = "The server could not carry out the request (error %d).";
+
+/* Menu bar "Recent problems" (SyncProblem). */
+"problem.tooLarge" = "Too large for the server – not uploaded.";
+"problem.insufficientStorage" = "The server's storage is full – will retry later.";
+"problem.invalidName" = "The name is not allowed on the server.";
+"problem.permission" = "Not allowed here – the change was not synced.";
+"problem.conflictCopy" = "Changed elsewhere – your version was saved as “%@”.";

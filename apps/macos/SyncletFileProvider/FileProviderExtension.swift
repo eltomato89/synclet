@@ -8,7 +8,9 @@ import SyncletKit
 /// in ``SyncletReplicatedExtension`` from SyncletKit, which reads the account from the
 /// domain identifier (`key16`) and the device token from the shared keychain. This subclass
 /// only tells the menu bar app when the server rejects the sign-in
-/// (`.notAuthenticated` ⇒ ``AuthFailureSignal``), so it can show "Anmeldung erforderlich".
+/// (`.notAuthenticated` ⇒ ``AuthFailureSignal``), so it can show "Anmeldung erforderlich",
+/// and records user-visible problems (413, 507, invalid name, permission, conflict copies)
+/// in the shared ``ErrorLog`` for the menu's "Letzte Probleme".
 final class FileProviderExtension: SyncletReplicatedExtension, @unchecked Sendable {
     private var key16: String { domain.identifier.rawValue }
 
@@ -21,6 +23,28 @@ final class FileProviderExtension: SyncletReplicatedExtension, @unchecked Sendab
     fileprivate func inspect(_ error: Error?) {
         guard let error, AuthFailureSignal.isAuthenticationFailure(error), let container else { return }
         AuthFailureSignal.report(container: container, key16: key16)
+    }
+
+    /// A problem of a create/modify or a conflict copy ⇒ the app's "Letzte Probleme".
+    override func report(_ problem: SyncProblem) {
+        guard let appGroup = Self.sharedConfiguration.appGroup else { return }
+        let store = AccountStore(appGroup: appGroup)
+        guard let account = store.account(key16: key16) else { return }   // signed out meanwhile
+        ErrorLog(container: store.directory).append(ErrorLogEntry(
+            date: Date(), accountKey: account.key, fileName: problem.fileName, message: problem.message(),
+            code: problem.code.rawValue, itemIdentifier: problem.itemIdentifier))
+    }
+
+    override func fetchThumbnails(for itemIdentifiers: [NSFileProviderItemIdentifier], requestedSize size: CGSize,
+                                  perThumbnailCompletionHandler: @escaping (NSFileProviderItemIdentifier, Data?, Error?) -> Void,
+                                  completionHandler: @escaping (Error?) -> Void) -> Progress {
+        super.fetchThumbnails(for: itemIdentifiers, requestedSize: size, perThumbnailCompletionHandler: { [self] id, data, error in
+            inspect(error)
+            perThumbnailCompletionHandler(id, data, error)
+        }, completionHandler: { [self] error in
+            inspect(error)
+            completionHandler(error)
+        })
     }
 
     override func item(for identifier: NSFileProviderItemIdentifier, request: NSFileProviderRequest,
