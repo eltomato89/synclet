@@ -15,6 +15,8 @@ export async function probeDownload(url: string): Promise<PublicError | null> {
   try {
     const res = await fetch(url, { credentials: 'same-origin', headers: { Range: 'bytes=0-0' }, signal: ac.signal });
     if (res.ok) return null; // 206, or 200 from a server ignoring Range (aborted below)
+    // An empty file has no byte 0: 416 means the file is there and downloadable.
+    if (res.status === 416) return null;
     const body = await res.json().catch(() => null);
     return errorFrom(res.status, body, res.headers.get('Retry-After'), res.statusText);
   } catch (e) {
@@ -43,18 +45,20 @@ export function downloadErrorKey(e: PublicError): string {
 }
 
 /**
- * Click handler for single-file download links (`<a href download>`): probes first and reports
+ * Click handlers for single-file download links (`<a href download>`): probes first and reports
  * 403 / 429 / 503 / network errors in the page instead of letting the browser save the JSON
  * error body. Link-level errors (gone, expired, locked) go to the page's gate.
  * ZIP links are not probed (that would start building the archive); they show a hint instead.
+ * Usage: `onClick={probed(size)}`; empty files skip the probe (nothing to range over).
  */
 export function useProbedDownload() {
   const { t } = useTranslation();
   const onShareError = useContext(ShareErrorContext);
-  return useCallback((e: MouseEvent<HTMLAnchorElement>) => {
+  return useCallback((size: number) => (e: MouseEvent<HTMLAnchorElement>) => {
+    e.stopPropagation();
+    if (size === 0) return; // plain download
     if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return; // keep "open in new tab" etc.
     e.preventDefault();
-    e.stopPropagation();
     const url = e.currentTarget.href;
     void probeDownload(url).then((err) => {
       if (!err) { startDownload(url); return; }

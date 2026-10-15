@@ -182,8 +182,8 @@
   },
   "publicShare": {
     "region": "Shared content",
-    "sharedFolder": "<b>{{name}}</b> shared a folder with you",
-    "sharedFile": "<b>{{name}}</b> shared a file with you",
+    "sharedFolder": "<owner/> shared a folder with you",
+    "sharedFile": "<owner/> shared a file with you",
     "expires": "Available until {{date}}",
     "viewOnly": "View only",
     "download": "Download",

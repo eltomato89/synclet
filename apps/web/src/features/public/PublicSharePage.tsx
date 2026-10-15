@@ -216,10 +216,11 @@ function Hero({ token, info }: { token: string; info: PublicShareInfo }) {
             </span>
           </Radiating>
           <p className="text-base text-muted-foreground">
+            {/* The name is an element, not an interpolated value: i18n does not escape values and
+                Trans would parse markup in a display name. */}
             <Trans
               i18nKey={info.type === 'folder' ? 'publicShare.sharedFolder' : 'publicShare.sharedFile'}
-              values={{ name: info.ownerDisplayName }}
-              components={{ b: <strong className="font-semibold text-foreground" /> }}
+              components={{ owner: <strong className="font-semibold text-foreground">{info.ownerDisplayName}</strong> }}
             />
           </p>
         </div>
@@ -254,7 +255,7 @@ function Hero({ token, info }: { token: string; info: PublicShareInfo }) {
             </>
           ) : (
             <Button asChild size="lg" className="px-4">
-              <a href={urls.content(info.id, { download: true })} download onClick={probed}>
+              <a href={urls.content(info.id, { download: true })} download onClick={probed(info.size)}>
                 <Download />
                 {t('publicShare.download')}
               </a>

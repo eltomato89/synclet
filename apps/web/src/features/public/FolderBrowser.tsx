@@ -81,12 +81,12 @@ function Breadcrumbs({ trail, onNavigate }: { trail: Crumb[]; onNavigate(depth: 
   );
 }
 
-function DownloadIcon({ href, name }: { href: string; name: string }) {
+function DownloadIcon({ href, name, size }: { href: string; name: string; size: number }) {
   const { t } = useTranslation();
   const probed = useProbedDownload();
   return (
     <Button asChild variant="ghost" size="icon-sm" className="text-muted-foreground hover:text-foreground">
-      <a href={href} download aria-label={t('publicShare.downloadNamed', { name })} title={t('publicShare.download')} onClick={probed}>
+      <a href={href} download aria-label={t('publicShare.downloadNamed', { name })} title={t('publicShare.download')} onClick={probed(size)}>
         <Download />
       </a>
     </Button>
@@ -118,7 +118,7 @@ function ListView({ token, items, allowDownload, onOpen }: ItemsProps) {
             </span>
           </button>
           <span className="flex w-8 shrink-0 justify-center">
-            {allowDownload && it.type === 'file' && <DownloadIcon href={urls.content(it.id, { download: true })} name={it.name} />}
+            {allowDownload && it.type === 'file' && <DownloadIcon href={urls.content(it.id, { download: true })} name={it.name} size={it.size} />}
           </span>
         </li>
       ))}
@@ -148,7 +148,7 @@ function GridView({ token, items, allowDownload, onOpen }: ItemsProps) {
           </button>
           {allowDownload && it.type === 'file' && (
             <span className="absolute top-3 right-3 rounded-md bg-background/85 backdrop-blur-sm pointer-fine:opacity-0 pointer-fine:group-hover/card:opacity-100 pointer-fine:focus-within:opacity-100">
-              <DownloadIcon href={urls.content(it.id, { download: true })} name={it.name} />
+              <DownloadIcon href={urls.content(it.id, { download: true })} name={it.name} size={it.size} />
             </span>
           )}
         </li>

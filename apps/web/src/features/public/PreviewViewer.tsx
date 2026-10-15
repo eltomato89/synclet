@@ -109,7 +109,7 @@ export function NoPreview({ source, className }: { source: PreviewSource; classN
       </p>
       {source.downloadUrl && (
         <Button asChild className="mt-5">
-          <a href={source.downloadUrl} download onClick={probed}>
+          <a href={source.downloadUrl} download onClick={probed(source.size)}>
             <Download />
             {t('publicShare.download')}
           </a>

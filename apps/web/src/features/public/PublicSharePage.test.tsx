@@ -86,6 +86,16 @@ describe('PublicSharePage', () => {
     noSessionCalls(urls);
   });
 
+  it('renders the owner name literally, never as markup', async () => {
+    mockServer((url) => (url === BASE ? json(200, { ...folderInfo, ownerDisplayName: '<b>x</b> <img src=x onerror=alert(1)>' }) : url === `${BASE}/items` ? json(200, []) : undefined));
+    renderAt(`/s/${TOKEN}`);
+    const owner = await screen.findByText('<b>x</b> <img src=x onerror=alert(1)>');
+    expect(owner.tagName).toBe('STRONG');
+    expect(owner.parentElement).toHaveTextContent('<b>x</b> <img src=x onerror=alert(1)> shared a folder with you');
+    expect(document.querySelector('img[src="x"]')).toBeNull();
+    expect(owner.querySelector('b')).toBeNull();
+  });
+
   it('shows the not-found state for unknown or revoked links', async () => {
     const urls = mockServer(() => json(404, { code: 'not_found' }));
     renderAt(`/s/${TOKEN}`);

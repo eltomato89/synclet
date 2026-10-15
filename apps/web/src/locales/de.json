@@ -182,8 +182,8 @@
   },
   "publicShare": {
     "region": "Geteilter Inhalt",
-    "sharedFolder": "<b>{{name}}</b> hat einen Ordner mit dir geteilt",
-    "sharedFile": "<b>{{name}}</b> hat eine Datei mit dir geteilt",
+    "sharedFolder": "<owner/> hat einen Ordner mit dir geteilt",
+    "sharedFile": "<owner/> hat eine Datei mit dir geteilt",
     "expires": "Verfügbar bis {{date}}",
     "viewOnly": "Nur ansehen",
     "download": "Herunterladen",

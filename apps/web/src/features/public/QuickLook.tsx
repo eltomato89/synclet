@@ -56,7 +56,7 @@ export function QuickLook({ sources, index, onIndex, onClose }: {
               </div>
               {source.downloadUrl && (
                 <Button asChild variant="outline" size="sm">
-                  <a href={source.downloadUrl} download onClick={probed}>
+                  <a href={source.downloadUrl} download onClick={probed(source.size)}>
                     <Download />
                     <span className="max-sm:sr-only">{t('publicShare.download')}</span>
                   </a>
