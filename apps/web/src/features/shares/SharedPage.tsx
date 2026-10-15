@@ -1,10 +1,11 @@
 import type { ShareLinkWire } from '@synclet/shared';
-import { Copy, MoreHorizontal, PencilLine, RefreshCw, Unlink } from 'lucide-react';
+import { Copy, MoreHorizontal, PencilLine, RefreshCw, Trash2, Unlink } from 'lucide-react';
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { toast } from 'sonner';
 import { useTopbar } from '@/components/app-shell/Topbar';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
@@ -111,16 +112,19 @@ export function SharedPage() {
           <tbody>
             {visible.map((s) => {
               const expired = shareStatus(s) === 'expired';
+              // In the trash: the link answers 404 until the item is restored; only revoking makes sense.
+              const trashed = s.itemTrashed;
+              const dim = expired || trashed;
               const item = { type: s.itemType, name: s.itemName, mime: null };
               const exp = expiryText(s, t, locale);
               return (
                 <tr key={s.id} className="h-14 [&>td]:border-b [&>td]:border-border/70 [&>td]:transition-colors [&>td]:duration-100 hover:[&>td]:bg-accent/70">
                   <td className="pr-2 pl-3 md:pl-6">
                     <div className="flex min-w-0 items-center gap-3">
-                      <FileIcon item={item} className={cn('size-5', expired && 'opacity-50')} />
+                      <FileIcon item={item} className={cn('size-5', dim && 'opacity-50')} />
                       <div className="min-w-0">
                         <div className="flex min-w-0 items-center gap-1.5">
-                          {s.itemType === 'folder' ? (
+                          {s.itemType === 'folder' && !trashed ? (
                             <Link
                               to={folderPath(s.itemId)}
                               title={s.itemName}
@@ -129,13 +133,24 @@ export function SharedPage() {
                               {s.itemName}
                             </Link>
                           ) : (
-                            <span title={s.itemName} className={cn('truncate font-medium', expired ? 'text-muted-foreground' : 'text-foreground')}>{s.itemName}</span>
+                            <span title={s.itemName} className={cn('truncate font-medium', dim ? 'text-muted-foreground' : 'text-foreground')}>{s.itemName}</span>
+                          )}
+                          {trashed && (
+                            <Badge variant="outline" title={t('shares.trashed.hint')} className="h-4.5 shrink-0 gap-1 px-1.5 text-[11px] font-medium text-muted-foreground">
+                              <Trash2 />{t('shares.badges.trashed')}
+                            </Badge>
                           )}
                           <span className="flex shrink-0 gap-1 max-sm:hidden"><ShareBadges share={s} /></span>
                         </div>
                         <div className="truncate text-xs text-muted-foreground tabular-nums">
-                          <span className="sm:hidden">{exp}</span>
-                          <span className="max-sm:hidden">{s.url ? displayUrl(s.url) : t('shares.errors.noUrlShort')}</span>
+                          {trashed ? (
+                            <span>{t('shares.trashed.hint')}</span>
+                          ) : (
+                            <>
+                              <span className="sm:hidden">{exp}</span>
+                              <span className="max-sm:hidden">{s.url ? displayUrl(s.url) : t('shares.errors.noUrlShort')}</span>
+                            </>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -151,7 +166,7 @@ export function SharedPage() {
                         variant="ghost"
                         size="icon-sm"
                         onClick={(e) => copy(s, e.currentTarget)}
-                        disabled={!s.url || expired}
+                        disabled={!s.url || expired || trashed}
                         aria-label={t('shares.copyItem', { name: s.itemName })}
                         title={t('shares.copy')}
                         className="text-muted-foreground hover:text-foreground"
@@ -165,13 +180,17 @@ export function SharedPage() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-48">
-                          <DropdownMenuItem onSelect={() => setEdit((cur) => ({ share: s, open: true, n: (cur?.n ?? 0) + 1 }))}>
-                            <PencilLine />{t('shares.edit')}
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onSelect={() => setConfirm({ kind: 'rotate', share: s, open: true })}>
-                            <RefreshCw />{t('shares.rotate.action')}
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
+                          {!trashed && (
+                            <>
+                              <DropdownMenuItem onSelect={() => setEdit((cur) => ({ share: s, open: true, n: (cur?.n ?? 0) + 1 }))}>
+                                <PencilLine />{t('shares.edit')}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onSelect={() => setConfirm({ kind: 'rotate', share: s, open: true })}>
+                                <RefreshCw />{t('shares.rotate.action')}
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
+                            </>
+                          )}
                           <DropdownMenuItem variant="destructive" onSelect={() => setConfirm({ kind: 'revoke', share: s, open: true })}>
                             <Unlink />{t('shares.revoke.action')}
                           </DropdownMenuItem>

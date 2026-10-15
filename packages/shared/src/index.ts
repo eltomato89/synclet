@@ -75,6 +75,11 @@ export interface ShareLinkWire {
   url: string;
   hasPassword: boolean; expiresAt: string | null; allowDownload: boolean; allowUpload: boolean;
   createdAt: string; revokedAt: string | null; hits: number;
+  /**
+   * The shared item is in the trash: the link answers 404 until the item is restored, and
+   * restoring re-activates it. Only revoking is possible meanwhile (itemName/itemType from the trash).
+   */
+  itemTrashed: boolean;
 }
 export interface CreateShareInput {
   itemId: string; password?: string | null; expiresAt?: string | null;

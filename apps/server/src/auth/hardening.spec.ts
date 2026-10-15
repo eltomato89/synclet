@@ -73,6 +73,33 @@ describe('auth hardening', () => {
     for (let i = 0; i < 9; i++) expect((await login('jens', freshIp())).statusCode).toBe(401);
   });
 
+  it('keys login limits by IPv6 /64: rotating addresses inside one network shares the buckets', async () => {
+    await setup();
+    const net = `2001:db8:${(ipSeq++).toString(16)}:1`;
+    const argon = jest.spyOn(ctx.app.get(AuthService), 'login');
+    for (let i = 0; i < 10; i++) expect((await login('jens', `${net}::${(i + 1).toString(16)}`)).statusCode).toBe(401);
+    ctx.app.get(RateLimits).ip.reset(`${net}::/64`); // isolate the per-(ip+login) bucket
+    argon.mockClear();
+    expect((await login('jens', `${net}::ffff`)).statusCode).toBe(429); // new address, same /64
+    expect(argon).not.toHaveBeenCalled();
+    argon.mockRestore();
+    for (let i = 0; i < 9; i++) await login(`user${i}`, `${net}::${(100 + i).toString(16)}`);
+    expect((await login('other', `${net}::abcd`)).statusCode).toBe(429); // per-IP CPU guard by /64 too
+    expect((await login('jens', `2001:db8:ffff:2::1`)).statusCode).toBe(401); // another /64 unaffected
+  });
+
+  it('keys IPv4-mapped IPv6 like the plain IPv4 address', async () => {
+    const ip = freshIp();
+    for (let i = 0; i < 10; i++) expect((await login(`user${i}`, i % 2 ? ip : `::ffff:${ip}`)).statusCode).toBe(401);
+    expect((await login('user99', `::ffff:${ip}`)).statusCode).toBe(429);
+  });
+
+  it('rate-limits POST /api/setup per IPv6 /64', async () => {
+    for (let i = 0; i < 10; i++) expect((await setup({ username: '../x' }, `2001:db8:5e7:1::${i + 1}`)).statusCode).toBe(400);
+    expect((await setup({ username: '../x' }, '2001:db8:5e7:1:ffff:ffff:ffff:ffff')).statusCode).toBe(429);
+    expect((await setup({ username: '../x' }, '2001:db8:5e7:2::1')).statusCode).toBe(400);
+  });
+
   it('rate-limits POST /api/setup per IP', async () => {
     const ip = freshIp();
     for (let i = 0; i < 10; i++) expect((await setup({ username: '../x' }, ip)).statusCode).toBe(400);

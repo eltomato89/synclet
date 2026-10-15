@@ -3,6 +3,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { DerivedStore } from './derived-store';
 
 const BATCH = 500;
+/** `done` thumbnail jobs whose files are checked per maintenance run (random sample). */
+const THUMB_SAMPLE = 500;
 
 /**
  * Garbage collection of derivatives (maintenance). A content hash stays live while a live item,
@@ -43,10 +45,41 @@ export class DerivativesGc {
   }
 
   /**
-   * Removes finished job rows of dead hashes, extracted text (ItemText) of dead hashes,
-   * unreferenced derivative dirs and stale temp files.
+   * A `done` thumbnail job whose files are gone (e.g. `/meta/derived` was deleted by an admin):
+   * back to `pending` with fresh attempts, so the worker regenerates it. Only `done` rows are
+   * touched (a concurrent worker run is never interfered with). Returns true when a row was reset.
    */
-  async run(): Promise<{ dirs: number; jobs: number; texts: number }> {
+  async requeueThumb(sha: string): Promise<boolean> {
+    const n = await this.prisma.derivativeJob.updateMany({
+      where: { sha, kind: 'thumb', status: 'done' },
+      data: { status: 'pending', attempts: 0, lockedAt: null, lastError: null },
+    });
+    return n.count > 0;
+  }
+
+  /** Checks a random sample of `done` thumbnail jobs and requeues those whose files are missing. */
+  async requeueMissingThumbs(sample = THUMB_SAMPLE): Promise<number> {
+    const rows = await this.prisma.$queryRaw<{ sha: string }[]>`
+      SELECT sha FROM "DerivativeJob" WHERE kind = 'thumb' AND status = 'done' ORDER BY random() LIMIT ${sample}`;
+    let requeued = 0;
+    for (const { sha } of rows) {
+      let ok: boolean;
+      try {
+        ok = (await this.store.has(this.store.pathFor(sha, 'thumb', 256))) && (await this.store.has(this.store.pathFor(sha, 'thumb', 1024)));
+      } catch {
+        continue; // not a content hash: never produced by the worker
+      }
+      if (!ok && (await this.requeueThumb(sha))) requeued++;
+    }
+    return requeued;
+  }
+
+  /**
+   * Removes finished job rows of dead hashes, extracted text (ItemText) of dead hashes,
+   * unreferenced derivative dirs and stale temp files; then requeues a sample of `done`
+   * thumbnail jobs whose files are missing (self-healing after `/meta/derived` was deleted).
+   */
+  async run(): Promise<{ dirs: number; jobs: number; texts: number; requeued: number }> {
     const offline = await this.offlineShas();
     // Job rows first: a finished row for a dead hash would otherwise claim `thumbnail: true`
     // (and block re-enqueueing) if the same content is uploaded again after its files are gone.
@@ -89,6 +122,7 @@ export class DerivativesGc {
       }
     }
     const dirs = await this.store.gc((batch) => this.liveShas(batch, offline), BATCH);
-    return { dirs, jobs, texts };
+    const requeued = await this.requeueMissingThumbs();
+    return { dirs, jobs, texts, requeued };
   }
 }

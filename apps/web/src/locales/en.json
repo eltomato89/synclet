@@ -271,7 +271,11 @@
     "badges": {
       "password": "Password",
       "upload": "Uploads",
-      "noDownload": "No download"
+      "noDownload": "No download",
+      "trashed": "In trash"
+    },
+    "trashed": {
+      "hint": "Inactive while the item is in the trash; restoring it re-activates the link"
     },
     "dialog": {
       "title": "Share “{{name}}”",

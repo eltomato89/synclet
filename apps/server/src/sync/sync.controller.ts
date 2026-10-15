@@ -13,6 +13,7 @@ import { APP_CONFIG, AppConfig } from '../config';
 import { SyncError } from '../common/sync-error';
 import type { AuthUser } from '../common/types';
 import { ZodPipe } from '../common/zod.pipe';
+import { DerivativesGc } from '../derivatives/derivatives-gc';
 import { DerivedStore } from '../derivatives/derived-store';
 import { previewKind } from '../derivatives/preview-kind';
 import { decodeText, readPrefix, TextEncodingName } from '../derivatives/text-extract';
@@ -48,6 +49,7 @@ export class SyncController {
     private readonly serverConfig: ServerConfigService,
     private readonly auth: AuthService,
     private readonly derived: DerivedStore,
+    private readonly gc: DerivativesGc,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -198,7 +200,10 @@ export class SyncController {
     const job = await this.prisma.derivativeJob.findUnique({ where: { sha_kind: { sha, kind: 'thumb' } }, select: { status: true } });
     if (job?.status !== 'done') throw new SyncError('not_found', 'no thumbnail');
     const fh = await open(this.derived.pathFor(sha, 'thumb', size), constants.O_RDONLY | constants.O_NOFOLLOW)
-      .catch(() => { throw new SyncError('not_found', 'no thumbnail'); });
+      .catch(async (e: NodeJS.ErrnoException) => {
+        if (e.code === 'ENOENT') await this.gc.requeueThumb(sha); // derived files lost: regenerate
+        throw new SyncError('not_found', 'no thumbnail');
+      });
     let handedOver = false;
     try {
       const st = await fh.stat();

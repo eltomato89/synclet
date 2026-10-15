@@ -51,7 +51,7 @@ export class RateLimits {
   /** Per (client IP + normalized login), failed password checks only: 10 burst, one more per 30 s. */
   readonly login = new RateLimiter({ capacity: 10, refillPerSec: 1 / 30 });
 
-  /** Throws 429 rate_limited (and sets Retry-After) when the per-IP bucket is empty. */
+  /** Throws 429 rate_limited (and sets Retry-After) when the per-IP bucket is empty. `ip` is an `ipKey()`. */
   takeIp(ip: string, reply: FastifyReply): void {
     if (!this.ip.take(ip)) throw this.limited(this.ip, ip, reply);
   }

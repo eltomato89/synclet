@@ -132,6 +132,39 @@ describe('Share links', () => {
       expect((await api('POST', `/shares/${s.id}/rotate`)).statusCode).toBe(404);
     });
 
+    it('lists shares of trashed items with itemTrashed (revocable); restoring re-activates the link', async () => {
+      const t = await tree();
+      const sA = await share(t.A.id);
+      const sx = await share(t.x.id);
+      const sTop = await share(t.top.id);
+      const gone = await share(t.secret.id);
+      expect(sA.itemTrashed).toBe(false);
+      expect((await api('DELETE', `/sync/v1/items/${t.A.id}`)).statusCode).toBe(204);
+      expect((await api('DELETE', `/sync/v1/items/${t.B.id}`)).statusCode).toBe(204);
+      await ctx.app.get(FilesService).pendingTrash();
+      // B is deleted for good: its share disappears from the list.
+      const trashB = (await api('GET', '/trash')).json().find((e: { name: string }) => e.name === 'B');
+      expect((await api('DELETE', `/trash/${trashB.id}`)).statusCode).toBe(204);
+
+      const list = (await api('GET', '/shares')).json() as ShareLinkWire[];
+      expect(list.map((x) => [x.id, x.itemTrashed])).toEqual([[sTop.id, false], [sx.id, true], [sA.id, true]]);
+      expect(list.find((x) => x.id === sA.id)).toMatchObject({ itemId: t.A.id, itemName: 'A', itemType: 'folder', url: sA.url });
+      expect(list.find((x) => x.id === sx.id)).toMatchObject({ itemId: t.x.id, itemName: 'x.txt', itemType: 'file' });
+      expect(list.some((x) => x.id === gone.id)).toBe(false);
+      expect((await api('GET', `/shares?itemId=${t.A.id}`)).json()).toEqual([expect.objectContaining({ id: sA.id, itemTrashed: true })]);
+      // Public routes stay 404 while the item is in the trash.
+      expect((await pub('GET', sA.token)).statusCode).toBe(404);
+      expect((await pub('GET', sx.token)).statusCode).toBe(404);
+
+      expect((await api('DELETE', `/shares/${sx.id}`)).statusCode).toBe(204);
+      const entryA = (await api('GET', '/trash')).json().find((e: { name: string }) => e.name === 'A');
+      expect((await api('POST', `/trash/${entryA.id}/restore`)).statusCode).toBe(200);
+      expect((await pub('GET', sA.token)).statusCode).toBe(200); // re-activated by the restore
+      expect((await pub('GET', sx.token)).statusCode).toBe(404); // revoked while trashed
+      const after = (await api('GET', '/shares')).json() as ShareLinkWire[];
+      expect(after.map((x) => [x.id, x.itemTrashed])).toEqual([[sTop.id, false], [sA.id, false]]);
+    });
+
     it('rejects foreign, missing and invalid items; shares of other users are invisible', async () => {
       const t = await tree();
       expect((await api('POST', '/shares', { payload: { itemId: 'root' } })).statusCode).toBe(400);
@@ -456,10 +489,14 @@ describe('Share links', () => {
       expect(res.headers['x-content-type-options']).toBe('nosniff');
       expect(res.headers['cache-control']).toBe('private, no-store');
       expect(res.body).toBe('webp-256');
-      expect((await pub('GET', `${s.token}/items/${img.id}/thumbnail?size=1024`)).statusCode).toBe(404);
       expect((await pub('GET', `${s.token}/items/${img.id}/thumbnail?size=999`)).statusCode).toBe(400);
       const listed = (await pub('GET', `${s.token}/items`)).json().find((e: { id: string }) => e.id === img.id);
       expect(listed.hasThumbnail).toBe(true);
+      // A done job whose file is missing (derived store deleted): 404 and the job is requeued.
+      expect((await pub('GET', `${s.token}/items/${img.id}/thumbnail?size=1024`)).statusCode).toBe(404);
+      expect(await ctx.prisma.derivativeJob.findUnique({ where: { sha_kind: { sha, kind: 'thumb' } } })).toMatchObject({ status: 'pending', attempts: 0 });
+      const relisted = (await pub('GET', `${s.token}/items`)).json().find((e: { id: string }) => e.id === img.id);
+      expect(relisted.hasThumbnail).toBe(false);
     });
 
     it('external upload lands in the shared folder or a subfolder, renames on conflict, and is journaled', async () => {

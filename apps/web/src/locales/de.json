@@ -271,7 +271,11 @@
     "badges": {
       "password": "Passwort",
       "upload": "Upload",
-      "noDownload": "Kein Download"
+      "noDownload": "Kein Download",
+      "trashed": "Im Papierkorb"
+    },
+    "trashed": {
+      "hint": "Inaktiv, solange das Element im Papierkorb liegt; Wiederherstellen aktiviert den Link wieder"
     },
     "dialog": {
       "title": "„{{name}}“ teilen",

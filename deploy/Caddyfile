@@ -1,5 +1,15 @@
 {
 	admin off
+	servers {
+		# Proxies in front of Caddy whose X-Forwarded-For is trusted (client IP for rate limits).
+		# Empty (default) = trust none: Caddy replaces X-Forwarded-For with the peer address.
+		# Behind an outer reverse proxy set SYNCLET_TRUSTED_PROXIES, e.g. "private_ranges" or
+		# "192.168.1.10/32 10.0.0.0/8".
+		trusted_proxies static {$SYNCLET_TRUSTED_PROXIES:}
+		# Pick the client IP right-to-left (first untrusted hop), so a client cannot spoof it by
+		# sending its own X-Forwarded-For through a proxy that appends to the header.
+		trusted_proxies_strict
+	}
 }
 
 {$SYNCLET_SITE_ADDRESS::80} {
@@ -9,6 +19,8 @@
 
 	handle /api/* {
 		reverse_proxy server:3000 {
+			# Exactly one address: the client IP as determined above (the server trusts XFF from Caddy).
+			header_up X-Forwarded-For {client_ip}
 			flush_interval -1
 			transport http {
 				read_timeout 0

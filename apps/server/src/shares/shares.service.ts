@@ -9,6 +9,7 @@ import { assignDisplayNames } from '../common/names';
 import { SyncError } from '../common/sync-error';
 import type { IndexUser } from '../common/types';
 import { APP_CONFIG, AppConfig } from '../config';
+import { DerivativesGc } from '../derivatives/derivatives-gc';
 import { DerivedStore } from '../derivatives/derived-store';
 import { FilesService } from '../files/files.service';
 import { ItemStore } from '../journal/item-store';
@@ -47,12 +48,13 @@ export class SharesService {
     private readonly files: FilesService,
     private readonly store: ItemStore,
     private readonly derived: DerivedStore,
+    private readonly gc: DerivativesGc,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
   // ---------------------------------------------------------------- owner API
 
-  private async toWire(share: ShareLink, item: Item): Promise<ShareLinkWire> {
+  private async toWire(share: ShareLink, item: Pick<Item, 'id' | 'name' | 'type'>, itemTrashed = false): Promise<ShareLinkWire> {
     let url = '';
     try {
       url = this.auth.url(decryptToken(await this.auth.tokenKey(), share.tokenEnc, share.id));
@@ -65,6 +67,7 @@ export class SharesService {
       hasPassword: share.passwordHash !== null, expiresAt: share.expiresAt?.toISOString() ?? null,
       allowDownload: share.allowDownload, allowUpload: share.allowUpload,
       createdAt: share.createdAt.toISOString(), revokedAt: share.revokedAt?.toISOString() ?? null, hits: share.hits,
+      itemTrashed,
     };
   }
 
@@ -108,7 +111,34 @@ export class SharesService {
     return this.toWire(share, item);
   }
 
-  /** Active shares of the user (optionally of one item) whose item is live, newest first. */
+  /**
+   * Items of `ids` (owned by `ownerId`) that are in the trash: the root of a trash entry or any
+   * node of its manifest. Name and type as recorded at delete time.
+   */
+  private async trashedItems(ownerId: string, ids: string[]): Promise<Map<string, Pick<Item, 'id' | 'name' | 'type'>>> {
+    if (!ids.length) return new Map();
+    const rows = await this.prisma.$queryRaw<{ id: string; name: string | null; path: string | null; type: string }[]>`
+      SELECT t."itemId"::text AS id, t.name, NULL AS path, t.type::text AS type
+      FROM "TrashEntry" t WHERE t."ownerId" = ${ownerId}::uuid AND t."itemId"::text = ANY(${ids}::text[])
+      UNION ALL
+      SELECT e->>'id' AS id, e->>'name' AS name, e->>'path' AS path, e->>'type' AS type
+      FROM "TrashEntry" t
+      CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(t.manifest) = 'array' THEN t.manifest ELSE '[]'::jsonb END) e
+      WHERE t."ownerId" = ${ownerId}::uuid AND jsonb_typeof(e) = 'object' AND e->>'id' = ANY(${ids}::text[])`;
+    const out = new Map<string, Pick<Item, 'id' | 'name' | 'type'>>();
+    for (const r of rows) {
+      if (out.has(r.id) || (r.type !== 'file' && r.type !== 'folder')) continue;
+      const name = r.name ?? r.path?.split('/').pop() ?? '';
+      out.set(r.id, { id: r.id, name, type: r.type });
+    }
+    return out;
+  }
+
+  /**
+   * Active shares of the user (optionally of one item), newest first: shares of live items, and
+   * shares of items in the trash (`itemTrashed`, so the owner can still revoke them; restoring the
+   * item re-activates the link). Shares of items deleted for good are left out.
+   */
   async list(user: IndexUser, rawItemId?: string): Promise<ShareLinkWire[]> {
     let itemId: string | undefined;
     if (rawItemId) {
@@ -121,10 +151,15 @@ export class SharesService {
     });
     const items = await this.prisma.item.findMany({ where: { id: { in: [...new Set(shares.map((s) => s.itemId))] }, ownerId: user.id, deletedAt: null } });
     const byId = new Map(items.map((i) => [i.id, i]));
+    const trashed = await this.trashedItems(user.id, [...new Set(shares.filter((s) => !byId.has(s.itemId)).map((s) => s.itemId))]);
     const out: ShareLinkWire[] = [];
     for (const s of shares) {
       const item = byId.get(s.itemId);
       if (item) out.push(await this.toWire(s, item));
+      else {
+        const t = trashed.get(s.itemId);
+        if (t) out.push(await this.toWire(s, t, true));
+      }
     }
     return out;
   }
@@ -229,7 +264,10 @@ export class SharesService {
     const job = await this.prisma.derivativeJob.findUnique({ where: { sha_kind: { sha, kind: 'thumb' } } });
     if (job?.status !== 'done') throw new SyncError('not_found');
     const file = this.derived.pathFor(sha, 'thumb', size);
-    if (!(await this.derived.has(file))) throw new SyncError('not_found');
+    if (!(await this.derived.has(file))) {
+      await this.gc.requeueThumb(sha); // derived files lost: regenerate
+      throw new SyncError('not_found');
+    }
     return { path: file, sha };
   }
 
