@@ -12,6 +12,7 @@ import { TextIndexer } from '../derivatives/text-index';
 import { Thumbnailer } from '../derivatives/thumbnails';
 import { WorkerRunner } from '../worker/worker-runner';
 import { SearchLanguage } from './search-language';
+import { capSnippet } from './search.service';
 
 const FIXTURES = path.join(__dirname, '..', '..', 'test', 'fixtures');
 
@@ -175,6 +176,20 @@ describe('search, recent and text preview', () => {
       const f = await upload('broken.docx', 'not a zip at all');
       await drain();
       expect(await ctx.prisma.derivativeJob.findUnique({ where: { sha_kind: { sha: f.sha256!, kind: 'text' } } })).toMatchObject({ status: 'failed', attempts: 1 });
+    });
+
+    it('snippets come from the first 64 KiB only and are capped at 300 characters', async () => {
+      await upload('late.txt', `${'filler '.repeat(20_000)}latecomer word`);
+      await upload('long.txt', `marker ${'x'.repeat(5000)}`);
+      await drain();
+      const late = await search('latecomer');
+      expect(names(late)).toEqual(['late.txt']); // still found through the full tsvector
+      expect(late.hits[0].snippet).not.toContain('«');
+      const long = (await search('marker')).hits[0].snippet!;
+      expect(long.startsWith('«marker»')).toBe(true);
+      expect([...long].length).toBeLessThanOrEqual(301);
+      expect(capSnippet(`a «${'b'.repeat(400)}» c`)).toBe(`a «${'b'.repeat(297)}»…`);
+      expect(capSnippet('short «hit»')).toBe('short «hit»');
     });
 
     it('text too large for one tsvector is indexed by its prefix', async () => {

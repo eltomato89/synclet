@@ -17,10 +17,23 @@ export const MAX_QUERY_CHARS = 200;
  * still finds such typos without matching unrelated names.
  */
 const WORD_SIMILARITY = '0.5';
+/** ts_headline parses its whole input: only the start of large documents is used for snippets. */
+const HEADLINE_INPUT_CHARS = 65_536;
+/** Snippets are cut to this length (a run of text without spaces can make a fragment long). */
+export const MAX_SNIPPET_CHARS = 300;
 const HEADLINE_OPTS = 'StartSel=«,StopSel=»,MaxFragments=1,MaxWords=18,MinWords=6';
 
 /** LIKE pattern for a literal substring (backslash is LIKE's default escape character). */
 export const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+
+/** Cuts a snippet to MAX_SNIPPET_CHARS (plus an ellipsis), closing a highlight cut in half. */
+export function capSnippet(s: string): string {
+  const chars = [...s];
+  if (chars.length <= MAX_SNIPPET_CHARS) return s;
+  let out = chars.slice(0, MAX_SNIPPET_CHARS).join('');
+  if (out.lastIndexOf('«') > out.lastIndexOf('»')) out += '»';
+  return `${out}…`;
+}
 
 interface HitRow { id: string | null; name_score: number | null; content_score: number | null; total: bigint; snippet: string | null }
 
@@ -81,7 +94,7 @@ export class SearchService {
         -- One row even for an empty page, so the total is always known.
         SELECT p.id, p.name_score::float8 AS name_score, p.content_score::float8 AS content_score, c.total,
           CASE WHEN p.content_score IS NULL THEN NULL
-               ELSE ts_headline(${lang}::regconfig, t.content, ${headlineQ}, ${HEADLINE_OPTS}) END AS snippet
+               ELSE ts_headline(${lang}::regconfig, left(t.content, ${HEADLINE_INPUT_CHARS}::integer), ${headlineQ}, ${HEADLINE_OPTS}) END AS snippet
         FROM (SELECT count(*) AS total FROM hits) c
         LEFT JOIN page p ON true
         LEFT JOIN "Item" i ON i.id = p.id
@@ -101,7 +114,7 @@ export class SearchService {
 
   private hit(row: Item, item: SyncItem, h: HitRow): SearchHit {
     const matched = h.name_score !== null && h.content_score !== null ? 'both' : h.name_score !== null ? 'name' : 'content';
-    return { item, path: parentRel(row.path), snippet: h.snippet, matched };
+    return { item, path: parentRel(row.path), snippet: h.snippet === null ? null : capSnippet(h.snippet), matched };
   }
 
   /** Path-prefix restriction to a folder subtree (root or no folder = everything). */

@@ -77,7 +77,16 @@ export class DerivativesGc {
       after = shas[shas.length - 1];
       const live = await this.liveShas(shas, offline);
       const dead = shas.filter((s) => !live.has(s));
-      if (dead.length) texts += (await this.prisma.itemText.deleteMany({ where: { sha: { in: dead } } })).count;
+      if (dead.length) {
+        // The finished `text` job goes with its text: if the content shows up again before the
+        // next run, enqueueMissing re-creates the job and the text is extracted again (otherwise a
+        // `done` row kept by the job pass above would block that forever).
+        const [deleted] = await this.prisma.$transaction([
+          this.prisma.itemText.deleteMany({ where: { sha: { in: dead } } }),
+          this.prisma.derivativeJob.deleteMany({ where: { sha: { in: dead }, kind: 'text', status: { notIn: ['pending', 'running'] } } }),
+        ]);
+        texts += deleted.count;
+      }
     }
     const dirs = await this.store.gc((batch) => this.liveShas(batch, offline), BATCH);
     return { dirs, jobs, texts };

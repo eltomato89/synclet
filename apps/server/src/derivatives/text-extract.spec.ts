@@ -1,4 +1,4 @@
-import { copyFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { writeOffice, writeTextPdf, writeZip } from '../../test/text-fixtures';
@@ -93,6 +93,22 @@ describe('text extraction', () => {
     await writeZip(abs, { 'other.xml': '<x>hidden</x>' });
     expect(await extract(abs)).toBeNull();
     await expect(extract(await put('fake.docx', 'not a zip'))).rejects.toBeInstanceOf(ToolFailedError);
+  });
+
+  itIfTool('unzip', 'an encrypted member fails fast (no password prompt) with a tool failure', async () => {
+    const abs = path.join(dir, 'locked.docx');
+    await writeZip(abs, { 'word/document.xml': '<w:p><w:r><w:t>secret</w:t></w:r></w:p>' });
+    // Mark every entry as encrypted (general purpose flag bit 0 in local and central headers).
+    const buf = await readFile(abs);
+    for (let i = 0; i + 4 <= buf.length; i++) {
+      const sig = buf.readUInt32LE(i);
+      if (sig === 0x04034b50) buf.writeUInt16LE(buf.readUInt16LE(i + 6) | 1, i + 6);
+      else if (sig === 0x02014b50) buf.writeUInt16LE(buf.readUInt16LE(i + 8) | 1, i + 8);
+    }
+    await writeFile(abs, buf);
+    const started = Date.now();
+    await expect(extract(abs)).rejects.toBeInstanceOf(ToolFailedError);
+    expect(Date.now() - started).toBeLessThan(5000);
   });
 
   itIfTool('unzip', 'a decompression bomb only yields a capped prefix', async () => {

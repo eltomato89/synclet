@@ -303,6 +303,21 @@ describe('derivative worker (DB)', () => {
   });
 
   describe('derivatives GC', () => {
+    it('removing the text of a dead hash also removes its finished text job (re-extracted when the content returns)', async () => {
+      const sha = fakeSha('f');
+      await ctx.prisma.derivativeJob.createMany({ data: [{ sha, kind: 'text', status: 'done' }, { sha, kind: 'thumb', status: 'done' }] });
+      await ctx.prisma.itemText.create({ data: { sha, content: 'gone' } });
+      const gc = ctx.app.get(DerivativesGc);
+      // Race: the hash is still referenced while the job pass runs and gone by the text pass.
+      const real = gc.liveShas.bind(gc);
+      jest.spyOn(gc, 'liveShas').mockImplementationOnce(async (batch) => new Set(batch)).mockImplementation(real);
+      const res = await gc.run();
+      expect(res.texts).toBe(1);
+      expect(await ctx.prisma.itemText.count()).toBe(0);
+      expect(await job(sha, 'text')).toBeNull();
+      expect(await job(sha, 'thumb')).not.toBeNull(); // left for the job pass of the next run
+    });
+
     it('keeps shas of live items, trash manifests and unfinished jobs; removes others and their job rows', async () => {
       const live = await addFile('live.png', { fixture: 'sample.png' }, { hash: true });
       const trashed = fakeSha('b'); const inFlight = fakeSha('c'); const dead = fakeSha('d'); const oldFormat = fakeSha('e');

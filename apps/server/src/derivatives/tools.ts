@@ -43,7 +43,7 @@ export function runTool(name: ToolName | string, args: string[], opts: ToolOptio
   const timeout = opts.timeoutMs ?? (name === 'ffmpeg' || name === 'ffprobe' ? FFMPEG_TIMEOUT_MS : DEFAULT_TIMEOUT_MS);
   const maxBuffer = opts.maxBuffer ?? MAX_BUFFER;
   return new Promise((resolve, reject) => {
-    execFile(bin, args, { timeout, killSignal: 'SIGKILL', maxBuffer, windowsHide: true, env: { PATH: process.env.PATH ?? '' } }, (err, stdout, stderr) => {
+    const child = execFile(bin, args, { timeout, killSignal: 'SIGKILL', maxBuffer, windowsHide: true, env: { PATH: process.env.PATH ?? '' } }, (err, stdout, stderr) => {
       if (!err) { resolve({ stdout, stderr }); return; }
       const e = err as NodeJS.ErrnoException & { killed?: boolean; signal?: string | null };
       // Checked before the timeout case: exceeding maxBuffer also kills the child with SIGKILL.
@@ -57,6 +57,8 @@ export function runTool(name: ToolName | string, args: string[], opts: ToolOptio
       else if (e.killed && e.signal === 'SIGKILL') reject(new ToolTimeoutError(`${name} timed out after ${timeout} ms`));
       else reject(new ToolFailedError(`${name} failed: ${String(stderr || e.message).slice(0, 500)}`));
     });
+    // No tool ever reads stdin: close it so nothing can wait for input there.
+    child.stdin?.on('error', () => undefined).end();
   });
 }
 
@@ -125,6 +127,7 @@ export async function pdfText(abs: string, maxBytes: number, opts: ToolOptions =
 export async function unzipMembers(abs: string, members: string[], maxBytes: number, opts: ToolOptions = {}): Promise<string> {
   assertAbs(abs);
   // 1 = warnings, 11 = some pattern matched no member: whatever was found is still usable.
-  const { stdout } = await runTool('unzip', ['-p', '-qq', abs, ...members], { maxBuffer: maxBytes, truncateOutput: true, okExitCodes: [1, 11], ...opts });
+  // `-P ''`: an encrypted member fails at once (exit 82) instead of unzip prompting on /dev/tty.
+  const { stdout } = await runTool('unzip', ['-p', '-qq', '-P', '', abs, ...members], { maxBuffer: maxBytes, truncateOutput: true, okExitCodes: [1, 11], ...opts });
   return stdout;
 }
