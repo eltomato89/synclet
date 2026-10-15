@@ -145,9 +145,10 @@ describe('ssoServerErrors', () => {
   it('maps server validation messages to their fields', () => {
     expect(bad('OIDC discovery failed: fetch failed')).toEqual({ 'oidc.issuer': { raw: 'OIDC discovery failed: fetch failed' } });
     expect(bad('issuer must be an https URL')).toEqual({ 'oidc.issuer': { raw: 'issuer must be an https URL' } });
-    expect(bad('OIDC needs a client id')).toEqual({ 'oidc.clientId': { raw: 'OIDC needs a client id' } });
-    expect(bad('scopes must be space-separated and include "openid"')).toHaveProperty(['oidc.scopes']);
-    expect(bad('invalid trusted proxy CIDR: 1.2.3')).toHaveProperty(['forwardAuth.trustedProxies']);
+    expect(bad('OIDC needs a client id')).toEqual({ 'oidc.clientId': 'admin.sso.errors.clientIdRequired' });
+    expect(bad('scopes must be space-separated and include "openid"')).toEqual({ 'oidc.scopes': 'admin.sso.errors.scopesOpenid' });
+    expect(bad('invalid trusted proxy CIDR: 1::2::3')).toEqual({ 'forwardAuth.trustedProxies': { key: 'admin.sso.errors.cidr', values: { value: '1::2::3' } } });
+    expect(bad('forward-auth needs at least one trusted proxy CIDR')).toEqual({ 'forwardAuth.trustedProxies': 'admin.sso.errors.proxyRequired' });
     expect(bad('OIDC needs SYNCLET_PUBLIC_URL (redirect URI)')).toEqual({ form: 'admin.sso.errors.publicUrlMissing' });
   });
 

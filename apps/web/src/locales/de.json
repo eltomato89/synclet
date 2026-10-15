@@ -715,7 +715,7 @@
       "versionsHint": "Einschalten mit SYNCLET_VERSIONS=on",
       "on": "An",
       "off": "Aus",
-      "server": "Synclet",
+      "server": "Version",
       "uptime": "Läuft seit {{time}}",
       "uptimeDays": "{{d}} T {{h}} Std",
       "uptimeHours": "{{h}} Std {{m}} Min",
@@ -827,7 +827,9 @@
         "groupsClaimHint": "Claim, der die Gruppen des Benutzers enthält.",
         "linkByEmail": "Bestehende Konten per E-Mail verknüpfen",
         "linkByEmailHint": "Eine erste Anmeldung mit einer bestätigten E-Mail-Adresse, die zu einem lokalen Konto passt, meldet in diesem Konto an.",
-        "linkByEmailWarning": "Schalte das nur ein, wenn du dem Identity Provider bei der Bestätigung von E-Mail-Adressen vertraust. Wer dort eine passende, bestätigte Adresse bekommt, übernimmt das Synclet-Konto mit dieser Adresse, auch Administratorkonten."
+        "linkByEmailWarning": "Schalte das nur ein, wenn du dem Identity Provider bei der Bestätigung von E-Mail-Adressen vertraust. Wer dort eine passende, bestätigte Adresse bekommt, übernimmt das Synclet-Konto mit dieser Adresse, auch Administratorkonten.",
+        "copy": "Kopieren",
+        "copied": "Kopiert"
       },
       "forward": {
         "title": "Auth-Proxy (Forward-Auth)",

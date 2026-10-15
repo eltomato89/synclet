@@ -200,11 +200,14 @@ export function ssoServerErrors(err: unknown): SsoErrors {
     for (const z of zod) out[z![1] as SsoField] = { raw: z![2] };
     return out;
   }
-  if (m.startsWith('issuer ') || m.startsWith('http issuers') || m === 'OIDC needs an issuer') return { 'oidc.issuer': { raw: m } };
-  if (m.startsWith('OIDC discovery failed')) return { 'oidc.issuer': { raw: m } };
-  if (m === 'OIDC needs a client id') return { 'oidc.clientId': { raw: m } };
-  if (m.startsWith('scopes ')) return { 'oidc.scopes': { raw: m } };
-  if (m.startsWith('invalid trusted proxy CIDR') || m.startsWith('forward-auth needs')) return { 'forwardAuth.trustedProxies': { raw: m } };
-  if (m.startsWith('OIDC needs SYNCLET_PUBLIC_URL')) return { form: 'admin.sso.errors.publicUrlMissing' };
+  const key = (k: string) => `admin.sso.errors.${k}`;
+  if (m === 'OIDC needs an issuer') return { 'oidc.issuer': key('issuerRequired') };
+  if (m === 'OIDC needs a client id') return { 'oidc.clientId': key('clientIdRequired') };
+  if (m.startsWith('issuer ') || m.startsWith('http issuers') || m.startsWith('OIDC discovery failed')) return { 'oidc.issuer': { raw: m } };
+  if (m.startsWith('scopes ')) return { 'oidc.scopes': key('scopesOpenid') };
+  const cidr = /^invalid trusted proxy CIDR: (.*)$/.exec(m);
+  if (cidr) return { 'forwardAuth.trustedProxies': { key: key('cidr'), values: { value: cidr[1] } } };
+  if (m.startsWith('forward-auth needs')) return { 'forwardAuth.trustedProxies': key('proxyRequired') };
+  if (m.startsWith('OIDC needs SYNCLET_PUBLIC_URL')) return { form: key('publicUrlMissing') };
   return { form: { raw: m } };
 }

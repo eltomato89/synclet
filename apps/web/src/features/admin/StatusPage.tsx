@@ -96,11 +96,11 @@ export function StatusPage() {
 
       <Section id="jobs" title={t('admin.status.jobs')} description={t('admin.status.jobsHint')} className="border-t">
         <div className="overflow-x-auto rounded-lg border">
-          <table aria-label={t('admin.status.jobs')} className="w-full min-w-[34rem] border-separate border-spacing-0 text-sm">
+          <table aria-label={t('admin.status.jobs')} className="w-full min-w-[40rem] border-separate border-spacing-0 text-sm">
             <thead className="bg-canvas text-xs text-muted-foreground">
               <tr className="[&>th]:h-8 [&>th]:border-b [&>th]:px-3 [&>th]:font-medium">
                 <th scope="col" className="text-left">{t('admin.status.queue')}</th>
-                {JOB_STATES.map((st) => <th key={st} scope="col" className="w-24 text-right">{t(`admin.status.jobState.${st}`)}</th>)}
+                {JOB_STATES.map((st) => <th key={st} scope="col" className="w-28 text-right whitespace-nowrap">{t(`admin.status.jobState.${st}`)}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -174,7 +174,7 @@ function Reading({ label, children, detail, tone = 'neutral' }: { label: string;
         )}
         <span className="truncate">{children}</span>
       </dd>
-      {detail && <dd className="mt-0.5 truncate text-xs text-muted-foreground" title={detail}>{detail}</dd>}
+      {detail && <dd className="mt-0.5 text-xs text-muted-foreground">{detail}</dd>}
     </div>
   );
 }

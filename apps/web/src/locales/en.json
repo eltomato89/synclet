@@ -715,7 +715,7 @@
       "versionsHint": "Turned on with SYNCLET_VERSIONS=on",
       "on": "On",
       "off": "Off",
-      "server": "Synclet",
+      "server": "Version",
       "uptime": "Running for {{time}}",
       "uptimeDays": "{{d}} d {{h}} h",
       "uptimeHours": "{{h}} h {{m}} min",
@@ -827,7 +827,9 @@
         "groupsClaimHint": "Claim that lists the user's groups.",
         "linkByEmail": "Link existing accounts by email",
         "linkByEmailHint": "A first sign-in with a verified email address that matches a local account signs in to that account.",
-        "linkByEmailWarning": "Only turn this on if you trust the identity provider to verify email addresses. Anyone who can get a matching, verified address there takes over the Synclet account with that address, including administrator accounts."
+        "linkByEmailWarning": "Only turn this on if you trust the identity provider to verify email addresses. Anyone who can get a matching, verified address there takes over the Synclet account with that address, including administrator accounts.",
+        "copy": "Copy",
+        "copied": "Copied"
       },
       "forward": {
         "title": "Auth proxy (forward-auth)",

@@ -355,7 +355,7 @@ function RedirectUri({ uri }: { uri: string }) {
         <Input ref={field} id={ids} readOnly value={uri} onFocus={(e) => e.currentTarget.select()} className="bg-background text-sm md:text-sm" />
         <Button type="button" variant="outline" onClick={(e) => copy(e.currentTarget)} className="shrink-0" aria-label={t('admin.sso.oidc.copyRedirect')}>
           {copied ? <Check /> : <Copy />}
-          <span className="max-sm:sr-only">{copied ? t('shares.copied') : t('shares.copy')}</span>
+          <span className="max-sm:sr-only">{copied ? t('admin.sso.oidc.copied') : t('admin.sso.oidc.copy')}</span>
         </Button>
       </div>
     </div>
