@@ -6,7 +6,7 @@ import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { z } from 'zod';
 import { AuthGuard } from '../auth/auth.guard';
-import { AuthService } from '../auth/auth.service';
+import { AuthService, DOWNLOAD_TOKEN_TTL_S, PREVIEW_TOKEN_TTL_S } from '../auth/auth.service';
 import { AllowDownloadToken, CurrentUser } from '../auth/current-user.decorator';
 import { ServerConfigService } from '../auth/server-config.service';
 import { APP_CONFIG, AppConfig } from '../config';
@@ -146,12 +146,25 @@ export class SyncController {
     return { items: await this.serializer.toSyncItems(user, pageRows), nextPageToken, cursor };
   }
 
+  /**
+   * Short-lived URL for a browser download (`purpose` omitted: 60 s, attachment), or with
+   * `purpose=preview` a 6 h token for inline `<img>`/`<video>`/`<iframe>` use: the URL has no
+   * `download=1`, and the token is also accepted by the thumbnail route.
+   */
   @Post('items/:id/download-token')
-  async downloadToken(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+  async downloadToken(@CurrentUser() user: AuthUser, @Param('id') id: string, @Query('purpose') purpose?: string) {
+    if (purpose !== undefined && purpose !== 'download' && purpose !== 'preview') throw new SyncError('invalid_request', 'invalid purpose');
     const row = await this.resolveFile(user, id);
     const syncId = toSyncId(row);
-    const dt = await this.auth.signDownloadToken(user.id, syncId);
-    return { url: `/api/sync/v1/items/${syncId}/content?download=1&dt=${encodeURIComponent(dt)}` };
+    const preview = purpose === 'preview';
+    const ttl = preview ? PREVIEW_TOKEN_TTL_S : DOWNLOAD_TOKEN_TTL_S;
+    const dt = await this.auth.signDownloadToken(user.id, syncId, ttl);
+    const query = `${preview ? '' : 'download=1&'}dt=${encodeURIComponent(dt)}`;
+    return {
+      url: `/api/sync/v1/items/${syncId}/content?${query}`,
+      token: dt,
+      expiresAt: new Date(Date.now() + ttl * 1000).toISOString(),
+    };
   }
 
   @Get('items/:id/content')

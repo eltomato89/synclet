@@ -231,6 +231,39 @@ describe('Sync API v1', () => {
     expect((await api('POST', `/items/${folder.id}/download-token`)).json().code).toBe('invalid_request');
   });
 
+  it('download vs preview tokens: 60 s attachment vs 6 h inline, preview also opens the thumbnail route', async () => {
+    const file = (await api('POST', '/items/upload?parentId=root&name=p.txt', { body: 'hello' })).json();
+    const claims = (url: string) => {
+      const dt = new URL(url, 'http://x').searchParams.get('dt')!;
+      return JSON.parse(Buffer.from(dt.split('.')[1], 'base64url').toString()) as { iat: number; exp: number; item: string; typ: string };
+    };
+
+    const dl = (await api('POST', `/items/${file.id}/download-token`)).json();
+    expect(dl.url).toContain('download=1&');
+    const dlClaims = claims(dl.url);
+    expect(dlClaims.exp - dlClaims.iat).toBe(60);
+    expect((await api('POST', `/items/${file.id}/download-token?purpose=download`)).json().url).toContain('download=1&');
+
+    const pv = (await api('POST', `/items/${file.id}/download-token?purpose=preview`)).json();
+    expect(pv.url).not.toContain('download=');
+    expect(pv.token).toBe(new URL(pv.url, 'http://x').searchParams.get('dt'));
+    const pvClaims = claims(pv.url);
+    expect(pvClaims.exp - pvClaims.iat).toBe(6 * 3600);
+    expect(pvClaims).toMatchObject({ item: file.id, typ: 'dl' });
+    expect(Date.parse(pv.expiresAt) - Date.now()).toBeGreaterThan(6 * 3600 * 1000 - 60_000);
+
+    const inline = await ctx.app.inject({ method: 'GET', url: pv.url });
+    expect(inline.statusCode).toBe(200);
+    expect(inline.body).toBe('hello');
+    expect(inline.headers['content-disposition']).toBeUndefined();
+    // Accepted by the thumbnail route (404 only because a text file has no thumbnail, not 401).
+    const thumb = await ctx.app.inject({ method: 'GET', url: `/api/sync/v1/items/${file.id}/thumbnail?size=256&dt=${encodeURIComponent(pv.token)}` });
+    expect(thumb.statusCode).toBe(404);
+    expect((await ctx.app.inject({ method: 'GET', url: `/api/sync/v1/items/${file.id}/thumbnail?size=256&dt=bogus` })).statusCode).toBe(401);
+
+    expect((await api('POST', `/items/${file.id}/download-token?purpose=forever`)).json().code).toBe('invalid_request');
+  });
+
   it('raw bodies must be octet-stream; oversized declared length is 413', async () => {
     const json = await api('POST', '/items/upload?parentId=root&name=j.txt', { payload: { a: 1 } });
     expect(json.statusCode).toBe(400);
