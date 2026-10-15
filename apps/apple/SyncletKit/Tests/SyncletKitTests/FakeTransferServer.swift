@@ -87,6 +87,9 @@ final class FakeTusServer: @unchecked Sendable {
         case dropAfter
         /// Answer with this status (plain text), nothing stored.
         case status(Int)
+        /// Store the bytes but do not publish; answer with this status in the Sync error
+        /// format (a publish failure such as 507: the upload stays resumable, §7.5).
+        case storeThenError(Int, code: String)
     }
 
     struct Upload {
@@ -121,6 +124,11 @@ final class FakeTusServer: @unchecked Sendable {
 
     func setNetworkDown(_ down: Bool) { lock.withLock { networkDown = down } }
 
+    /// Adds an existing item to the children listing.
+    func seed(_ json: String) { lock.withLock { publishedItems.append(json) } }
+
+    var allRequests: [RecordedRequest] { lock.withLock { requests } }
+
     /// Forgets all unfinished uploads (expired on the server).
     func expireAll() { lock.withLock { uploads.removeAll() } }
 
@@ -139,10 +147,22 @@ final class FakeTusServer: @unchecked Sendable {
         XCTAssertEqual(expected, length, file: file, line: line)
     }
 
-    static func itemJSON(id: String, parentId: String, name: String, data: Data) -> String {
+    static func itemJSON(id: String, parentId: String, name: String, data: Data, modifiedAt: String? = nil,
+                         version: Int = 1) -> String {
         let sha = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-        return Fixtures.itemJSON(id: id, parentId: parentId, name: name, version: 1, contentEtag: "v1", etag: "v1", sha256: sha)
-            .replacingOccurrences(of: "\"size\":1234", with: "\"size\":\(data.count)")
+        return itemJSON(id: id, parentId: parentId, name: name, size: data.count, sha256: sha, modifiedAt: modifiedAt,
+                        version: version)
+    }
+
+    static func itemJSON(id: String, parentId: String, name: String, size: Int, sha256: String, modifiedAt: String? = nil,
+                         version: Int = 1) -> String {
+        var json = Fixtures.itemJSON(id: id, parentId: parentId, name: name, version: version, contentEtag: "v\(version)",
+                                     etag: "v\(version)", sha256: sha256)
+            .replacingOccurrences(of: "\"size\":1234", with: "\"size\":\(size)")
+        if let modifiedAt {
+            json = json.replacingOccurrences(of: "\"modifiedAt\":\"2026-10-02T12:30:15.123Z\"", with: "\"modifiedAt\":\"\(modifiedAt)\"")
+        }
+        return json
     }
 
     private func text(_ status: Int, _ message: String, headers: [String: String] = [:]) -> FakeReply {
@@ -200,11 +220,15 @@ final class FakeTusServer: @unchecked Sendable {
                 switch action {
                 case .dropBefore: return .failure(.networkConnectionLost)
                 case .status(let status): return text(status, "busy\n")
-                case .proceed, .dropAfter: break
+                case .proceed, .dropAfter, .storeThenError: break
                 }
                 guard offset == Int64(upload.data.count) else { return text(409, "Upload-Offset mismatch\n") }
                 upload.data.append(request.body)
-                ranges.append((offset, request.body.count))
+                if !request.body.isEmpty { ranges.append((offset, request.body.count)) }
+                if case .storeThenError(let status, let code) = action {
+                    uploads[id] = upload
+                    return .response(.error(status, code))
+                }
                 let reply: FakeReply
                 if Int64(upload.data.count) == upload.length {
                     uploads[id] = nil
@@ -234,7 +258,8 @@ final class FakeTusServer: @unchecked Sendable {
     /// Caller holds the lock.
     private func publish(_ upload: Upload, id: String) -> String {
         let json = Self.itemJSON(id: "f_\(id)", parentId: upload.metadata["parentId"] ?? "root",
-                                 name: upload.metadata["name"] ?? "", data: upload.data)
+                                 name: upload.metadata["name"] ?? "", data: upload.data,
+                                 modifiedAt: upload.metadata["modifiedAt"].flatMap { $0.isEmpty ? nil : $0 })
         publishedItems.append(json)
         publishedData = upload.data
         publishedMetadata = upload.metadata
@@ -260,14 +285,19 @@ enum TransferFixtures {
         FileManager.default.createFile(atPath: url.path, contents: nil)
         let handle = try! FileHandle(forWritingTo: url)
         defer { try? handle.close() }
+        // One 1 MiB base block; every block gets its index and the seed stamped into its
+        // first bytes, so each block is distinct (a misplaced range changes the hash).
         let block = 1 << 20
+        let base = Data((0..<block).map { UInt8(truncatingIfNeeded: $0 &* 7 &+ Int(seed)) })
         var written = 0
-        var blockIndex = 0
+        var blockIndex: UInt64 = 0
         while written < size {
             let count = min(block, size - written)
-            var bytes = [UInt8](repeating: 0, count: count)
-            for i in 0..<count { bytes[i] = UInt8(truncatingIfNeeded: i &+ blockIndex &* 31 &+ Int(seed)) }
-            try! handle.write(contentsOf: Data(bytes))
+            var bytes = base.prefix(count)
+            withUnsafeBytes(of: (blockIndex &+ 1) &* 0x9E37_79B9_7F4A_7C15 ^ UInt64(seed)) { stamp in
+                for i in 0..<min(8, count) { bytes[bytes.startIndex + i] = stamp[i] }
+            }
+            try! handle.write(contentsOf: bytes)
             written += count
             blockIndex += 1
         }

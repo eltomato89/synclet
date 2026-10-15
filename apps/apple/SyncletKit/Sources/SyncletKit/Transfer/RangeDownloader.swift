@@ -74,10 +74,25 @@ public final class RangeDownloader: Sendable {
                                           mime: response.value(forHTTPHeaderField: "Content-Type"))
             case .success(let response):
                 if response.statusCode == 304 { throw SyncAPIError.notModified }
+                if response.statusCode == 416, have > 0, failures + 1 < maxAttempts {
+                    // The resume offset is not satisfiable (file shrank meanwhile): start over.
+                    failures += 1
+                    try Self.truncate(handle, to: 0)
+                    have = 0
+                    etag = nil
+                    continue
+                }
                 throw SyncAPIClient.error(response, data: stream.errorBody)
             case .failure(let error):
                 if error is CancellationError { throw error }
                 guard case SyncAPIError.transport = error else { throw error }
+                if let response = outcome.response, response.statusCode == 200 || response.statusCode == 206,
+                   let total = stream.expectedTotal, have == total {
+                    // Every byte arrived before the connection dropped: complete.
+                    progress?.completedUnitCount = progress?.totalUnitCount ?? have
+                    return SyncDownloadResult(fileURL: destination, etag: etag, statusCode: response.statusCode,
+                                              mime: response.value(forHTTPHeaderField: "Content-Type"))
+                }
                 failures += 1
                 if failures >= maxAttempts { throw error }
                 Log.transfer.info("download interrupted at \(have, privacy: .public), resuming")

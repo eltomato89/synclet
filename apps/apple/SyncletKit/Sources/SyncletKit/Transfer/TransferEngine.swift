@@ -41,6 +41,8 @@ public final class TransferEngine: Sendable {
         self.threshold = threshold
         self.sleep = sleep
         self.now = now
+        // Drop state of uploads abandoned for more than 24 h (the server expired them too).
+        stateStore.purgeExpired()
     }
 
     /// Convenience: tus with the default chunk size.
@@ -110,6 +112,7 @@ public final class TransferEngine: Sendable {
                            progress: Progress?) async throws -> SyncItem {
         let localHash = LazyHash(file: file)
         var upload: (url: URL, offset: Int64)?
+        var resumed = false
 
         // 1. Resume a stored upload when the local file and the target are unchanged.
         if let state = stateStore.load(key: key) {
@@ -117,6 +120,7 @@ public final class TransferEngine: Sendable {
                state.target == target {
                 do {
                     upload = (state.uploadURL, try await tus.head(state.uploadURL).offset)
+                    resumed = true
                     Log.transfer.info("resuming upload at \(upload?.offset ?? 0, privacy: .public)/\(info.size, privacy: .public)")
                 } catch let error as SyncAPIError where Self.isUploadGone(error) {
                     stateStore.remove(key: key)
@@ -162,13 +166,15 @@ public final class TransferEngine: Sendable {
                 let item = try await sendChunks(file: file, info: info, url: current.url, offset: current.offset,
                                                 key: key, target: target, hash: localHash, progress: progress)
                 stateStore.remove(key: key)
+                let verified = try await verify(item, file: file, info: info, target: target, resumed: resumed, hash: localHash)
                 progress?.completedUnitCount = info.size
-                return item
+                return verified
             } catch let error as SyncAPIError where Self.isUploadGone(error) && restarts == 0 {
                 // Expired (410) or unknown (404) while patching: start over once.
                 restarts += 1
                 stateStore.remove(key: key)
                 upload = nil
+                resumed = false
                 Log.transfer.info("upload gone while patching, starting over")
             }
         }
@@ -238,12 +244,36 @@ public final class TransferEngine: Sendable {
         }
     }
 
+    /// Guards against a resumed upload that spliced different bytes (a same-size rewrite
+    /// that kept the mtime): the published size must match, and after a resume the sha256
+    /// too. On a mismatch the local content is written again with `PUT` (`If-Match` = the
+    /// version just published), so the server ends up with exactly the local bytes.
+    private func verify(_ item: SyncItem, file: URL, info: FileInfo, target: TusUploadMetadata, resumed: Bool,
+                        hash: LazyHash) async throws -> SyncItem {
+        var mismatch = item.size != info.size
+        if !mismatch, resumed, let serverHash = item.sha256 {
+            mismatch = serverHash != (try await hash.value())
+        }
+        guard mismatch else { return item }
+        Log.transfer.error("published upload \(item.id, privacy: .public) differs from the local file, rewriting it")
+        return try await api.replaceContent(itemID: item.id, from: file, ifMatch: item.contentEtag ?? "*",
+                                            modifiedAt: target.modifiedAt, progress: nil)
+    }
+
     /// A file in `target.parentId` with the same size and sha256 whose name is `target.name`
-    /// (same name key) or, with `allowSuffixed`, a server-picked `"<base> (n).<ext>"`.
+    /// (same name key) or, with `allowSuffixed` (the "upload gone" paths: our own upload may
+    /// have been published under a server-picked name), `"<base> (n).<ext>"`.
+    ///
+    /// On the "gone" paths a known `target.modifiedAt` must match too (the server stores the
+    /// metadata value), so an unrelated identical copy is not taken for ours. Preference:
+    /// the exact name; then suffixed names with `version == 1`, highest `n` first (the newest
+    /// server-picked name).
     private func findIdentical(target: TusUploadMetadata, size: Int64, hash: LazyHash,
                                allowSuffixed: Bool) async throws -> SyncItem? {
         let wanted = Self.nameKey(target.name)
         let (base, ext) = Self.splitName(target.name)
+        var exact: SyncItem?
+        var suffixed: [(item: SyncItem, n: Int)] = []
         var pageToken: String?
         repeat {
             let page: SyncChildrenPage
@@ -254,12 +284,22 @@ public final class TransferEngine: Sendable {
             }
             for item in page.items where !item.isFolder && item.size == size && item.sha256 != nil {
                 let key = Self.nameKey(item.name)
-                let nameMatches = key == wanted || (allowSuffixed && Self.isSuffixed(key, base: base, ext: ext))
-                if nameMatches, item.sha256 == (try await hash.value()) { return item }
+                let n = allowSuffixed ? Self.suffixNumber(key, base: base, ext: ext) : nil
+                guard key == wanted || n != nil else { continue }
+                if allowSuffixed, let modifiedAt = target.modifiedAt {
+                    guard let serverDate = item.modifiedDate, abs(serverDate.timeIntervalSince(modifiedAt)) < 2 else { continue }
+                }
+                guard item.sha256 == (try await hash.value()) else { continue }
+                if key == wanted { exact = exact ?? item } else if let n { suffixed.append((item, n)) }
             }
             pageToken = page.nextPageToken
         } while pageToken != nil
-        return nil
+        if let exact { return exact }
+        return suffixed.sorted { a, b in
+            let aFirst = a.item.version == 1, bFirst = b.item.version == 1
+            if aFirst != bFirst { return aFirst }
+            return a.n > b.n
+        }.first?.item
     }
 
     /// `NFC(name).toLowerCase()` (§4.3).
@@ -278,10 +318,16 @@ public final class TransferEngine: Sendable {
 
     /// `"<base> (n)<ext>"` with n ≥ 2.
     static func isSuffixed(_ key: String, base: String, ext: String) -> Bool {
-        guard key.hasPrefix(base + " ("), key.hasSuffix(")" + ext) else { return false }
+        suffixNumber(key, base: base, ext: ext) != nil
+    }
+
+    /// `n` of `"<base> (n)<ext>"` (n ≥ 2), else `nil`.
+    static func suffixNumber(_ key: String, base: String, ext: String) -> Int? {
+        guard key.hasPrefix(base + " ("), key.hasSuffix(")" + ext),
+              key.count >= base.count + ext.count + 3 else { return nil }
         let middle = key.dropFirst(base.count + 2).dropLast(ext.count + 1)
-        guard let n = Int(middle), n >= 2 else { return false }
-        return true
+        guard let n = Int(middle), n >= 2 else { return nil }
+        return n
     }
 
     struct FileInfo: Sendable {
@@ -295,6 +341,24 @@ public final class TransferEngine: Sendable {
         let mtime = attributes[.modificationDate] as? Date ?? .distantPast
         // Millisecond precision so the value survives the JSON round trip.
         return FileInfo(size: size, mtime: TusUploadMetadata.milliseconds(mtime))
+    }
+
+    /// SHA-256 (hex) of a file, read in blocks; cancellable, yields between blocks so a
+    /// multi-GB file does not hog a cooperative thread.
+    static func sha256Cancellable(of url: URL) async throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        var blocks = 0
+        while let chunk = try handle.read(upToCount: 1 << 20), !chunk.isEmpty {
+            hasher.update(data: chunk)
+            blocks += 1
+            if blocks % 16 == 0 {
+                try Task.checkCancellation()
+                await Task.yield()
+            }
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     /// SHA-256 (hex) of a file, read in blocks.
@@ -319,7 +383,7 @@ private final class LazyHash: @unchecked Sendable {
 
     func value() async throws -> String {
         if let cached = lock.withLock({ cached }) { return cached }
-        let hash = try TransferEngine.sha256(of: file)
+        let hash = try await TransferEngine.sha256Cancellable(of: file)
         lock.withLock { cached = hash }
         return hash
     }

@@ -428,8 +428,13 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
                 Log.fileProvider.info("conflict on \(id, privacy: .public): uploading copy \(copyName, privacy: .private)")
                 let parentID = server.parentId ?? newParent ?? (try? layout.serverParentId(for: item.parentItemIdentifier))
                     ?? SyncItem.rootID
+                // Keyed by the item, not the name: the copy's name contains the minute, so a
+                // retry after the minute boundary still resumes the same upload.
                 _ = try await transfers.upload(file: newContents, newIn: parentID, name: copyName,
-                                               modifiedAt: modifiedAt, progress: nil, reuseIdentical: false)
+                                               modifiedAt: modifiedAt, progress: nil,
+                                               resumeKey: Self.resumeKey(NSFileProviderItemIdentifier("conflict:" + item.itemIdentifier.rawValue),
+                                                                         contentVersion: baseVersion.contentVersion),
+                                               reuseIdentical: false)
                 signalWorkingSet()
                 return (FileProviderItem(server, layout: layout), true)
             } catch SyncAPIError.notFound {
@@ -453,12 +458,14 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
         let modifiedAt = item.contentModificationDate ?? nil
         Log.fileProvider.info("re-uploading \(item.filename, privacy: .private): deleted on the server, changed locally")
         let transfers = transfers(context)
+        let resumeKey = Self.resumeKey(NSFileProviderItemIdentifier("recreate:" + item.itemIdentifier.rawValue),
+                                       contentVersion: nil)
         do {
             _ = try await transfers.upload(file: contents, newIn: parent, name: item.filename, modifiedAt: modifiedAt,
-                                           progress: progress)
+                                           progress: progress, resumeKey: resumeKey)
         } catch SyncAPIError.notFound where parent != fallback {
             _ = try await transfers.upload(file: contents, newIn: fallback, name: item.filename, modifiedAt: modifiedAt,
-                                           progress: nil)
+                                           progress: nil, resumeKey: resumeKey)
         }
         signalWorkingSet()
         throw NSFileProviderError(.noSuchItem)

@@ -108,6 +108,9 @@ public final class AccountManager: Sendable {
         // registration's copy is the fallback.
         let account = (try? await deviceClient.account()) ?? registration.account
         let key = account.organizationId
+        // Re-login of a known account: remember the previous device token to revoke it.
+        let previousToken = credentials.token(for: key)
+        let previousServer = accounts.account(key: key)?.serverURL ?? server
 
         do {
             try credentials.save(token: registration.token, for: key)
@@ -115,6 +118,13 @@ public final class AccountManager: Sendable {
             // Token cannot be stored ⇒ sign the device out again.
             try? await deviceClient.revokeCurrentDevice()
             throw error
+        }
+
+        // The new token is stored: sign the previous device out (best effort, bounded). The
+        // server may already have revoked it (same installationId, §2.2) – that is fine.
+        if let previousToken, previousToken != registration.token {
+            let previousClient = SyncAPIClient(baseURL: previousServer, token: previousToken, session: session)
+            await Self.bestEffort(timeout: .seconds(3)) { try? await previousClient.revokeCurrentDevice() }
         }
 
         let stored = try accounts.upsert(StoredAccount(
@@ -134,16 +144,21 @@ public final class AccountManager: Sendable {
     public func remove(key: String, timeout: Duration = .seconds(3)) async {
         if let account = accounts.account(key: key), let token = credentials.token(for: key) {
             let client = SyncAPIClient(baseURL: account.serverURL, token: token, session: session)
-            await withTaskGroup(of: Void.self) { group in
-                group.addTask { try? await client.revokeCurrentDevice() }
-                group.addTask { try? await Task.sleep(for: timeout) }
-                await group.next()
-                group.cancelAll()
-            }
+            await Self.bestEffort(timeout: timeout) { try? await client.revokeCurrentDevice() }
         }
         try? await domains.removeDomain(identifier: AccountStore.key16(for: key))
         credentials.delete(for: key)
         try? accounts.remove(key: key)
+    }
+
+    /// Runs `operation`, giving up after `timeout`.
+    private static func bestEffort(timeout: Duration, _ operation: @escaping @Sendable () async -> Void) async {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { await operation() }
+            group.addTask { try? await Task.sleep(for: timeout) }
+            await group.next()
+            group.cancelAll()
+        }
     }
 
     /// The File Provider domain of an account.

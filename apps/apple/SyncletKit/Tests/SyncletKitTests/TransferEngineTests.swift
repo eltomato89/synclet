@@ -287,6 +287,212 @@ final class TransferEngineTests: XCTestCase {
         XCTAssertEqual(server.tusRequests.count, before)
     }
 
+    // MARK: - Dedupe must never reuse different content (I1)
+
+    private static let otherSHA = String(repeating: "0", count: 64)
+
+    /// (a) Fresh tus upload: a same-name, same-size file with other content is not reused.
+    func testFreshTusUploadDoesNotReuseSameNameSameSizeDifferentContent() async throws {
+        let server = FakeTusServer()
+        let size = 33 * Self.mib
+        server.seed(FakeTusServer.itemJSON(id: "f_other", parentId: "root", name: "Big.bin", size: size, sha256: Self.otherSHA))
+        let file = patternFile(size)
+        let item = try await engine().upload(file: file, newIn: "root", name: "Big.bin", modifiedAt: nil)
+        XCTAssertNotEqual(item.id, "f_other")
+        XCTAssertEqual(server.tusRequests.map(\.method), ["POST", "PATCH", "PATCH", "PATCH"])
+        XCTAssertEqual(server.publishedData, try Data(contentsOf: file))
+    }
+
+    /// (b) Gone path (HEAD 404): a suffixed same-size file with other content is not taken
+    /// for our published upload; the upload restarts.
+    func testGonePathDoesNotReuseSuffixedSameSizeDifferentContent() async throws {
+        let server = FakeTusServer()
+        let size = 40 * Self.mib
+        let file = patternFile(size)
+        server.onPatch = { number, _ in number == 2 ? .dropBefore : .proceed }
+        do {
+            _ = try await engine().upload(file: file, newIn: "root", name: "Big.bin", modifiedAt: nil, resumeKey: "k")
+            XCTFail("network error expected")
+        } catch SyncAPIError.transport {
+        }
+        server.onPatch = nil
+        server.expireAll()
+        server.seed(FakeTusServer.itemJSON(id: "f_other", parentId: "root", name: "Big (2).bin", size: size, sha256: Self.otherSHA))
+
+        let item = try await engine().upload(file: file, newIn: "root", name: "Big.bin", modifiedAt: nil, resumeKey: "k")
+
+        XCTAssertEqual(item.id, "f_u2")
+        XCTAssertEqual(server.tusRequests.filter { $0.method == "POST" }.count, 2)
+        XCTAssertEqual(server.publishedData, try Data(contentsOf: file))
+    }
+
+    /// (c) Single request: `409 name_conflict` with a same-size file of other content ⇒
+    /// a second request with `onConflict=rename`, never the existing item.
+    func testSingleRequestNameConflictWithDifferentContentRenames() async throws {
+        let server = FakeTusServer()
+        let file = Fixtures.tempFile("abc")
+        files.append(file)
+        let existing = FakeTusServer.itemJSON(id: "f_other", parentId: "root", name: "a.txt", size: 3, sha256: Self.otherSHA)
+        server.fallback = { request in
+            request.query["onConflict"] == "fail"
+                ? .response(.error(409, "name_conflict", item: existing))
+                : .response(.json(201, Fixtures.itemJSON(id: "f_new", name: "a (2).txt")))
+        }
+        let item = try await engine().upload(file: file, newIn: "root", name: "a.txt", modifiedAt: nil)
+        XCTAssertEqual(item.id, "f_new")
+        XCTAssertEqual(server.allRequests.map { $0.query["onConflict"] }, ["fail", "rename"])
+        XCTAssertEqual(server.allRequests.last?.body, Data("abc".utf8))
+    }
+
+    // MARK: - Hardening (M1, M2)
+
+    /// Gone path: an identical suffixed copy with another `modifiedAt` is an unrelated
+    /// duplicate, not our published upload.
+    func testGonePathRequiresMatchingModifiedAt() async throws {
+        let server = FakeTusServer()
+        let size = 40 * Self.mib
+        let file = patternFile(size)
+        let sha = try TransferEngine.sha256(of: file)
+        let modified = Date(timeIntervalSince1970: 1_700_000_000)
+        server.onPatch = { number, _ in number == 2 ? .dropBefore : .proceed }
+        do {
+            _ = try await engine().upload(file: file, newIn: "root", name: "Big.bin", modifiedAt: modified, resumeKey: "k")
+            XCTFail("network error expected")
+        } catch SyncAPIError.transport {
+        }
+        server.onPatch = nil
+        server.expireAll()
+        server.seed(FakeTusServer.itemJSON(id: "f_copy", parentId: "root", name: "Big (2).bin", size: size, sha256: sha,
+                                           modifiedAt: "2020-01-01T00:00:00.000Z"))
+
+        let item = try await engine().upload(file: file, newIn: "root", name: "Big.bin", modifiedAt: modified, resumeKey: "k")
+
+        XCTAssertEqual(item.id, "f_u2", "the unrelated copy is not reused")
+        XCTAssertEqual(server.tusRequests.filter { $0.method == "POST" }.count, 2)
+    }
+
+    func testLostFinalResponseWithModifiedAtFindsPublishedFile() async throws {
+        let server = FakeTusServer()
+        let file = patternFile(33 * Self.mib)
+        let modified = Date(timeIntervalSince1970: 1_700_000_000.5)
+        server.onPatch = { number, _ in number == 3 ? .dropAfter : .proceed }
+        do {
+            _ = try await engine().upload(file: file, newIn: "root", name: "Big.bin", modifiedAt: modified, resumeKey: "k")
+            XCTFail("network error expected")
+        } catch SyncAPIError.transport {
+        }
+        server.onPatch = nil
+        let item = try await engine().upload(file: file, newIn: "root", name: "Big.bin", modifiedAt: modified, resumeKey: "k")
+        XCTAssertEqual(item.id, "f_u1")
+        XCTAssertEqual(server.publishedItems.count, 1)
+    }
+
+    /// A same-size rewrite that kept the mtime splices old bytes into a resumed upload: the
+    /// sha256 check after completion catches it and rewrites the content with PUT.
+    func testResumedUploadWithSplicedContentIsRewritten() async throws {
+        let server = FakeTusServer()
+        let size = 40 * Self.mib
+        let file = patternFile(size)
+        let originalMtime = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: file.path)[.modificationDate] as? Date)
+        server.onPatch = { number, _ in number == 2 ? .dropBefore : .proceed }
+        do {
+            _ = try await engine().upload(file: file, newIn: "root", name: "Big.bin", modifiedAt: nil, resumeKey: "k")
+            XCTFail("network error expected")
+        } catch SyncAPIError.transport {
+        }
+        server.onPatch = nil
+        // Rewrite with other bytes of the same size and restore the mtime (like `cp -p`).
+        let other = patternFile(size, seed: 9)
+        try FileManager.default.removeItem(at: file)
+        try FileManager.default.copyItem(at: other, to: file)
+        try FileManager.default.setAttributes([.modificationDate: originalMtime], ofItemAtPath: file.path)
+        server.fallback = { request in
+            request.method == "PUT"
+                ? .response(.json(200, FakeTusServer.itemJSON(id: "f_u1", parentId: "root", name: "Big.bin",
+                                                              data: request.body, version: 2)))
+                : .response(.empty(500))
+        }
+
+        let item = try await engine().upload(file: file, newIn: "root", name: "Big.bin", modifiedAt: nil, resumeKey: "k")
+
+        let put = try XCTUnwrap(server.allRequests.last)
+        XCTAssertEqual(put.method, "PUT")
+        XCTAssertEqual(put.path, "/api/sync/v1/items/f_u1/content")
+        XCTAssertEqual(put.header("If-Match"), "\"v1\"")
+        XCTAssertEqual(put.body, try Data(contentsOf: other))
+        XCTAssertEqual(item.sha256, try TransferEngine.sha256(of: other))
+    }
+
+    // MARK: - More resume paths (M8)
+
+    func testFileChangedDuringUploadTerminatesWithoutPublishing() async throws {
+        let server = FakeTusServer()
+        let file = patternFile(40 * Self.mib)
+        server.onPatch = { number, _ in
+            if number == 2 {
+                try? FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(120)], ofItemAtPath: file.path)
+            }
+            return .proceed
+        }
+        do {
+            _ = try await engine().upload(file: file, newIn: "root", name: "Big.bin", modifiedAt: nil, resumeKey: "k")
+            XCTFail("error expected")
+        } catch let error as CocoaError {
+            XCTAssertEqual(error.code, .fileReadUnknown)
+        }
+        XCTAssertEqual(server.tusRequests.map(\.method), ["POST", "PATCH", "PATCH", "DELETE"])
+        XCTAssertTrue(server.publishedItems.isEmpty)
+        XCTAssertEqual(server.uploadCount, 0)
+        XCTAssertTrue(storedStates.isEmpty)
+    }
+
+    func test507AtCompletionIsRetriedWithEmptyPatch() async throws {
+        let server = FakeTusServer()
+        let size = 33 * Self.mib
+        let file = patternFile(size)
+        server.onPatch = { number, _ in number == 3 ? .storeThenError(507, code: "insufficient_storage") : .proceed }
+        await assertThrows(.insufficientStorage(message: "insufficient_storage")) {
+            _ = try await self.engine().upload(file: file, newIn: "root", name: "Big.bin", modifiedAt: nil, resumeKey: "k")
+        }
+        XCTAssertEqual(storedStates.count, 1, "stays resumable")
+        server.onPatch = nil
+
+        _ = try await engine().upload(file: file, newIn: "root", name: "Big.bin", modifiedAt: nil, resumeKey: "k")
+
+        let tus = server.tusRequests
+        XCTAssertEqual(tus.map(\.method), ["POST", "PATCH", "PATCH", "PATCH", "HEAD", "PATCH"])
+        XCTAssertEqual(tus.last?.body.count, 0)
+        XCTAssertEqual(tus.last?.header("Upload-Offset"), String(size))
+        XCTAssertEqual(server.publishedData, try Data(contentsOf: file))
+        server.assertRangesContiguous(length: Int64(size))
+    }
+
+    func testPatch410MidUploadRestartsOnce() async throws {
+        let server = FakeTusServer()
+        let file = patternFile(40 * Self.mib)
+        server.onPatch = { number, _ in number == 2 ? .status(410) : .proceed }
+        let item = try await engine().upload(file: file, newIn: "root", name: "Big.bin", modifiedAt: nil)
+        XCTAssertEqual(item.id, "f_u2")
+        XCTAssertEqual(server.tusRequests.map(\.method), ["POST", "PATCH", "PATCH", "POST", "PATCH", "PATCH", "PATCH"])
+        XCTAssertEqual(server.publishedData, try Data(contentsOf: file))
+
+        // A second 410 in the restarted upload is surfaced.
+        server.onPatch = { _, _ in .status(410) }
+        await assertThrows(.http(status: 410, code: nil, message: nil)) {
+            _ = try await self.engine().upload(file: file, newIn: "root", name: "Other.bin", modifiedAt: nil)
+        }
+    }
+
+    func testExpiredStateIsPurgedWhenTheEngineStarts() throws {
+        let store = UploadStateStore(directory: stateDir)
+        try store.save(UploadState(uploadURL: URL(string: "https://synclet.example.test/api/sync/v1/uploads/u9")!, length: 1,
+                                   fileSize: 1, fileMtime: Date(), target: TusUploadMetadata(name: "a", parentId: "root"),
+                                   createdAt: Date().addingTimeInterval(-25 * 3600)), key: "abandoned")
+        XCTAssertEqual(storedStates.count, 1)
+        _ = engine()
+        XCTAssertTrue(storedStates.isEmpty)
+    }
+
     func testNameHelpers() {
         let (base, ext) = TransferEngine.splitName("Video.MOV")
         XCTAssertEqual(base, "video")
@@ -294,6 +500,8 @@ final class TransferEngineTests: XCTestCase {
         XCTAssertTrue(TransferEngine.isSuffixed("video (2).mov", base: base, ext: ext))
         XCTAssertFalse(TransferEngine.isSuffixed("video (1).mov", base: base, ext: ext))
         XCTAssertFalse(TransferEngine.isSuffixed("video (x).mov", base: base, ext: ext))
+        XCTAssertEqual(TransferEngine.suffixNumber("video (12).mov", base: base, ext: ext), 12)
+        XCTAssertNil(TransferEngine.suffixNumber("video.mov", base: base, ext: ext))
         XCTAssertEqual(TransferEngine.splitName(".env").ext, "")
     }
 }

@@ -54,8 +54,12 @@ final class RangeDownloaderTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: destination), content)
         XCTAssertEqual(result.statusCode, 206)
         XCTAssertEqual(result.etag, "v3")
+        // The resume offset is whatever reached the disk before the drop (≤ 120000; the fake
+        // delivers the bytes before the error, but the test does not depend on the timing).
         let second = recorder.requests[1]
-        XCTAssertEqual(second.header("Range"), "bytes=120000-")
+        let range = try XCTUnwrap(second.header("Range"))
+        let start = try XCTUnwrap(Int(range.dropFirst(6).dropLast()))
+        XCTAssertTrue(range.hasPrefix("bytes=") && range.hasSuffix("-") && start > 0 && start <= 120_000, range)
         XCTAssertEqual(second.header("If-Range"), "\"v3\"")
         XCTAssertNil(recorder.requests[0].header("Range"))
         XCTAssertEqual(progress.totalUnitCount, Int64(content.count))
@@ -83,6 +87,40 @@ final class RangeDownloaderTests: XCTestCase {
         XCTAssertEqual(result.statusCode, 200)
         XCTAssertEqual(result.etag, "v4")
         XCTAssertEqual(recorder.requests[1].header("If-Range"), "\"v3\"")
+    }
+
+    func testDropAfterTheLastByteCountsAsComplete() async throws {
+        let content = Data((0..<40_000).map { UInt8(truncatingIfNeeded: $0 * 3) })
+        let recorder = setHandler { _ in
+            .partial(status: 200, headers: ["ETag": "\"v3\"", "Content-Length": String(content.count)],
+                     body: content, then: .networkConnectionLost)
+        }
+        let destination = dir.appending(path: "out")
+        let result = try await downloader().download(itemID: "f_1", to: destination)
+        XCTAssertEqual(try Data(contentsOf: destination), content)
+        XCTAssertEqual(result.etag, "v3")
+        XCTAssertEqual(recorder.requests.count, 1, "no Range request past the end (would be 416)")
+    }
+
+    func test416OnResumeRestartsFromZero() async throws {
+        let content = Data((0..<30_000).map { UInt8(truncatingIfNeeded: $0) })
+        let counter = Counter()
+        _ = setHandler { request in
+            switch counter.next() {
+            case 1:
+                return .partial(status: 200, headers: ["ETag": "\"v3\"", "Content-Length": "50000"],
+                                body: Data(repeating: 1, count: 35_000), then: .networkConnectionLost)
+            case 2:
+                // The file shrank on the server's disk (ETag not reindexed yet): range past the end.
+                return .response(.error(416, "range_not_satisfiable", headers: ["Content-Range": "bytes */30000"]))
+            default:
+                XCTAssertNil(request.header("Range"))
+                return .response(Self.serve(request, content: content, etag: "v3"))
+            }
+        }
+        let destination = dir.appending(path: "out")
+        _ = try await downloader().download(itemID: "f_1", to: destination)
+        XCTAssertEqual(try Data(contentsOf: destination), content)
     }
 
     func testGivesUpAfterThreeAttempts() async throws {
