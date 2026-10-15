@@ -9,6 +9,7 @@ import { DerivedStore } from '../derivatives/derived-store';
 import { FilesService } from '../files/files.service';
 import { IndexerService } from '../indexer/indexer.service';
 import { ShareRateLimits, unlockCookieName } from './share-auth';
+import { ShareQuotas } from './share-quotas';
 
 type Res = Awaited<ReturnType<TestContext['app']['inject']>>;
 
@@ -226,6 +227,43 @@ describe('Share links', () => {
       expect((await pub('GET', s.token, { ip: '192.0.2.9' })).statusCode).toBe(429);
     });
 
+    it('limits password guesses per share across clients and per IPv6 /64', async () => {
+      const t = await tree();
+      const s = await share(t.A.id, { password: 'pw' });
+      // Same /64: one bucket; IPv4-mapped IPv6 counts as the IPv4 address.
+      for (let i = 0; i < 5; i++) {
+        expect((await pub('POST', `${s.token}/unlock`, { payload: { password: 'bad' }, ip: `2001:db8:1:2::${i + 1}` })).statusCode).toBe(401);
+      }
+      expect((await pub('POST', `${s.token}/unlock`, { payload: { password: 'pw' }, ip: '2001:db8:1:2:ffff::9' })).statusCode).toBe(429);
+      expect((await pub('POST', `${s.token}/unlock`, { payload: { password: 'pw' }, ip: '2001:db8:1:3::1' })).statusCode).toBe(204);
+      for (let i = 0; i < 5; i++) await pub('POST', `${s.token}/unlock`, { payload: { password: 'bad' }, ip: '192.0.2.50' });
+      expect((await pub('POST', `${s.token}/unlock`, { payload: { password: 'pw' }, ip: '::ffff:192.0.2.50' })).statusCode).toBe(429);
+
+      // Per share: fresh addresses do not get fresh guesses beyond the share budget.
+      const s2 = await share(t.B.id, { password: 'pw2' });
+      ctx.app.get(ShareRateLimits).unlockShare = new RateLimiter({ capacity: 3, refillPerSec: 0.0001 });
+      for (let i = 0; i < 3; i++) {
+        expect((await pub('POST', `${s2.token}/unlock`, { payload: { password: 'bad' }, ip: `198.51.100.${i + 20}` })).statusCode).toBe(401);
+      }
+      const limited = await pub('POST', `${s2.token}/unlock`, { payload: { password: 'pw2' }, ip: '198.51.100.99' });
+      expect(limited.statusCode).toBe(429);
+      expect(limited.headers['retry-after']).toBe('30');
+      // Another share is unaffected; a share without password never consumes the share budget.
+      expect((await pub('POST', `${s.token}/unlock`, { payload: { password: 'pw' }, ip: '198.51.100.98' })).statusCode).toBe(204);
+    });
+
+    it('unlock answers 404 for a trashed item or a disabled owner', async () => {
+      const t = await tree();
+      const s = await share(t.sub.id, { password: 'pw' });
+      const s2 = await share(t.A.id, { password: 'pw' });
+      await api('DELETE', `/sync/v1/items/${t.sub.id}`);
+      const res = await pub('POST', `${s.token}/unlock`, { payload: { password: 'pw' } });
+      expect(res.statusCode).toBe(404);
+      expect(cookieOf(res)).toBeUndefined();
+      await ctx.prisma.user.update({ where: { id: userId }, data: { disabledAt: new Date() } });
+      expect((await pub('POST', `${s2.token}/unlock`, { payload: { password: 'pw' }, ip: '198.51.100.3' })).statusCode).toBe(404);
+    });
+
     it('browses the shared folder and its live descendants only', async () => {
       const t = await tree();
       const s = await share(t.A.id);
@@ -358,6 +396,51 @@ describe('Share links', () => {
       expect((await pub('GET', `${f.token}/zip`)).statusCode).toBe(400);
     });
 
+    it('zip entry names never contain backslashes or control characters', async () => {
+      const t = await tree();
+      const name = '..\\..\\x.bat';
+      try {
+        await writeFile(path.join(userRoot(), 'P', 'A', name), 'bat');
+      } catch {
+        console.warn('skipped: file system does not allow backslashes in names');
+        return;
+      }
+      await ctx.app.get(IndexerService).fullScan({ id: userId, username: 'jens' });
+      const s = await share(t.A.id);
+      const entries = await unzip((await pub('GET', `${s.token}/zip`)).rawPayload);
+      expect(entries.get('.._.._x.bat')).toBe('bat');
+      expect([...entries.keys()].some((k) => k.includes('\\'))).toBe(false);
+    });
+
+    it('caps concurrent zip streams per share and globally (503), releasing slots when done', async () => {
+      const t = await tree();
+      const s = await share(t.A.id);
+      const other = await share(t.B.id);
+      const quotas = ctx.app.get(ShareQuotas);
+      quotas.zipPerShare = 1;
+      quotas.zipGlobal = 2;
+      // Sequential downloads release their slot.
+      expect((await pub('GET', `${s.token}/zip`)).statusCode).toBe(200);
+      expect((await pub('GET', `${s.token}/zip`)).statusCode).toBe(200);
+      const fakeReply = { header: () => fakeReply } as never;
+      const shareRow = await ctx.prisma.shareLink.findUniqueOrThrow({ where: { id: s.id } });
+      const release = quotas.acquireZip(shareRow.id, fakeReply);
+      const busy = await pub('GET', `${s.token}/zip`);
+      expect(busy.statusCode).toBe(503);
+      expect(busy.json().code).toBe('rate_limited');
+      expect(busy.headers['retry-after']).toBeDefined();
+      expect((await pub('GET', `${other.token}/zip`)).statusCode).toBe(200); // other share has its own slot
+      const release2 = quotas.acquireZip('some-other-share', fakeReply);
+      expect((await pub('GET', `${other.token}/zip`)).statusCode).toBe(503); // global cap reached
+      release(); release2(); release();
+      expect((await pub('GET', `${s.token}/zip`)).statusCode).toBe(200);
+      // Denied requests (403) do not leak slots.
+      await api('PATCH', `/shares/${s.id}`, { payload: { allowDownload: false } });
+      expect((await pub('GET', `${s.token}/zip`)).statusCode).toBe(403);
+      await api('PATCH', `/shares/${s.id}`, { payload: { allowDownload: true } });
+      expect((await pub('GET', `${s.token}/zip`)).statusCode).toBe(200);
+    });
+
     it('serves thumbnails produced by the worker, 404 before', async () => {
       const t = await tree();
       const img = await upload(t.A.id, 'img.jpg', 'jpeg bytes');
@@ -371,6 +454,7 @@ describe('Share links', () => {
       expect(res.statusCode).toBe(200);
       expect(res.headers['content-type']).toBe('image/webp');
       expect(res.headers['x-content-type-options']).toBe('nosniff');
+      expect(res.headers['cache-control']).toBe('private, no-store');
       expect(res.body).toBe('webp-256');
       expect((await pub('GET', `${s.token}/items/${img.id}/thumbnail?size=1024`)).statusCode).toBe(404);
       expect((await pub('GET', `${s.token}/items/${img.id}/thumbnail?size=999`)).statusCode).toBe(400);
@@ -418,6 +502,19 @@ describe('Share links', () => {
       expect(limited.statusCode).toBe(429);
       expect(limited.headers['retry-after']).toBeDefined();
       expect((await pub('POST', `${u.token}/upload?name=3.txt`, { body: '3', ip: '198.51.100.8' })).statusCode).toBe(201);
+    });
+
+    it('external uploads share a daily byte budget per link (413 when used up)', async () => {
+      const t = await tree();
+      const s = await share(t.A.id, { allowUpload: true });
+      ctx.app.get(ShareQuotas).uploadBytesPerDay = 10;
+      expect((await pub('POST', `${s.token}/upload?name=one.txt`, { body: '123456' })).statusCode).toBe(201);
+      const over = await pub('POST', `${s.token}/upload?name=two.txt`, { body: '123456' });
+      expect(over.statusCode).toBe(413);
+      expect(over.json().code).toBe('too_large');
+      expect(await ctx.prisma.item.count({ where: { name: 'two.txt' } })).toBe(0);
+      expect((await pub('POST', `${s.token}/upload?name=three.txt`, { body: '1234' })).statusCode).toBe(201);
+      expect((await pub('POST', `${s.token}/upload?name=four.txt`, { body: '1' })).statusCode).toBe(413);
     });
 
     it('a shared folder created on the host is shareable after indexing', async () => {

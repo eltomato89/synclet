@@ -6,6 +6,15 @@ import type { Readable } from 'node:stream';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const archiver = require('archiver') as (format: 'zip', options: ArchiverOptions) => Archiver;
 
+/**
+ * Entry name for a '/'-separated relative path: backslashes (a path separator for some Windows
+ * extractors, so `..\..\x.bat` would escape the target folder) and control characters become `_`.
+ */
+export function zipEntryName(rel: string): string {
+  // eslint-disable-next-line no-control-regex
+  return rel.split('/').map((seg) => seg.replace(/[\\\u0000-\u001f\u007f]/g, '_')).join('/');
+}
+
 export interface ZipEntrySource {
   /** Path inside the archive, '/'-separated, no leading slash. */
   name: string;

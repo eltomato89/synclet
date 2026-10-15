@@ -61,23 +61,44 @@ interface UnlockClaims { typ: 'share'; sid: string; pw: string }
 /** Binds an unlock to the current password: changing the password invalidates earlier unlocks. */
 const passwordStamp = (passwordHash: string) => createHash('sha256').update(passwordHash).digest('base64url').slice(0, 16);
 
-type LimitName = 'requests' | 'unlock' | 'upload';
-/** Seconds until one token is back, sent as Retry-After. */
-const RETRY_AFTER: Record<LimitName, number> = { requests: 1, unlock: 10, upload: 180 };
+/**
+ * Rate-limit key of a client address: IPv4-mapped IPv6 as plain IPv4, other IPv6 by its /64
+ * prefix (one end-user network usually owns a whole /64, so per-address keys are free to rotate).
+ */
+export function ipKey(ip: string | undefined): string {
+  const raw = (ip ?? '').trim().split('%')[0].toLowerCase();
+  const mapped = /^(?:::|(?:0{1,4}:){5})ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(raw);
+  if (mapped) return mapped[1];
+  if (!raw.includes(':')) return raw;
+  const [head, tail] = raw.split('::');
+  const groups = (part: string | undefined) => (part ? part.split(':') : []);
+  const width = (g: string[]) => g.reduce((n, x) => n + (x.includes('.') ? 2 : 1), 0);
+  const h = groups(head);
+  const all = tail === undefined ? h : [...h, ...Array<string>(Math.max(0, 8 - width(h) - width(groups(tail)))).fill('0'), ...groups(tail)];
+  const prefix = all.slice(0, 4).map((g) => (/^[0-9a-f]{1,4}$/.test(g) ? Number.parseInt(g, 16).toString(16) : '0'));
+  while (prefix.length < 4) prefix.push('0');
+  return `${prefix.join(':')}::/64`;
+}
 
-/** Per-IP limits of the anonymous share API. Fields are replaceable (tests). */
+type LimitName = 'requests' | 'unlock' | 'unlockShare' | 'upload';
+/** Seconds until one token is back, sent as Retry-After. */
+const RETRY_AFTER: Record<LimitName, number> = { requests: 1, unlock: 10, unlockShare: 30, upload: 180 };
+
+/** Rate limits of the anonymous share API. Fields are replaceable (tests). */
 @Injectable()
 export class ShareRateLimits {
-  /** Every public request: generous (a folder view loads many thumbnails). */
+  /** Every public request, per client: generous (a folder view loads many thumbnails). */
   requests = new RateLimiter({ capacity: 600, refillPerSec: 20 });
-  /** Password checks: same budget as login (5 burst, one more per 10 s). */
+  /** Password checks per client: same budget as login (5 burst, one more per 10 s). */
   unlock = new RateLimiter({ capacity: 5, refillPerSec: 1 / 10 });
-  /** External uploads: 20 per hour. */
+  /** Password checks per share (key `unlock:<shareId>`), whatever the number of clients. */
+  unlockShare = new RateLimiter({ capacity: 20, refillPerSec: 1 / 30 });
+  /** External uploads per client: 20 per hour. */
   upload = new RateLimiter({ capacity: 20, refillPerSec: 20 / 3600 });
 
-  /** Takes one token of limit `name` for `ip` or throws 429 rate_limited with Retry-After. */
-  take(name: LimitName, ip: string, reply: FastifyReply): void {
-    if (this[name].take(ip)) return;
+  /** Takes one token of limit `name` for `key` or throws 429 rate_limited with Retry-After. */
+  take(name: LimitName, key: string, reply: FastifyReply): void {
+    if (this[name].take(key)) return;
     reply.header('Retry-After', String(RETRY_AFTER[name]));
     throw new SyncError('rate_limited', 'too many requests, try again later');
   }
@@ -146,6 +167,11 @@ export class ShareAuth {
   async resolve(token: string, req: FastifyRequest): Promise<ResolvedShare> {
     const share = await this.findActive(token);
     if (share.passwordHash && !(await this.unlocked(req, share))) throw new SyncError('share_password_required');
+    return this.load(share);
+  }
+
+  /** Owner (enabled) and live shared item of an active share; 404 otherwise. No password check. */
+  async load(share: ShareLink): Promise<ResolvedShare> {
     const owner = await this.prisma.user.findUnique({ where: { id: share.ownerId } });
     if (!owner || owner.disabledAt) throw new SyncError('not_found');
     const root = await this.prisma.item.findFirst({ where: { id: share.itemId, ownerId: share.ownerId, deletedAt: null } });

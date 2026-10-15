@@ -17,7 +17,7 @@ import { openNoFollow } from '../sync/http-content';
 import { mimeFor } from '../sync/serializer.service';
 import { toSyncId, UUID } from '../sync/sync-ids';
 import { decryptToken, encryptToken, parseItemId, ResolvedShare, ShareAuth } from './share-auth';
-import type { ZipEntrySource } from './zip';
+import { zipEntryName, type ZipEntrySource } from './zip';
 
 export interface SharePatch {
   password?: string | null;
@@ -242,7 +242,7 @@ export class SharesService {
       .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
     const base = folder.path.length + 1;
     return rows.map((r) => ({
-      name: r.path.slice(base), type: r.type, mtime: r.mtime,
+      name: zipEntryName(r.path.slice(base)), type: r.type, mtime: r.mtime,
       open: r.type === 'file'
         ? async (): Promise<Readable | null> => {
           const real = await this.auth.realPathOf(rs, r, realRoot);

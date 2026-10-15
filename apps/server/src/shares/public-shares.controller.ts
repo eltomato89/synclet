@@ -1,13 +1,15 @@
 import { Body, Controller, Get, Headers, HttpCode, Inject, Logger, Param, Post, Query, Req, Res } from '@nestjs/common';
 import type { PublicShareEntry, PublicShareInfo } from '@synclet/shared';
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { pipeline } from 'node:stream';
 import { z } from 'zod';
 import { SyncError } from '../common/sync-error';
 import { ZodPipe } from '../common/zod.pipe';
 import { APP_CONFIG, AppConfig } from '../config';
-import { attachmentDisposition, HeaderMap, openNoFollow, rawBody, sendFile } from '../sync/http-content';
+import { attachmentDisposition, first, HeaderMap, openNoFollow, rawBody, sendFile } from '../sync/http-content';
 import { mimeFor } from '../sync/serializer.service';
-import { ResolvedShare, ShareAuth, ShareRateLimits, UNLOCK_TTL_SEC, unlockCookieName } from './share-auth';
+import { ipKey, ResolvedShare, ShareAuth, ShareRateLimits, UNLOCK_TTL_SEC, unlockCookieName } from './share-auth';
+import { ShareQuotas } from './share-quotas';
 import { SharesService } from './shares.service';
 import { createZip } from './zip';
 
@@ -28,13 +30,14 @@ export class PublicSharesController {
     private readonly auth: ShareAuth,
     private readonly shares: SharesService,
     private readonly limits: ShareRateLimits,
+    private readonly quotas: ShareQuotas,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
   /** Common headers + per-IP request limit. */
   private begin(req: FastifyRequest, reply: FastifyReply) {
     reply.header('X-Robots-Tag', 'noindex, nofollow').header('Referrer-Policy', 'no-referrer').header('Cache-Control', 'private, no-store');
-    this.limits.take('requests', req.ip, reply);
+    this.limits.take('requests', ipKey(req.ip), reply);
   }
 
   private async open(token: string, req: FastifyRequest, reply: FastifyReply): Promise<ResolvedShare> {
@@ -51,9 +54,12 @@ export class PublicSharesController {
   @HttpCode(204)
   async unlock(@Param('token') token: string, @Body(new ZodPipe(UnlockBody)) body: z.infer<typeof UnlockBody>, @Req() req: FastifyRequest, @Res({ passthrough: true }) reply: FastifyReply): Promise<void> {
     this.begin(req, reply);
-    this.limits.take('unlock', req.ip, reply); // before any lookup or hashing
+    this.limits.take('unlock', ipKey(req.ip), reply); // before any lookup or hashing
     const share = await this.auth.findActive(token);
-    if (!share.passwordHash) return;
+    // Per share as well: many client addresses must not multiply the guesses against one password.
+    if (share.passwordHash) this.limits.take('unlockShare', `unlock:${share.id}`, reply);
+    const rs = await this.auth.load(share); // trashed item / disabled owner: 404 like every route
+    if (!rs.share.passwordHash) return;
     if (!(await this.shares.checkPassword(share, body.password))) throw new SyncError('unauthorized', 'wrong password');
     reply.setCookie(unlockCookieName(share.id), await this.auth.signUnlock(share), {
       path: `/api/public/shares/${token}`, httpOnly: true, sameSite: 'lax', secure: this.config.secureCookies, maxAge: UNLOCK_TTL_SEC,
@@ -87,7 +93,7 @@ export class PublicSharesController {
     const length = await fh.stat().then((st) => st.size, async (e) => { await fh.close(); throw e; });
     return reply
       .header('Content-Type', 'image/webp').header('X-Content-Type-Options', 'nosniff')
-      .header('Content-Security-Policy', "default-src 'none'; sandbox").header('Cache-Control', 'private, max-age=3600')
+      .header('Content-Security-Policy', "default-src 'none'; sandbox").header('Cache-Control', 'private, no-store')
       .header('Content-Length', length)
       .send(fh.createReadStream());
   }
@@ -98,10 +104,20 @@ export class PublicSharesController {
     if (!rs.share.allowDownload) throw new SyncError('forbidden', 'downloads are disabled for this link');
     if (rs.root.type !== 'folder') throw new SyncError('invalid_request', 'not a folder share');
     const target = await this.auth.target(rs, folder, 'folder');
-    const entries = await this.shares.zipEntries(rs, target);
-    const zip = createZip(entries, this.log);
+    const release = this.quotas.acquireZip(rs.share.id, reply);
+    let zip: ReturnType<typeof createZip>;
+    try {
+      zip = createZip(await this.shares.zipEntries(rs, target), this.log);
+    } catch (e) {
+      release();
+      throw e;
+    }
     // Client gone before the end: stop reading files and building the archive.
-    reply.raw.on('close', () => { if (!reply.raw.writableFinished) zip.abort(); });
+    reply.raw.on('close', () => {
+      release();
+      if (!reply.raw.writableFinished) zip.abort();
+    });
+    for (const ev of ['end', 'close', 'error']) zip.stream.once(ev, release);
     return reply
       .header('Content-Type', 'application/zip').header('X-Content-Type-Options', 'nosniff')
       .header('Content-Disposition', attachmentDisposition(`${target.name}.zip`))
@@ -122,7 +138,9 @@ export class PublicSharesController {
     const rs = await this.open(token, req, reply);
     const target = await this.shares.uploadTarget(rs, folder);
     const stream = rawBody(body, headers, this.config.maxUploadBytes);
-    this.limits.take('upload', req.ip, reply);
-    return this.shares.upload(rs, target, name ?? '', stream);
+    this.limits.take('upload', ipKey(req.ip), reply);
+    const length = first(headers['content-length']);
+    const meter = this.quotas.meterUpload(rs.share.id, length === undefined ? null : Number(length));
+    return this.shares.upload(rs, target, name ?? '', pipeline(stream, meter, () => undefined));
   }
 }

@@ -6,6 +6,7 @@ import { DerivedStore } from '../derivatives/derived-store';
 import { FilesModule } from '../files/files.module';
 import { PublicSharesController } from './public-shares.controller';
 import { ShareAuth, ShareRateLimits } from './share-auth';
+import { ShareQuotas } from './share-quotas';
 import { SharesController } from './shares.controller';
 import { SharesService } from './shares.service';
 
@@ -13,7 +14,7 @@ import { SharesService } from './shares.service';
   imports: [AuthModule, FilesModule, JwtModule.register({})],
   controllers: [SharesController, PublicSharesController],
   providers: [
-    SharesService, ShareAuth, ShareRateLimits,
+    SharesService, ShareAuth, ShareRateLimits, ShareQuotas,
     { provide: DerivedStore, useFactory: (config: AppConfig) => new DerivedStore(config.metaRoot), inject: [APP_CONFIG] },
   ],
 })
