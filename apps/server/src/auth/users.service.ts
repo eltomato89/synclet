@@ -2,10 +2,10 @@ import { HttpException, Inject, Injectable } from '@nestjs/common';
 import type { User } from '@prisma/client';
 import type { PublicUser } from '@synclet/shared';
 import * as argon2 from 'argon2';
-import { access, constants, mkdir } from 'node:fs/promises';
+import { access, constants, lstat, mkdir, readdir } from 'node:fs/promises';
 import { APP_CONFIG, AppConfig } from '../config';
 import { AppEvents } from '../common/events';
-import { validateName } from '../common/names';
+import { isIgnored, validateName } from '../common/names';
 import { userRoot } from '../common/paths';
 import { SyncError } from '../common/sync-error';
 import { PrismaService } from '../prisma/prisma.service';
@@ -16,6 +16,8 @@ export interface CreateUserInput {
   email?: string | null;
   password: string;
   role: 'admin' | 'user';
+  /** Require the folder to exist already (a real directory, not a symlink) and take it over as the user's root. */
+  adoptExistingFolder?: boolean;
 }
 
 const FORBIDDEN_USERNAME_CHARS = /[@\u200E\u200F\u202A-\u202E\u2066-\u2069\u200B-\u200D\u2060\uFEFF]/;
@@ -38,6 +40,7 @@ export class UsersService {
 
   async create(input: CreateUserInput): Promise<User> {
     this.validateUsername(input.username);
+    if (input.adoptExistingFolder) await this.assertAdoptable(input.username);
     await this.ensureUserRoot(input.username); // before the DB write: a failure must not leave a user without a folder
     const passwordHash = await argon2.hash(input.password, { type: argon2.argon2id });
     const user = await this.prisma.$transaction(async (tx) => {
@@ -54,6 +57,36 @@ export class UsersService {
     });
     this.events.emit('user.created', { id: user.id, username: user.username });
     return user;
+  }
+
+  /** Top-level directories of the data root that no user owns (candidates for `adoptExistingFolder`). */
+  async unassignedFolders(): Promise<{ name: string }[]> {
+    let names: string[];
+    try {
+      names = await readdir(this.config.dataRoot);
+    } catch {
+      return [];
+    }
+    const taken = new Set((await this.prisma.user.findMany({ select: { username: true } })).map((u) => u.username.toLowerCase()));
+    const out: { name: string }[] = [];
+    for (const name of names.sort((a, b) => a.localeCompare(b))) {
+      if (name.startsWith('.') || isIgnored(name) || taken.has(name.toLowerCase())) continue;
+      try {
+        this.validateUsername(name);
+      } catch {
+        continue; // cannot be a username, so it cannot be adopted
+      }
+      const st = await lstat(userRoot(this.config.dataRoot, name)).catch(() => null);
+      if (st?.isDirectory()) out.push({ name });
+    }
+    return out;
+  }
+
+  private async assertAdoptable(username: string): Promise<void> {
+    const st = await lstat(userRoot(this.config.dataRoot, username)).catch(() => null);
+    if (!st?.isDirectory()) throw new SyncError('invalid_request', 'folder to adopt does not exist');
+    const taken = await this.prisma.user.findFirst({ where: { username: { equals: username, mode: 'insensitive' } } });
+    if (taken) throw new SyncError('name_conflict', 'folder is already assigned to a user');
   }
 
   /** Creates (or adopts) the user's folder and verifies that the data root and the folder are writable. */

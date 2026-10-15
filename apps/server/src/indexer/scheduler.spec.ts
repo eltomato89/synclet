@@ -40,7 +40,7 @@ describe('SchedulerService', () => {
     const res = await ctx.app.inject({ method: 'POST', url: '/api/setup', payload: { username: 'jens', displayName: 'Jens', password: 'correct horse battery' } });
     const token = res.json().accessToken;
     const status = await ctx.app.inject({ method: 'GET', url: '/api/admin/status', headers: { authorization: `Bearer ${token}` } });
-    expect(status.json()).toMatchObject({ watch: 'off', users: 1 });
+    expect(status.json()).toMatchObject({ watch: 'off', users: { total: 1, disabled: 0 } });
     expect((await ctx.app.inject({ method: 'GET', url: '/api/admin/status' })).statusCode).toBe(401);
   });
 

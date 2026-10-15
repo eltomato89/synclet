@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
-import { AdminUsersController } from './admin-users.controller';
 import { AuthController } from './auth.controller';
 import { AuthGuard } from './auth.guard';
 import { AuthService } from './auth.service';
@@ -12,7 +11,7 @@ import { UsersService } from './users.service';
 
 @Module({
   imports: [JwtModule.register({})],
-  controllers: [SetupController, AuthController, AdminUsersController],
+  controllers: [SetupController, AuthController],
   providers: [RateLimits, AuthGuard, AuthService, DevicesService, ServerConfigService, UsersService],
   exports: [RateLimits, AuthGuard, AuthService, DevicesService, ServerConfigService, UsersService],
 })
