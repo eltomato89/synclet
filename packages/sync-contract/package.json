@@ -1,0 +1,22 @@
+{
+  "name": "@synclet/sync-contract",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Synclet Sync API v1: OpenAPI description and conformance suite against a live server",
+  "scripts": {
+    "test:contract": "vitest run",
+    "lint:openapi": "redocly lint openapi.yaml",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@redocly/cli": "~2.63.0",
+    "@synclet/shared": "workspace:*",
+    "@types/node": "^24.13.3",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "typescript": "~6.0.2",
+    "vitest": "^5.0.4",
+    "yaml": "^2.9.1"
+  }
+}
