@@ -14,6 +14,7 @@ services:
       SYNCLET_TOMBSTONE_WINDOW: ${SYNCLET_TOMBSTONE_WINDOW:-}
       SYNCLET_JOURNAL_RETENTION_DAYS: ${SYNCLET_JOURNAL_RETENTION_DAYS:-}
       SYNCLET_SECURE_COOKIES: ${SYNCLET_SECURE_COOKIES:-}
+      SYNCLET_TRUST_PROXY: "true" # the server port is not published; only Caddy reaches it
     volumes:
       - ${SYNCLET_DATA:?set SYNCLET_DATA to your files folder}:/data
       - ${SYNCLET_META:?set SYNCLET_META to a folder outside SYNCLET_DATA}:/meta

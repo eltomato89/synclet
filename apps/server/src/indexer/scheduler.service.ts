@@ -16,7 +16,6 @@ import { WatcherService } from './watcher.service';
 
 const DAY = 24 * 3600 * 1000;
 const SESSION_RETENTION_DAYS = 30;
-const TEMP_MAX_AGE_MS = 3600 * 1000;
 
 @Injectable()
 export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy {
@@ -76,11 +75,10 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
   }
 
   /**
-   * Removes `.synclet-tmp-*` files and directories (any depth, older than one hour by mtime) left
-   * by crashes. Symlinks are never followed; `.synclet-trash-*` is never touched.
+   * Removes `.synclet-tmp-*` files and directories (any depth) left by crashes; at boot nothing is
+   * in flight, so no age gate applies. Symlinks are never followed; `.synclet-trash-*` is never touched.
    */
   async startupCleanup(): Promise<number> {
-    const cutoff = Date.now() - TEMP_MAX_AGE_MS;
     let removed = 0;
     const walk = async (dir: string, owner: string): Promise<void> => {
       let entries: Dirent[];
@@ -90,7 +88,7 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
         try {
           if (isTempName(e.name)) {
             const st = await lstat(abs);
-            if (st.isSymbolicLink() || st.mtimeMs > cutoff) continue;
+            if (st.isSymbolicLink()) continue;
             if (st.isDirectory() || st.isFile()) { await rm(abs, { recursive: true, force: true }); removed++; }
           } else if (e.isDirectory() && !e.name.startsWith('.synclet-trash-')) {
             await walk(abs, owner); // Dirent from readdir never follows symlinks

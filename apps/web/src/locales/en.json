@@ -159,6 +159,7 @@
       "forbidden": "You don't have permission to do that.",
       "unauthorized": "Your session has expired. Sign in again.",
       "network": "No connection to the server.",
+      "server_error": "The server sent an unexpected response.",
       "unknown": "That didn't work. Try again."
     },
     "uploads": {

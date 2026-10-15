@@ -1,6 +1,7 @@
 import { Body, Controller, Get, HttpCode, Post, Req, Res, UseGuards } from '@nestjs/common';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { SyncError } from '../common/sync-error';
 import type { AuthUser } from '../common/types';
 import { ZodPipe } from '../common/zod.pipe';
 import { PrismaService } from '../prisma/prisma.service';
@@ -24,9 +25,17 @@ export class AuthController {
   @HttpCode(200)
   async login(@Body(new ZodPipe(LoginBody)) body: z.infer<typeof LoginBody>, @Req() req: FastifyRequest, @Res({ passthrough: true }) reply: FastifyReply) {
     this.limits.takeIp(req.ip, reply);
-    const key = body.login.trim().toLowerCase();
-    if (!this.limits.login.take(key)) throw this.limits.limited(this.limits.login, key, reply);
-    const { access, refreshToken } = await this.auth.login(body.login, body.password, req.headers['user-agent']);
+    // Keyed by IP too, so one attacker cannot lock a victim's login name out for everybody else.
+    const key = `${req.ip}|${body.login.trim().toLowerCase()}`;
+    if (this.limits.login.retryAfterSec(key) > 0) throw this.limits.limited(this.limits.login, key, reply); // before argon2
+    let result;
+    try {
+      result = await this.auth.login(body.login, body.password, req.headers['user-agent']);
+    } catch (e) {
+      if (e instanceof SyncError && e.code === 'unauthorized') this.limits.login.take(key); // only failures consume
+      throw e;
+    }
+    const { access, refreshToken } = result;
     this.limits.login.reset(key);
     setRefreshCookie(reply, refreshToken, this.auth.config.secureCookies);
     return access;

@@ -52,6 +52,7 @@ All settings go into `deploy/.env` (read by `docker compose --env-file deploy/.e
 | `SYNCLET_SITE_ADDRESS` | `:80` | Caddy site address. Set to your domain (with ports 80/443) for automatic Let's Encrypt certificates. |
 | `SYNCLET_PUBLIC_URL` | (empty) | Public URL, e.g. `https://files.example.com`. Currently only decides the default of `SYNCLET_SECURE_COOKIES`. |
 | `SYNCLET_SECURE_COOKIES` | on if `SYNCLET_PUBLIC_URL` starts with `https://` | Forces the `Secure` flag of the login cookie on (`on`) or off (`off`). |
+| `SYNCLET_TRUST_PROXY` | `off` (`true` in the shipped compose file) | Use `X-Forwarded-For` as the client IP (login rate limiting). Only enable behind a reverse proxy that sets X-Forwarded-For, otherwise clients can spoof their IP. |
 | `SYNCLET_WATCH` | `on` | `off` disables the file watcher and relies on periodic scans (NFS/SMB). |
 | `SYNCLET_SCAN_INTERVAL` | `900` (`120` with `SYNCLET_WATCH=off`) | Seconds between full scans of all user folders. |
 | `SYNCLET_MAX_UPLOAD_BYTES` | `53687091200` (50 GiB) | Largest accepted upload. |

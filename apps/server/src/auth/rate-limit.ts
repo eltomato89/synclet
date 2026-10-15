@@ -46,9 +46,9 @@ export class RateLimiter {
 /** Shared limiters for unauthenticated endpoints (login, setup, public share password checks). */
 @Injectable()
 export class RateLimits {
-  /** Per client IP: 5 burst, one more per 10 s. */
-  readonly ip = new RateLimiter({ capacity: 5, refillPerSec: 1 / 10 });
-  /** Per normalized login name: 10 burst, one more per 30 s. */
+  /** Per client IP, every attempt (CPU guard): 10 burst, one more per 6 s. */
+  readonly ip = new RateLimiter({ capacity: 10, refillPerSec: 1 / 6 });
+  /** Per (client IP + normalized login), failed password checks only: 10 burst, one more per 30 s. */
   readonly login = new RateLimiter({ capacity: 10, refillPerSec: 1 / 30 });
 
   /** Throws 429 rate_limited (and sets Retry-After) when the per-IP bucket is empty. */

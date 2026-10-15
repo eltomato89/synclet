@@ -1,7 +1,8 @@
 import { chmod, mkdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { createTestApp, TestContext } from '../../test/context';
-import { RateLimiter } from './rate-limit';
+import { AuthService } from './auth.service';
+import { RateLimiter, RateLimits } from './rate-limit';
 
 describe('RateLimiter', () => {
   it('allows a burst, refills over time and resets per key', () => {
@@ -37,34 +38,44 @@ describe('auth hardening', () => {
   const login = (l: string, remoteAddress = freshIp(), password = 'wrong password') =>
     ctx.app.inject({ method: 'POST', url: '/api/auth/login', remoteAddress, payload: { login: l, password } });
 
-  it('rate-limits login per IP with 429 + Retry-After', async () => {
+  it('rate-limits login attempts per IP (CPU guard) with 429 + Retry-After', async () => {
     const ip = freshIp();
-    for (let i = 0; i < 5; i++) expect((await login(`user${i}`, ip)).statusCode).toBe(401);
-    const res = await login('user9', ip);
+    for (let i = 0; i < 10; i++) expect((await login(`user${i}`, ip)).statusCode).toBe(401);
+    const res = await login('user99', ip);
     expect(res.statusCode).toBe(429);
     expect(res.json().code).toBe('rate_limited');
     expect(Number(res.headers['retry-after'])).toBeGreaterThan(0);
-    expect((await login('user9')).statusCode).toBe(401); // other IP unaffected
+    expect((await login('user99')).statusCode).toBe(401); // other IP unaffected
   });
 
-  it('rate-limits login per normalized login name across IPs', async () => {
+  it('per-(ip+login) bucket: 10 failures block that pair only, before the password check; other IPs can still log in', async () => {
     await setup();
-    for (let i = 0; i < 10; i++) expect((await login(' JENS ')).statusCode).toBe(401);
-    const res = await login('jens');
-    expect(res.statusCode).toBe(429);
-    expect(res.headers['retry-after']).toBeDefined();
+    const attacker = freshIp();
+    const argon = jest.spyOn(ctx.app.get(AuthService), 'login');
+    for (let i = 0; i < 10; i++) expect((await login(' JENS ', attacker)).statusCode).toBe(401);
+    ctx.app.get(RateLimits).ip.reset(attacker); // isolate the pair bucket from the per-IP CPU guard
+    argon.mockClear();
+    const blocked = await login('jens', attacker);
+    expect(blocked.statusCode).toBe(429);
+    expect(blocked.headers['retry-after']).toBeDefined();
+    expect(argon).not.toHaveBeenCalled();
+    argon.mockRestore();
+    expect((await login('jens', freshIp(), 'correct horse battery')).statusCode).toBe(200); // victim from elsewhere
   });
 
-  it('a successful login resets the per-login bucket', async () => {
+  it('successful logins do not consume the per-login bucket; success resets it', async () => {
     await setup();
-    for (let i = 0; i < 9; i++) await login('jens');
-    expect((await login('jens', freshIp(), 'correct horse battery')).statusCode).toBe(200);
-    for (let i = 0; i < 9; i++) expect((await login('jens')).statusCode).toBe(401);
+    const ip = freshIp();
+    for (let i = 0; i < 9; i++) await login('jens', freshIp());
+    // 9 failures from distinct IPs never touch the pair bucket of `ip`
+    for (let i = 0; i < 6; i++) await login('jens', ip);
+    expect((await login('jens', ip, 'correct horse battery')).statusCode).toBe(200); // resets (ip, jens)
+    for (let i = 0; i < 9; i++) expect((await login('jens', freshIp())).statusCode).toBe(401);
   });
 
   it('rate-limits POST /api/setup per IP', async () => {
     const ip = freshIp();
-    for (let i = 0; i < 5; i++) expect((await setup({ username: '../x' }, ip)).statusCode).toBe(400);
+    for (let i = 0; i < 10; i++) expect((await setup({ username: '../x' }, ip)).statusCode).toBe(400);
     expect((await setup({ username: '../x' }, ip)).statusCode).toBe(429);
   });
 
