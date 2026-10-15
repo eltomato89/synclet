@@ -4,7 +4,7 @@ import { readdir } from 'node:fs/promises';
 import { APP_CONFIG, AppConfig } from '../config';
 import { nameKey, validateName } from '../common/names';
 import { SyncError } from '../common/sync-error';
-import { PrismaService } from '../prisma/prisma.service';
+import { PrismaService, TX_OPTS } from '../prisma/prisma.service';
 import { UsersService } from '../auth/users.service';
 import type { SsoPolicy } from './sso-settings.service';
 
@@ -152,22 +152,20 @@ export class ProvisioningService {
     throw new SyncError('name_conflict', 'could not allocate a username');
   }
 
-  /** With admin groups configured, the role follows group membership on every login; the last admin is never demoted. */
+  /** With admin groups configured, the role follows group membership on every login; the last password admin is never demoted. */
   private async syncRole(user: User, claims: SsoClaims, policy: SsoPolicy): Promise<User> {
     if (policy.adminGroups.length === 0) return user;
     const desired = intersects(claims.groups, policy.adminGroups) ? 'admin' : 'user';
     if (desired === user.role) return user;
     if (desired === 'admin') return this.prisma.user.update({ where: { id: user.id }, data: { role: 'admin' } });
     return this.prisma.$transaction(async (tx) => {
-      // Serialize demotions so two concurrent logins cannot both see "another admin exists".
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('synclet:last-admin'))`;
-      const others = await tx.user.count({ where: { role: 'admin', disabledAt: null, id: { not: user.id } } });
-      if (others === 0) {
-        this.log.warn(`not demoting ${user.username}: last active admin (not in an admin group of ${claims.provider})`);
-        return user;
+      // Same row locks as the admin API: concurrent demotions cannot both pass the check.
+      if (!(await this.users.canRemoveAdmin(tx, user.id))) {
+        this.log.warn(`not demoting ${user.username}: last enabled admin with a password (not in an admin group of ${claims.provider})`);
+        return tx.user.findUniqueOrThrow({ where: { id: user.id } });
       }
       return tx.user.update({ where: { id: user.id }, data: { role: 'user' } });
-    });
+    }, TX_OPTS);
   }
 }
 

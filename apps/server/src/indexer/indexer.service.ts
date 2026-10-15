@@ -214,7 +214,7 @@ export class IndexerService {
       seen.add(row.id);
       const contentChanged = e.type === 'file' && (row.size !== e.size || row.mtime.getTime() !== e.mtime.getTime());
       if (contentChanged) {
-        await tx.item.update({ where: { id: row.id }, data: { size: e.size, mtime: e.mtime, ino: e.ino, dev: e.dev, contentHash: null, version: { increment: 1 } } });
+        await tx.item.update({ where: { id: row.id }, data: { size: e.size, mtime: e.mtime, ino: e.ino, dev: e.dev, contentHash: null, version: { increment: 1 }, officeKey: null } });
         upserts.push(row); stats.updated++;
       } else if (row.ino !== e.ino || row.dev !== e.dev) {
         inoOnly.push({ id: row.id, ino: e.ino, dev: e.dev });

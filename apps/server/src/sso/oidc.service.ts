@@ -24,18 +24,35 @@ export class OidcFlowError extends Error {
   constructor(readonly code: SsoErrorCode, message?: string) { super(message ?? code); }
 }
 
+const SINGLE_SLASH_START = /^\/(?![/\\])/;
+const BAD_CHARS = /[\\\u0000-\u001f\u007f]/;
+
 /**
- * Only same-origin relative paths are accepted as post-login targets (`/x`, not `//host`, `/\host`
- * or anything with control characters); everything else becomes `/files`.
+ * Only same-origin relative paths are accepted as post-login targets: a single leading `/`, no
+ * backslashes or control characters, and no `.`/`..` path segments (also percent-encoded, which
+ * URL normalization could otherwise turn into `//host`). The normalized result is checked again.
+ * Everything else becomes `/files`.
  */
 export function safeReturnPath(ret: unknown): string {
   if (typeof ret !== 'string' || ret.length === 0 || ret.length > 2000) return DEFAULT_RETURN;
-  if (!ret.startsWith('/') || ret.startsWith('//') || /[\\\u0000-\u001f\u007f]/.test(ret)) return DEFAULT_RETURN;
+  if (!SINGLE_SLASH_START.test(ret) || BAD_CHARS.test(ret)) return DEFAULT_RETURN;
+  const segments = ret.split(/[?#]/)[0].split('/');
+  const dotty = segments.some((seg) => {
+    let d: string;
+    try {
+      d = decodeURIComponent(seg);
+    } catch {
+      return true;
+    }
+    return d === '.' || d === '..' || d.includes('/') || BAD_CHARS.test(d);
+  });
+  if (dotty) return DEFAULT_RETURN;
   try {
     const base = new URL('http://synclet.invalid');
     const u = new URL(ret, base);
-    if (u.origin !== base.origin) return DEFAULT_RETURN;
-    return `${u.pathname}${u.search}${u.hash}`;
+    const out = `${u.pathname}${u.search}${u.hash}`;
+    if (u.origin !== base.origin || !SINGLE_SLASH_START.test(out) || BAD_CHARS.test(out)) return DEFAULT_RETURN;
+    return out;
   } catch {
     return DEFAULT_RETURN;
   }

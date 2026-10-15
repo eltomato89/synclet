@@ -4,6 +4,8 @@ import path from 'node:path';
 import { createTestApp, TestContext } from '../../test/context';
 import { FakeIdp, startFakeIdp } from '../../test/fake-idp';
 import { SecretBox } from '../common/secret-box';
+import { AuthService } from '../auth/auth.service';
+import { safeReturnPath } from './oidc.service';
 import { ProvisioningService, SsoClaims } from './provisioning.service';
 import { OIDC_SECRET_PURPOSE, SsoPolicy, SsoSettingsService } from './sso-settings.service';
 
@@ -68,6 +70,20 @@ describe('SSO', () => {
     expect(res.statusCode).toBe(302);
     return new URL(res.headers.location as string, 'http://x').searchParams.get('sso_error');
   };
+
+  describe('safeReturnPath', () => {
+    it('rejects everything that is not a same-origin path, also after normalization', () => {
+      for (const bad of [
+        '/.//evil.com', '/..//evil.com', '/%2e//evil.com', '/%2E%2E//evil.com', '/a/..//evil.com', '/./\\/x', '/\\evil.com',
+        '//evil.com', 'https://evil.com', 'javascript:alert(1)', 'evil.com', '', '/a/%2f/evil.com', '/a\u0000b', '/a/../b',
+      ]) {
+        expect({ bad, out: safeReturnPath(bad) }).toEqual({ bad, out: '/files' });
+      }
+      for (const good of ['/files', '/files/a%20b', '/app-login?client_id=x&redirect_uri=http%3A%2F%2F127.0.0.1%2Fcb#h', '/files/.hidden-not-a-dot-segment']) {
+        expect(safeReturnPath(good)).toBe(good);
+      }
+    });
+  });
 
   describe('settings', () => {
     it('admin-only, defaults, validation', async () => {
@@ -203,7 +219,7 @@ describe('SSO', () => {
 
     it('only redirects to same-origin relative paths', async () => {
       await enableOidc();
-      for (const ret of ['//evil.example', 'https://evil.example/x', '/\\evil.example', 'javascript:alert(1)']) {
+      for (const ret of ['//evil.example', 'https://evil.example/x', '/\\evil.example', 'javascript:alert(1)', '/.//evil.example']) {
         const res = await oidcLogin({ sub: `s-${ret}`, preferred_username: 'x' }, { ret });
         expect(res.headers.location).toBe('/files');
       }
@@ -335,6 +351,47 @@ describe('SSO', () => {
       const u = await prov().resolve(claims({ subject: 'x1', preferredUsername: 'xena' }), policy);
       await ctx.prisma.user.update({ where: { id: u.id }, data: { disabledAt: new Date() } });
       await expect(prov().resolve(claims({ subject: 'x1' }), policy)).rejects.toMatchObject({ code: 'unauthorized' });
+    });
+
+    it('SSO-only admins do not count as the last password admin', async () => {
+      const admins = { ...policy, adminGroups: ['admins'] };
+      const root = await ctx.prisma.user.findUniqueOrThrow({ where: { username: 'root' } });
+      await ctx.prisma.identity.create({ data: { userId: root.id, provider: 'oidc:https://idp', subject: 'root-sub' } });
+      const sso = await prov().resolve(claims({ subject: 'sso-admin', preferredUsername: 'ssoadmin', groups: ['admins'] }), admins);
+      expect(sso.role).toBe('admin');
+      // root is the only admin with a password: not demoted by SSO although another (SSO-only) admin exists.
+      expect((await prov().resolve(claims({ subject: 'root-sub', groups: [] }), admins)).role).toBe('admin');
+      // Nor through the admin API by the SSO-only admin.
+      const ssoToken = (await ctx.app.get(AuthService).issue(sso)).access.accessToken;
+      for (const req of [
+        { method: 'PATCH' as const, url: `/api/admin/users/${root.id}`, payload: { role: 'user' } },
+        { method: 'PATCH' as const, url: `/api/admin/users/${root.id}`, payload: { disabled: true } },
+        { method: 'DELETE' as const, url: `/api/admin/users/${root.id}` },
+      ]) {
+        const res = await ctx.app.inject({ ...req, headers: auth(ssoToken) });
+        expect({ req, status: res.statusCode }).toEqual({ req, status: 409 });
+      }
+      expect(await ctx.prisma.user.findUniqueOrThrow({ where: { id: root.id } })).toMatchObject({ role: 'admin', disabledAt: null });
+      // The SSO-only admin itself can be demoted (root keeps a password).
+      expect((await prov().resolve(claims({ subject: 'sso-admin', groups: [] }), admins)).role).toBe('user');
+    });
+
+    it('concurrent admin-API and SSO demotions never leave zero password admins', async () => {
+      const admins = { ...policy, adminGroups: ['admins'] };
+      const root = await ctx.prisma.user.findUniqueOrThrow({ where: { username: 'root' } });
+      await ctx.prisma.identity.create({ data: { userId: root.id, provider: 'oidc:https://idp', subject: 'root-sub' } });
+      const anna = await createUser('anna', { role: 'admin' });
+      for (let round = 0; round < 8; round++) {
+        await ctx.prisma.user.updateMany({ where: { id: { in: [root.id, anna.id] } }, data: { role: 'admin' } });
+        // root demotes anna via the API while root's own SSO login (no admin group) demotes root.
+        const [patch] = await Promise.all([
+          ctx.app.inject({ method: 'PATCH', url: `/api/admin/users/${anna.id}`, headers: auth(), payload: { role: 'user' } }),
+          prov().resolve(claims({ subject: 'root-sub', groups: [] }), admins),
+        ]);
+        expect([200, 403, 409]).toContain(patch.statusCode); // 403: root was demoted first
+        const left = await ctx.prisma.user.count({ where: { role: 'admin', disabledAt: null } });
+        expect(left).toBe(1);
+      }
     });
 
     it('syncs the role from groups but never demotes the last admin', async () => {

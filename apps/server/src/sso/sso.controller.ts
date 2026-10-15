@@ -17,6 +17,8 @@ export class SsoController {
   private readonly log = new Logger('Sso');
   /** Per client IP: 30 burst, one more every 2 s (the web calls forward-auth on every load). */
   readonly limiter = new RateLimiter({ capacity: 30, refillPerSec: 1 / 2 });
+  /** Login methods (read on every login page load): 60 burst, two more per second. */
+  readonly methodsLimiter = new RateLimiter({ capacity: 60, refillPerSec: 2 });
 
   constructor(
     private readonly settings: SsoSettingsService,
@@ -28,7 +30,9 @@ export class SsoController {
   ) {}
 
   @Get('methods')
-  methods(): Promise<LoginMethods> {
+  methods(@Req() req: FastifyRequest, @Res({ passthrough: true }) reply: FastifyReply): Promise<LoginMethods> {
+    const key = ipKey(req.ip);
+    if (!this.methodsLimiter.take(key)) throw this.limits.limited(this.methodsLimiter, key, reply);
     return this.settings.loginMethods();
   }
 

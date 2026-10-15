@@ -35,9 +35,8 @@ export class ForwardAuthService {
       throw new SyncError('unauthorized');
     }
     const get = (name: string): string | null => {
-      const v = req.headers[name.toLowerCase()];
-      if (Array.isArray(v)) throw new SyncError('unauthorized', `duplicate ${name} header`);
-      const t = v === undefined ? '' : headerText(v).trim();
+      const v = req.headers[name.toLowerCase()]; // Node joins repeated custom headers with ', '
+      const t = typeof v === 'string' ? headerText(v).trim() : '';
       return t ? t : null;
     };
     const subject = get(fa.userHeader);
