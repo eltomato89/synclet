@@ -448,5 +448,45 @@
       "network": "No connection to the server. Check your internet connection and try again.",
       "unknown": "The download didn't work. Try again."
     }
+  },
+  "search": {
+    "open": "Search",
+    "title": "Search",
+    "placeholder": "Search files and their contents",
+    "placeholderShort": "Search",
+    "placeholderIn": "Search in “{{name}}”",
+    "clear": "Clear search",
+    "results": "Search results",
+    "scopeLabel": "Search in",
+    "scopeAll": "All files",
+    "scopeFolder": "“{{name}}”",
+    "groupNames": "Names",
+    "groupContents": "Contents",
+    "recentSearches": "Recent searches",
+    "clearRecent": "Clear history",
+    "emptyTitle": "What are you looking for?",
+    "emptyBody": "Type a file name or a word that appears in a document.",
+    "noResultsTitle": "Nothing found for “{{query}}”",
+    "noResultsBody": "Check the spelling or try another word. The contents of new files become searchable shortly after upload.",
+    "noResultsInFolder": "No matches in “{{name}}” and its subfolders.",
+    "searchEverywhere": "Search all files",
+    "errorTitle": "Search didn’t work",
+    "hintMove": "Select",
+    "hintOpen": "Open",
+    "hintClose": "Close",
+    "count_one": "{{count}} match",
+    "count_other": "{{count}} matches",
+    "countOf_one": "{{count}} of {{total}} matches",
+    "countOf_other": "{{count}} of {{total}} matches"
+  },
+  "recent": {
+    "title": "Recently modified",
+    "reveal": "Show in folder",
+    "revealItem": "Show “{{name}}” in its folder",
+    "loadError": "Recently modified files couldn’t be loaded",
+    "emptyTitle": "No files yet",
+    "emptyBody": "Files you upload or change show up here – across all folders, newest first.",
+    "emptyAction": "Go to my files",
+    "limitNote": "The {{count}} most recently modified files"
   }
 }

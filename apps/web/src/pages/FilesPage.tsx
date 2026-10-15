@@ -21,6 +21,7 @@ import { FileList } from '@/features/files/FileList';
 import {
   folderPath, ROOT_ID, type SortDir, type SortKey, sortItems, useAncestors, useFileMutations, useFolder,
 } from '@/features/files/queries';
+import { useRevealParam } from '@/features/files/reveal';
 import { UploadPanel } from '@/features/files/UploadPanel';
 import { getUploadQueue, type UploadQueue } from '@/features/files/uploads';
 import { ApiError, api } from '@/lib/api';
@@ -74,6 +75,7 @@ export function FilesPage() {
         for (const id of pending) void qc.invalidateQueries({ queryKey: ['folder', id] });
         pending.clear();
         void qc.invalidateQueries({ queryKey: ['account'] });
+        void qc.invalidateQueries({ queryKey: ['recent'] });
       }, 250);
     });
   });
@@ -151,6 +153,8 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
     const el = id ? itemEl(id) : null;
     if (el) { focusAfterRender.current = null; el.focus({ preventScroll: true }); el.scrollIntoView({ block: 'nearest' }); }
   });
+  // `?preview=<id>` (search results, recent files): select and focus that item.
+  useRevealParam(folderQ.data ? items : undefined, !folderQ.isFetching, (item) => focusItem(item.id));
   /** After a dialog closes, focus goes back to the selection so the keyboard keeps working. */
   const restoreFocus = () => {
     const sel = selectedRef.current;
