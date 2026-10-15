@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
-import { AdminUsersController } from './admin-users.controller';
+import { AppLoginController } from './app-login.controller';
+import { AppLoginService } from './app-login.service';
 import { AuthController } from './auth.controller';
 import { AuthGuard } from './auth.guard';
 import { AuthService } from './auth.service';
@@ -12,8 +13,8 @@ import { UsersService } from './users.service';
 
 @Module({
   imports: [JwtModule.register({})],
-  controllers: [SetupController, AuthController, AdminUsersController],
-  providers: [RateLimits, AuthGuard, AuthService, DevicesService, ServerConfigService, UsersService],
+  controllers: [SetupController, AuthController, AppLoginController],
+  providers: [AppLoginService, RateLimits, AuthGuard, AuthService, DevicesService, ServerConfigService, UsersService],
   exports: [RateLimits, AuthGuard, AuthService, DevicesService, ServerConfigService, UsersService],
 })
 export class AuthModule {}
