@@ -141,7 +141,7 @@ export function QuickLook<E extends QuickLookEntry>(props: QuickLookProps<E>) {
                   <FilePen /><span className="max-sm:sr-only">{t('office.open')}</span>
                 </Button>
               )}
-              {entry && onVersions && <HeaderButton label={t('files.versions')} onClick={() => onVersions(entry)}><History /></HeaderButton>}
+              {entry && onVersions && <HeaderButton label={t('files.versionsShort')} onClick={() => onVersions(entry)}><History /></HeaderButton>}
               {entry && onShare && <HeaderButton label={t('preview.share')} onClick={() => onShare(entry)}><Share2 /></HeaderButton>}
               {download && <HeaderButton label={t('common.download')} onClick={download}><Download /></HeaderButton>}
               <span aria-hidden className="mx-1.5 h-5 w-px bg-border" />

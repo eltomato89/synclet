@@ -23,8 +23,24 @@ export function canPreviewVersion(item: Pick<SyncItem, 'name' | 'preview'>): boo
   return true;
 }
 
-function decode(buf: ArrayBuffer): string {
-  try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch { return new TextDecoder('latin1').decode(buf); }
+/** Drops a UTF-8 sequence cut off at the end of `bytes` (a byte-range cap can split a character). */
+export function trimIncompleteUtf8(bytes: Uint8Array): Uint8Array {
+  const n = bytes.length;
+  for (let back = 1; back <= Math.min(3, n); back++) {
+    const b = bytes[n - back];
+    if ((b & 0xc0) === 0x80) continue; // continuation byte: keep looking for the lead byte
+    const need = b >= 0xf0 ? 4 : b >= 0xe0 ? 3 : b >= 0xc0 ? 2 : 1;
+    return need > back ? bytes.subarray(0, n - back) : bytes;
+  }
+  return bytes;
+}
+
+export function decode(buf: ArrayBuffer, truncated: boolean): { text: string; encoding: 'utf-8' | 'latin1' } {
+  const all = new Uint8Array(buf);
+  const bytes = truncated ? trimIncompleteUtf8(all) : all;
+  try { return { text: new TextDecoder('utf-8', { fatal: true }).decode(bytes), encoding: 'utf-8' }; } catch {
+    return { text: new TextDecoder('latin1').decode(all), encoding: 'latin1' };
+  }
 }
 
 /**
@@ -57,7 +73,8 @@ export async function versionPreviewSource(item: SyncItem, version: VersionWire)
         const res = await fetch(url, { signal, headers: { Range: `bytes=0-${MAX_TEXT_BYTES - 1}` } });
         if (!res.ok) throw new Error(`version content ${res.status}`);
         const buf = (await res.arrayBuffer()).slice(0, MAX_TEXT_BYTES);
-        return { text: decode(buf), truncated: version.size > MAX_TEXT_BYTES, encoding: 'utf-8' };
+        const truncated = version.size > MAX_TEXT_BYTES;
+        return { ...decode(buf, truncated), truncated };
       },
     };
   }

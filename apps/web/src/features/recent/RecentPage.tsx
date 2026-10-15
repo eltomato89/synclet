@@ -245,7 +245,7 @@ export function RecentPage() {
           />
         )}
         {d?.kind === 'versions' && (
-          <VersionsPanel key={d.n} open={d.open} onOpenChange={onDialogOpenChange} item={d.item} />
+          <VersionsPanel key={d.n} open={d.open} onOpenChange={onDialogOpenChange} onClosed={restoreFocus} item={d.item} />
         )}
         {d?.kind === 'share' && (
           <ShareDialog key={d.n} open={d.open} onOpenChange={onDialogOpenChange} onClosed={restoreFocus} item={d.item} />

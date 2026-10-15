@@ -37,8 +37,10 @@ const absoluteTime = (iso: string, locale: string) => new Intl.DateTimeFormat(lo
  * Side sheet with the earlier versions of one file. Rendered only when the server reports that
  * versions are enabled (the caller decides); each row can be previewed, downloaded or restored.
  */
-export function VersionsPanel({ item, open, onOpenChange, onRestored }: {
+export function VersionsPanel({ item, open, onOpenChange, onRestored, onClosed }: {
   item: SyncItem; open: boolean; onOpenChange(open: boolean): void; onRestored?(item: SyncItem): void;
+  /** After the sheet closes: move focus back (the menu that opened it is gone). */
+  onClosed?(): void;
 }) {
   const { t } = useTranslation();
   const versions = useVersions(item.id, open);
@@ -83,9 +85,14 @@ export function VersionsPanel({ item, open, onOpenChange, onRestored }: {
                 <span className="font-medium tabular-nums">{t('versions.number', { n: v.version })}</span>
                 {v.source !== 'api' && <Badge variant="secondary">{t(`versions.source.${v.source}`)}</Badge>}
               </div>
-              <time dateTime={v.modifiedAt} title={absoluteTime(v.modifiedAt, locale)} className="block text-sm">
-                {relativeTime(v.modifiedAt, locale)}
-              </time>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <time dateTime={v.modifiedAt} tabIndex={0} className="block w-fit rounded-sm text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                    {relativeTime(v.modifiedAt, locale)}
+                  </time>
+                </TooltipTrigger>
+                <TooltipContent>{absoluteTime(v.modifiedAt, locale)}</TooltipContent>
+              </Tooltip>
               <p className="truncate text-xs text-muted-foreground tabular-nums">
                 {formatBytes(v.size, locale)}{v.createdBy ? `, ${v.createdBy.displayName}` : ''}
               </p>
@@ -104,7 +111,10 @@ export function VersionsPanel({ item, open, onOpenChange, onRestored }: {
   return (
     <>
       <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent className="gap-0 data-[side=right]:sm:max-w-md">
+        <SheetContent
+          className="gap-0 data-[side=right]:sm:max-w-md"
+          onCloseAutoFocus={(e) => { if (onClosed) { e.preventDefault(); onClosed(); } }}
+        >
           <SheetHeader className="border-b pr-12">
             <SheetTitle className="break-all">{t('versions.title')}</SheetTitle>
             <SheetDescription className="break-all">{t('versions.description', { name: item.name })}</SheetDescription>
@@ -135,7 +145,7 @@ export function VersionsPanel({ item, open, onOpenChange, onRestored }: {
             activeId={preview.id}
             open
             onActiveChange={() => undefined}
-            onOpenChange={(o) => { if (!o) setPreview(null); }}
+            onOpenChange={(o) => { if (!o) { setPreview(null); revokeVersionBlobs(); } }}
             resolveSource={() => versionPreviewSource(item, preview)}
             onDownload={() => download(preview)}
           />

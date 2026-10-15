@@ -514,6 +514,9 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
             item={d.item}
             open={d.open}
             onOpenChange={onDialogOpenChange}
+            onClosed={quickLook?.open
+              ? () => document.querySelector<HTMLElement>('[data-slot="quicklook"]')?.focus({ preventScroll: true })
+              : restoreFocus}
           />
         )}
         {d?.kind === 'share' && (
