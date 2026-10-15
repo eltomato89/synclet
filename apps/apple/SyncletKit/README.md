@@ -15,6 +15,9 @@ Sources/SyncletKit/
   FileProvider/  SyncletReplicatedExtension (base class of the extension), FileProviderEnumerator,
                  TopLevelEnumerator, FileProviderItem, SpaceLayout (virtual top level),
                  ItemMapping, ErrorMapping, ConflictNaming
+  Transfer/      TransferEngine (uploads: ≤ 32 MiB single request, above tus; replace via PUT),
+                 TusUploader (tus 1.0, 16 MiB chunks), UploadStateStore (resume state),
+                 RangeDownloader (streamed, resumable downloads)
   Credentials/   CredentialStore (device tokens in the shared keychain), SecureStorage
   Account/       AccountManager (add/remove accounts and domains), AccountStore (JSON in the
                  app group), InstallationID, ServerURL
@@ -30,6 +33,8 @@ Key rules:
   `accounts/<key16>/spaces/<spaceId>/`.
 - The root container lists one read-only folder per space (`space:<id>`); a space folder shows
   the children of the space's `rootId`. Server ids below stay unchanged.
+- Unfinished tus uploads are remembered in `accounts/<key16>/uploads/<sha256(item + content version)>.json`
+  (dropped after 24 h, like on the server).
 - The extension reads `SyncletAppGroup` and `SyncletKeychainAccessGroup` from its Info.plist.
 
 ## Testing
@@ -37,6 +42,9 @@ Key rules:
 ```bash
 cd apps/apple/SyncletKit && swift test
 ```
+
+A live transfer check (200 MB tus upload, optionally interrupted) runs against a real server:
+`SYNCLET_LIVE_URL=… SYNCLET_LIVE_USER=… SYNCLET_LIVE_PASSWORD=… SYNCLET_LIVE_INTERRUPT='docker restart <container>' swift test --filter LiveTransferTests`.
 
 The iOS build can be checked with
 `xcodebuild -scheme SyncletKit -destination 'generic/platform=iOS Simulator' build`.

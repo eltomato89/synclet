@@ -47,7 +47,7 @@ public final class SyncAPIClient: Sendable {
     public let apiBaseURL: URL
     /// `<origin>/api/sync/v1`.
     public let syncBaseURL: URL
-    private let session: URLSession
+    let session: URLSession
     private let token: @Sendable () async throws -> String
 
     /// - Parameters:
@@ -333,6 +333,12 @@ public final class SyncAPIClient: Sendable {
         var request = URLRequest(url: try makeURL(segments, query: query))
         request.httpMethod = method.rawValue
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        try await authorize(&request)
+        return request
+    }
+
+    /// Sets `Authorization: Bearer <token>` (used by the transfer classes for absolute URLs).
+    func authorize(_ request: inout URLRequest) async throws {
         let bearer: String
         do {
             bearer = try await token()
@@ -346,7 +352,6 @@ public final class SyncAPIClient: Sendable {
         if !bearer.isEmpty {
             request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
         }
-        return request
     }
 
     private func send<T: Decodable>(_ method: Method, _ segments: [String], query: [(String, String?)] = [],
@@ -408,7 +413,7 @@ public final class SyncAPIClient: Sendable {
     // MARK: - Responses / errors
 
     /// Runs the transfer and translates network errors.
-    private func perform<T>(_ operation: () async throws -> T) async throws -> T {
+    func perform<T>(_ operation: () async throws -> T) async throws -> T {
         do {
             return try await operation()
         } catch let error as URLError {
@@ -417,7 +422,7 @@ public final class SyncAPIClient: Sendable {
         }
     }
 
-    private static func httpResponse(_ response: URLResponse) throws -> HTTPURLResponse {
+    static func httpResponse(_ response: URLResponse) throws -> HTTPURLResponse {
         guard let http = response as? HTTPURLResponse else {
             throw SyncAPIError.invalidResponse("Not an HTTP response")
         }
