@@ -46,7 +46,7 @@ export class AdminUsersController {
         ...(body.disabled !== undefined ? { disabledAt: body.disabled ? new Date() : null } : {}),
       },
     });
-    if (body.disabled) {
+    if (body.disabled || body.password) {
       await this.prisma.session.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date() } });
     }
     return { ...this.users.toPublic(updated), disabled: updated.disabledAt !== null };

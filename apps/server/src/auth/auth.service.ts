@@ -17,6 +17,12 @@ const ACCESS_TTL = '15m';
 export interface AccessClaims { sub: string; username: string; role: 'admin' | 'user'; typ: 'access' }
 export interface DownloadClaims { sub: string; item: string; typ: 'dl' }
 
+let dummyHashPromise: Promise<string> | undefined;
+function dummyHash(): Promise<string> {
+  dummyHashPromise ??= argon2.hash('synclet-dummy-password', { type: argon2.argon2id });
+  return dummyHashPromise;
+}
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -63,7 +69,9 @@ export class AuthService {
       include: { identities: { where: { provider: 'local' } } },
     });
     const hash = user?.identities[0]?.passwordHash;
-    if (!user || !hash || !(await argon2.verify(hash, password))) throw new SyncError('unauthorized', 'invalid credentials');
+    // Always run one argon2 verification so unknown/disabled users are not distinguishable by timing.
+    const valid = await argon2.verify(hash ?? (await dummyHash()), password).catch(() => false);
+    if (!user || !hash || !valid) throw new SyncError('unauthorized', 'invalid credentials');
     return this.issue(user, userAgent);
   }
 
@@ -77,7 +85,12 @@ export class AuthService {
       throw new SyncError('unauthorized', 'refresh token reuse detected');
     }
     if (session.expiresAt < new Date() || session.user.disabledAt) throw new SyncError('unauthorized');
-    await this.prisma.session.update({ where: { id: session.id }, data: { revokedAt: new Date() } });
+    // Atomic rotation: only one concurrent caller can flip revokedAt; the loser is treated as reuse.
+    const rotated = await this.prisma.session.updateMany({ where: { id: session.id, revokedAt: null }, data: { revokedAt: new Date() } });
+    if (rotated.count === 0) {
+      await this.prisma.session.updateMany({ where: { userId: session.userId, revokedAt: null }, data: { revokedAt: new Date() } });
+      throw new SyncError('unauthorized', 'refresh token reuse detected');
+    }
     return this.issue(session.user, userAgent);
   }
 
