@@ -38,7 +38,7 @@ final class PinStoreTests: XCTestCase {
         XCTAssertEqual(b.pins(space: "team"), PinSet(wholeSpace: true, folders: []))
         // The file lives in the space state dir, written atomically (no temp leftovers).
         let spaceDir = dir.appending(path: "accounts/0123456789abcdef/spaces/personal")
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: spaceDir.path), ["pins.json"])
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: spaceDir.path).sorted(), ["pins.json", "pins.lock"])
         XCTAssertEqual(log.all, Array(repeating: "tech.jensk.synclet.pinsChanged.0123456789abcdef", count: 4))
     }
 
@@ -101,6 +101,26 @@ final class PinStoreTests: XCTestCase {
         XCTAssertEqual(s.appliedPins(space: "personal").folders, ["d_1"])
         XCTAssertTrue(s.pins(space: "personal").isEmpty)
         XCTAssertTrue(log.all.isEmpty)
+    }
+
+    func testConcurrentWritersFromSeparateInstancesLoseNothing() throws {
+        // Separate instances (as app and extension) share only the file lock.
+        let dir = self.dir!
+        DispatchQueue.concurrentPerform(iterations: 40) { index in
+            let store = PinStore(stateDir: dir.appending(path: "accounts/0123456789abcdef"), post: { _ in })
+            try? store.setFolder("d_\(index)", pinned: true, space: "personal")
+        }
+        XCTAssertEqual(store().pins(space: "personal").folders.count, 40)
+    }
+
+    func testPinnedDownloadQueueAppendsDrainsAndOverflows() throws {
+        let queue = PinnedDownloadQueue(accountDirectory: dir)
+        try queue.append(["f_1", "f_2"])
+        try queue.append(["f_2", "f_3"])
+        XCTAssertEqual(try queue.drain(), PinnedDownloadQueue.Batch(ids: ["f_1", "f_2", "f_3"]))
+        XCTAssertEqual(try queue.drain(), PinnedDownloadQueue.Batch())
+        try queue.append((0...PinnedDownloadQueue.maxEntries).map { "f_\($0)" })
+        XCTAssertEqual(try queue.drain(), PinnedDownloadQueue.Batch(ids: [], overflow: true))
     }
 
     func testNotificationNames() {
@@ -228,18 +248,37 @@ final class ParentMapTests: XCTestCase {
         XCTAssertNil(cycle)
     }
 
-    func testPersistsAndForgetsDeletedFolders() throws {
+    func testPersistsOnFlushAndForgetsDeletedFoldersWithDescendants() throws {
         let dir = Fixtures.tempDirectory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let url = dir.appending(path: "parent-map.json")
         let map = ParentMap(fileURL: url)
         map.record([Fixtures.item(id: "d_a", parentId: "root", type: "folder"),
-                    Fixtures.item(id: "d_b", parentId: "d_a", type: "folder")])
+                    Fixtures.item(id: "d_b", parentId: "d_a", type: "folder"),
+                    Fixtures.item(id: "d_c", parentId: "d_b", type: "folder"),
+                    Fixtures.item(id: "d_x", parentId: "root", type: "folder")])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))   // coalesced: nothing written per page
         map.remove(["d_a"])
+        map.flush()
         let reloaded = ParentMap(fileURL: url)
         XCTAssertNil(reloaded.parent(of: "d_a"))
-        XCTAssertEqual(reloaded.parent(of: "d_b"), "d_a")
-        XCTAssertTrue(ParentMap.shared(at: url) === ParentMap.shared(at: url))
+        XCTAssertNil(reloaded.parent(of: "d_b"))
+        XCTAssertNil(reloaded.parent(of: "d_c"))
+        XCTAssertEqual(reloaded.parent(of: "d_x"), "root")
+        // Shared instances in one process see the same state.
+        ParentMap.shared(at: url).record([Fixtures.item(id: "d_y", parentId: "root", type: "folder")])
+        XCTAssertEqual(ParentMap.shared(at: url).parent(of: "d_y"), "root")
+    }
+
+    func testNotePolicyReportsFlipsOnly() {
+        let map = ParentMap(fileURL: nil)
+        XCTAssertFalse(map.notePolicy("d_unknown", kept: true))
+        map.record([Fixtures.item(id: "d_a", parentId: "root", type: "folder")])
+        XCTAssertFalse(map.notePolicy("d_a", kept: false))   // first report
+        XCTAssertFalse(map.notePolicy("d_a", kept: false))
+        XCTAssertTrue(map.notePolicy("d_a", kept: true))
+        map.record([Fixtures.item(id: "d_a", parentId: "d_b", type: "folder")])   // a move keeps the state
+        XCTAssertTrue(map.notePolicy("d_a", kept: false))
     }
 }
 
@@ -252,18 +291,22 @@ final class PinnedEnumerationTests: XCTestCase {
     override func setUp() { dir = Fixtures.tempDirectory() }
     override func tearDown() { try? FileManager.default.removeItem(at: dir) }
 
-    private func pinning(log: PostLog = PostLog(), notified: Counter? = nil) -> PinningContext {
+    private func pinning(log: PostLog = PostLog(), announced: PostLog? = nil, rounds: Counter? = nil) -> PinningContext {
         PinningContext(store: PinStore(stateDir: dir.appending(path: "accounts/0123456789abcdef"), post: { log.record($0) }),
                        parentMap: ParentMap(fileURL: dir.appending(path: "parent-map.json")),
-                       notifyPinnedContent: { _ = notified?.next() })
+                       ledger: PinnedContentLedger(fileURL: dir.appending(path: "pinned-content.json")),
+                       queue: PinWorkQueue(fileURL: dir.appending(path: "pin-queue.json")),
+                       announce: { ids in ids.forEach { announced?.record($0) } },
+                       requestWorkingSetRound: { _ = rounds?.next() })
     }
 
     private func policies(_ items: [NSFileProviderItem]) -> [String: NSFileProviderContentPolicy] {
         Dictionary(items.map { ($0.itemIdentifier.rawValue, $0.contentPolicy ?? .inherited) }, uniquingKeysWith: { $1 })
     }
 
-    private func changes(_ enumerator: FileProviderEnumerator, from cursor: String = "10") async -> MockChangeObserver {
+    private func changes(_ enumerator: FileProviderEnumerator, from cursor: String = "10", batch: Int = 0) async -> MockChangeObserver {
         let observer = MockChangeObserver(expectation(description: "changes"))
+        observer.suggestedBatchSize = batch
         enumerator.enumerateChanges(for: observer, from: SyncAnchorCodec.encode(["personal": cursor]))
         await fulfillment(of: [observer.finished], timeout: 5)
         return observer
@@ -301,8 +344,8 @@ final class PinnedEnumerationTests: XCTestCase {
     }
 
     func testNewRemoteFileDeepInsideAPinnedFolderIsKeptAndAnnounced() async throws {
-        let notified = Counter()
-        let pin = pinning(notified: notified)
+        let announced = PostLog()
+        let pin = pinning(announced: announced)
         try pin.store.setFolder("d_fotos", pinned: true, space: "personal")
         try pin.store.setAppliedPins(pin.store.pins(space: "personal"), space: "personal")
         pin.parentMap.record([Fixtures.item(id: "d_fotos", parentId: "root", type: "folder")])
@@ -320,7 +363,7 @@ final class PinnedEnumerationTests: XCTestCase {
         let observer = await changes(enumerator)
         XCTAssertNil(observer.error)
         XCTAssertEqual(policies(observer.updated), ["d_a": keep, "d_b": keep, "f_new": keep, "f_out": .inherited])
-        XCTAssertEqual(notified.next(), 2)   // announced once
+        XCTAssertEqual(announced.all, ["f_new"])   // only the new kept file, not folders or unpinned files
     }
 
     func testDeletedPinnedFolderDropsThePin() async throws {
@@ -404,6 +447,7 @@ final class PinnedEnumerationTests: XCTestCase {
         pin.parentMap.record([Fixtures.item(id: "d_fotos", parentId: "root", type: "folder"),
                               Fixtures.item(id: "d_docs", parentId: "root", type: "folder"),
                               Fixtures.item(id: "d_sub", parentId: "d_docs", type: "folder")])
+        pin.parentMap.notePolicy("d_sub", kept: false)   // reported before, not kept
         MockURLProtocol.reset { request in
             switch request.path {
             case "/api/sync/v1/changes":
@@ -419,6 +463,195 @@ final class PinnedEnumerationTests: XCTestCase {
                                                 layout: { Fixtures.layout }, pinning: pin)
         let observer = await changes(enumerator)
         XCTAssertEqual(policies(observer.updated), ["d_sub": keep, "f_old": keep])
+    }
+
+    func testFolderMovedOutOfAPinnedFolderReReportsItsSubtreeAsInherited() async throws {
+        let pin = pinning()
+        try pin.store.setFolder("d_fotos", pinned: true, space: "personal")
+        try pin.store.setAppliedPins(pin.store.pins(space: "personal"), space: "personal")
+        pin.parentMap.record([Fixtures.item(id: "d_fotos", parentId: "root", type: "folder"),
+                              Fixtures.item(id: "d_docs", parentId: "root", type: "folder"),
+                              Fixtures.item(id: "d_sub", parentId: "d_fotos", type: "folder")])
+        pin.parentMap.notePolicy("d_sub", kept: true)
+        MockURLProtocol.reset { request in
+            switch request.path {
+            case "/api/sync/v1/changes":
+                return .json(200, #"{"changes":[{"op":"upsert","item":\#(Fixtures.folderJSON(id: "d_sub", parentId: "d_docs", name: "sub"))}],"cursor":"11","hasMore":false}"#)
+            case "/api/sync/v1/items/d_sub/children":
+                return .json(200, #"{"items":[\#(Fixtures.itemJSON(id: "f_old", parentId: "d_sub"))],"nextPageToken":null,"cursor":"5"}"#)
+            default:
+                XCTFail("unexpected \(request.path)")
+                return .empty(500)
+            }
+        }
+        let enumerator = FileProviderEnumerator(containerIdentifier: .workingSet, client: Fixtures.client(),
+                                                layout: { Fixtures.layout }, pinning: pin)
+        let observer = await changes(enumerator)
+        XCTAssertEqual(policies(observer.updated), ["d_sub": .inherited, "f_old": .inherited])
+    }
+
+    func testMoveNoticedByAContainerEnumerationIsQueuedForTheWorkingSet() async throws {
+        let rounds = Counter()
+        let pin = pinning(rounds: rounds)
+        try pin.store.setFolder("d_fotos", pinned: true, space: "personal")
+        try pin.store.setAppliedPins(pin.store.pins(space: "personal"), space: "personal")
+        pin.parentMap.record([Fixtures.item(id: "d_fotos", parentId: "root", type: "folder"),
+                              Fixtures.item(id: "d_docs", parentId: "root", type: "folder"),
+                              Fixtures.item(id: "d_sub", parentId: "d_docs", type: "folder")])
+        pin.parentMap.notePolicy("d_sub", kept: false)
+        MockURLProtocol.reset { request in
+            switch request.path {
+            case "/api/sync/v1/items/d_fotos/children":
+                return .json(200, #"{"items":[\#(Fixtures.folderJSON(id: "d_sub", parentId: "d_fotos", name: "sub"))],"nextPageToken":null,"cursor":"5"}"#)
+            case "/api/sync/v1/changes":
+                // The move itself arrives later – the parent is already recorded by then.
+                return .json(200, #"{"changes":[{"op":"upsert","item":\#(Fixtures.folderJSON(id: "d_sub", parentId: "d_fotos", name: "sub"))}],"cursor":"11","hasMore":false}"#)
+            case "/api/sync/v1/items/d_sub/children":
+                return .json(200, #"{"items":[\#(Fixtures.itemJSON(id: "f_old", parentId: "d_sub"))],"nextPageToken":null,"cursor":"5"}"#)
+            default:
+                XCTFail("unexpected \(request.path)")
+                return .empty(500)
+            }
+        }
+        let container = FileProviderEnumerator(containerIdentifier: NSFileProviderItemIdentifier("d_fotos"), client: Fixtures.client(),
+                                               layout: { Fixtures.layout }, pinning: pin)
+        let items = MockEnumerationObserver(expectation(description: "items"))
+        container.enumerateItems(for: items, startingAt: NSFileProviderPage.initialPageSortedByName as NSFileProviderPage)
+        await fulfillment(of: [items.finished], timeout: 5)
+        XCTAssertEqual(policies(items.items), ["d_sub": keep])
+        XCTAssertEqual(pin.queue.tasks.map(\.id), ["d_sub"])
+        XCTAssertEqual(rounds.next(), 2)   // one working-set round requested
+
+        let workingSet = FileProviderEnumerator(containerIdentifier: .workingSet, client: Fixtures.client(),
+                                                layout: { Fixtures.layout }, pinning: pin)
+        let observer = await changes(workingSet)
+        XCTAssertEqual(policies(observer.updated), ["d_sub": keep, "f_old": keep])
+        XCTAssertTrue(pin.queue.isEmpty)
+    }
+
+    func testFailingAncestorLookupDoesNotAbortTheBatch() async throws {
+        let pin = pinning()
+        try pin.store.setFolder("d_fotos", pinned: true, space: "personal")
+        try pin.store.setAppliedPins(pin.store.pins(space: "personal"), space: "personal")
+        pin.parentMap.record([Fixtures.item(id: "d_fotos", parentId: "root", type: "folder")])
+        let failing = Counter()
+        MockURLProtocol.reset { request in
+            switch request.path {
+            case "/api/sync/v1/changes":
+                return .json(200, #"{"changes":[{"op":"upsert","item":\#(Fixtures.itemJSON(id: "f_x", parentId: "d_unknown"))},{"op":"upsert","item":\#(Fixtures.itemJSON(id: "f_ok", parentId: "d_fotos"))}],"cursor":"11","hasMore":false}"#)
+            case "/api/sync/v1/items/d_unknown":
+                _ = failing.next()
+                return .error(503, "unavailable")
+            case "/api/sync/v1/items/f_x":
+                return .error(503, "unavailable")
+            default:
+                XCTFail("unexpected \(request.path)")
+                return .empty(500)
+            }
+        }
+        let enumerator = FileProviderEnumerator(containerIdentifier: .workingSet, client: Fixtures.client(),
+                                                layout: { Fixtures.layout }, pinning: pin)
+        let observer = await changes(enumerator)
+        XCTAssertNil(observer.error)
+        XCTAssertEqual(SyncAnchorCodec.decode(observer.anchor!), ["personal": "11"])
+        XCTAssertEqual(policies(observer.updated), ["f_x": .inherited, "f_ok": keep])
+        XCTAssertEqual(pin.queue.tasks.map(\.id), ["f_x"])   // retried in a later round
+        XCTAssertEqual(observer.moreComing, false)          // a paused queue does not spin
+    }
+
+    func testWholeSpaceReapplyResumesAfterAnErrorWithoutStartingOver() async throws {
+        let pin = pinning()
+        try pin.store.setWholeSpace(true, space: "personal")
+        let rootListings = Counter()
+        let failNext = PostLog()
+        failNext.record("d_a")
+        MockURLProtocol.reset { request in
+            switch request.path {
+            case "/api/sync/v1/changes":
+                return .json(200, #"{"changes":[],"cursor":"11","hasMore":false}"#)
+            case "/api/sync/v1/items/root/children":
+                _ = rootListings.next()
+                return .json(200, #"{"items":[\#(Fixtures.folderJSON(id: "d_a", name: "A")),\#(Fixtures.folderJSON(id: "d_b", name: "B"))],"nextPageToken":null,"cursor":"5"}"#)
+            case "/api/sync/v1/items/d_a/children":
+                if failNext.all.count == 1 {
+                    failNext.record("done")
+                    return .json(500, #"{"statusCode":500,"message":"boom"}"#)
+                }
+                return .json(200, #"{"items":[\#(Fixtures.itemJSON(id: "f_a", parentId: "d_a"))],"nextPageToken":null,"cursor":"5"}"#)
+            case "/api/sync/v1/items/d_b/children":
+                return .json(200, #"{"items":[\#(Fixtures.itemJSON(id: "f_b", parentId: "d_b"))],"nextPageToken":null,"cursor":"5"}"#)
+            default:
+                XCTFail("unexpected \(request.path)")
+                return .empty(500)
+            }
+        }
+        let enumerator = FileProviderEnumerator(containerIdentifier: .workingSet, client: Fixtures.client(),
+                                                layout: { Fixtures.layout }, pinning: pin)
+        let first = await changes(enumerator)
+        XCTAssertNil(first.error)
+        XCTAssertEqual(SyncAnchorCodec.decode(first.anchor!), ["personal": "11"])
+        XCTAssertEqual(policies(first.updated), ["space:personal": keep, "d_a": keep, "d_b": keep])
+        XCTAssertEqual(pin.queue.tasks.map(\.id), ["d_a", "d_b"])
+        // The queue is persisted: a restarted extension continues from it.
+        let reloaded = PinWorkQueue(fileURL: dir.appending(path: "pin-queue.json"))
+        XCTAssertEqual(reloaded.tasks.map(\.id), ["d_a", "d_b"])
+
+        let second = await changes(enumerator, from: "11")
+        XCTAssertNil(second.error)
+        XCTAssertEqual(policies(second.updated), ["f_a": keep, "f_b": keep])
+        XCTAssertTrue(pin.queue.isEmpty)
+        XCTAssertEqual(rootListings.next(), 2)   // the root was listed once, not again
+    }
+
+    func testReapplyIsBoundedPerRoundAndSignalsMoreComing() async throws {
+        let pin = pinning()
+        try pin.store.setWholeSpace(true, space: "personal")
+        MockURLProtocol.reset { request in
+            switch request.path {
+            case "/api/sync/v1/changes":
+                return .json(200, #"{"changes":[],"cursor":"11","hasMore":false}"#)
+            case "/api/sync/v1/items/root/children":
+                return .json(200, #"{"items":[\#(Fixtures.folderJSON(id: "d_a", name: "A")),\#(Fixtures.itemJSON(id: "f_1"))],"nextPageToken":null,"cursor":"5"}"#)
+            case "/api/sync/v1/items/d_a/children":
+                return .json(200, #"{"items":[\#(Fixtures.itemJSON(id: "f_2", parentId: "d_a"))],"nextPageToken":null,"cursor":"5"}"#)
+            default:
+                XCTFail("unexpected \(request.path)")
+                return .empty(500)
+            }
+        }
+        let enumerator = FileProviderEnumerator(containerIdentifier: .workingSet, client: Fixtures.client(),
+                                                layout: { Fixtures.layout }, pinning: pin)
+        let first = await changes(enumerator, batch: 1)
+        XCTAssertEqual(first.moreComing, true)
+        XCTAssertEqual(Set(policies(first.updated).keys), ["space:personal", "d_a", "f_1"])
+        let second = await changes(enumerator, from: "11", batch: 1)
+        XCTAssertEqual(second.moreComing, false)
+        XCTAssertEqual(policies(second.updated), ["f_2": keep])
+    }
+
+    func testOnlyNewContentOfKeptFilesIsAnnounced() async throws {
+        let announced = PostLog()
+        let pin = pinning(announced: announced)
+        try pin.store.setFolder("d_fotos", pinned: true, space: "personal")
+        try pin.store.setAppliedPins(pin.store.pins(space: "personal"), space: "personal")
+        pin.parentMap.record([Fixtures.item(id: "d_fotos", parentId: "root", type: "folder")])
+        let feed = PostLog()
+        MockURLProtocol.reset { request in
+            let item: String
+            switch feed.all.count {
+            case 0: item = Fixtures.itemJSON(id: "f_1", parentId: "d_fotos", name: "a.pdf", contentEtag: "v3")
+            case 1: item = Fixtures.itemJSON(id: "f_1", parentId: "d_fotos", name: "renamed.pdf", contentEtag: "v3")
+            default: item = Fixtures.itemJSON(id: "f_1", parentId: "d_fotos", name: "renamed.pdf", version: 4, contentEtag: "v4")
+            }
+            feed.record("x")
+            return .json(200, #"{"changes":[{"op":"upsert","item":\#(item)}],"cursor":"11","hasMore":false}"#)
+        }
+        let enumerator = FileProviderEnumerator(containerIdentifier: .workingSet, client: Fixtures.client(),
+                                                layout: { Fixtures.layout }, pinning: pin)
+        _ = await changes(enumerator)
+        _ = await changes(enumerator, from: "11")   // metadata only
+        _ = await changes(enumerator, from: "11")   // new content
+        XCTAssertEqual(announced.all, ["f_1", "f_1"])
     }
 
     func testWithoutPinsNothingIsResolved() async throws {

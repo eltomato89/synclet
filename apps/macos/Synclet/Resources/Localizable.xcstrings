@@ -241,6 +241,16 @@
         }
       }
     },
+    "Pinned content": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Offline-Inhalte"
+          }
+        }
+      }
+    },
     "Pinned folders stay downloaded on this Mac, including new files. Everything else is downloaded when you open it.": {
       "localizations": {
         "de": {
@@ -387,16 +397,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "Bei Anmeldung starten"
-          }
-        }
-      }
-    },
-    "Stored offline": {
-      "localizations": {
-        "de": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Offline gespeichert"
           }
         }
       }

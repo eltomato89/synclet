@@ -39,7 +39,9 @@ public struct PinSet: Codable, Sendable, Hashable {
 ///
 /// `stateDir` is the account directory `accounts/<key16>/`. Every effective change of
 /// `pins.json` posts the Darwin notification `tech.jensk.synclet.pinsChanged.<key16>`.
-/// Writes are atomic; an unreadable file counts as "nothing pinned".
+/// Read-modify-write runs under an exclusive `flock` on `<spaceId>/pins.lock`, shared by the
+/// app and the extension, so a toggle and a prune never lose each other's change. Writes are
+/// atomic; an unreadable file counts as "nothing pinned".
 public final class PinStore: Sendable {
     public static let notificationPrefix = "tech.jensk.synclet.pinsChanged."
     /// Posted by the extension when it reported new or changed items under a pin, so the app
@@ -57,7 +59,6 @@ public final class PinStore: Sendable {
 
     public let stateDir: URL
     private let post: @Sendable (String) -> Void
-    private let lock = NSLock()
 
     /// - Parameters:
     ///   - stateDir: the account directory `accounts/<key16>/`.
@@ -121,10 +122,9 @@ public final class PinStore: Sendable {
         read(file(space: space, name: "pins-applied.json")) ?? PinSet()
     }
 
+    /// Written by the extension only.
     public func setAppliedPins(_ pins: PinSet, space: String) throws {
-        try lock.withLock {
-            try write(pins, to: file(space: space, name: "pins-applied.json"))
-        }
+        try write(pins, to: file(space: space, name: "pins-applied.json"))
     }
 
     // MARK: Files
@@ -149,7 +149,7 @@ public final class PinStore: Sendable {
 
     /// Read-modify-write of `pins.json`; posts the notification only on an effective change.
     private func update(space: String, _ change: (inout PinSet) -> Void) throws {
-        let changed = try lock.withLock { () -> Bool in
+        let changed = try FileLock.withLock(file(space: space, name: "pins.lock")) { () -> Bool in
             let url = file(space: space, name: "pins.json")
             let before = read(url) ?? PinSet()
             var after = before

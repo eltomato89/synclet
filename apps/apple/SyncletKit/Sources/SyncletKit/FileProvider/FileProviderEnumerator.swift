@@ -143,8 +143,14 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
                 if token == nil {
                     self?.lock.withLock { self?.firstPageCursor = result.cursor }
                 }
-                let items = try await resolver?.items(result.items)
-                    ?? result.items.map { FileProviderItem($0, layout: layout) }
+                let items: [FileProviderItem]
+                if let resolver {
+                    let resolved = try await resolver.items(result.items)
+                    items = resolved.items
+                    Self.finishPinning(resolver.pinning, announce: resolved.announce, workingSet: false)
+                } else {
+                    items = result.items.map { FileProviderItem($0, layout: layout) }
+                }
                 box.value.didEnumerate(items)
                 let next = result.nextPageToken.map { NSFileProviderPage(Data($0.utf8)) }
                 box.value.finishEnumerating(upTo: next)
@@ -204,8 +210,11 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
                     moreComing = moreComing || page.hasMore
                 }
                 if let pinning {
-                    try await Self.reportPinned(updated: updated, deleted: deleted, pinning: pinning, layout: layout,
-                                                client: client, isWorkingSet: isWorkingSet) { box.value.didUpdate($0) }
+                    let more = try await Self.reportPinned(updated: updated, deleted: deleted, pinning: pinning, layout: layout,
+                                                           client: client, isWorkingSet: isWorkingSet, budget: limit) {
+                        box.value.didUpdate($0)
+                    }
+                    moreComing = moreComing || more
                 } else if !updated.isEmpty {
                     box.value.didUpdate(updated.map { FileProviderItem($0, layout: layout) })
                 }
@@ -222,19 +231,16 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
     }
 
     /// Reports the upserts of a change batch with their content policy. In the working set
-    /// also: forget deleted folders (and their pins), re-report the subtree of a folder that
-    /// moved into or out of a pin, re-apply changed pins, and announce pinned content.
+    /// also: drop pins of deleted folders, queue re-reports for changed pins, and work off at
+    /// most about `budget` items of the persistent re-report queue. Pinning never fails the
+    /// batch: lookups fall back to `.inherited`, queue work pauses on errors.
+    /// - Returns: `true` when re-report work is left (⇒ `moreComing`).
     static func reportPinned(updated: [SyncItem], deleted: [NSFileProviderItemIdentifier], pinning: PinningContext,
-                             layout: SpaceLayout, client: SyncAPIClient, isWorkingSet: Bool,
-                             report: ([FileProviderItem]) -> Void) async throws {
-        let map = pinning.parentMap
+                             layout: SpaceLayout, client: SyncAPIClient, isWorkingSet: Bool, budget: Int,
+                             report: ([FileProviderItem]) -> Void) async throws -> Bool {
         let goneIDs = deleted.compactMap { layout.serverID(for: $0) }
-        // Folders that changed their parent (old parent known): candidates for a subtree re-report.
-        let moved: [(item: SyncItem, oldParent: String)] = isWorkingSet ? updated.compactMap { item in
-            guard item.isFolder, let old = map.parent(of: item.id), old != item.parentId else { return nil }
-            return (item, old)
-        } : []
-        map.remove(goneIDs)
+        pinning.parentMap.remove(goneIDs)
+        pinning.ledger.remove(goneIDs)
         if isWorkingSet {
             for id in goneIDs {
                 do {
@@ -247,29 +253,26 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
             }
         }
         let resolver = pinning.resolver(layout: layout, client: client)
-        var announce = false
-        func reportAndNote(_ items: [FileProviderItem]) {
-            if PinPolicy.keepDownloaded != .inherited, items.contains(where: { $0.contentPolicy == PinPolicy.keepDownloaded }) {
-                announce = true
-            }
-            report(items)
+        let resolved = try await resolver.items(updated)
+        if !resolved.items.isEmpty { report(resolved.items) }
+        var announce = resolved.announce
+        var more = false
+        if isWorkingSet {
+            resolver.enqueueChangedPins(gone: Set(goneIDs), report: report)
+            let drained = await resolver.drain(budget: budget, report: report)
+            more = drained.more
+            announce += drained.announce
         }
-        let items = try await resolver.items(updated)
-        if !items.isEmpty { reportAndNote(items) }
-        guard isWorkingSet else { return }
+        finishPinning(pinning, announce: announce, workingSet: isWorkingSet)
+        return more
+    }
 
-        if resolver.hasPins {
-            let policies = Dictionary(items.map { ($0.itemIdentifier, $0.contentPolicy) }, uniquingKeysWith: { $1 })
-            for (folder, oldParent) in moved {
-                let newPolicy = policies[layout.providerIdentifier(forServerID: folder.id)] ?? .inherited
-                let oldPolicy = try await resolver.policy(itemId: folder.id, parentId: oldParent, item: folder)
-                guard newPolicy != oldPolicy else { continue }
-                Log.pinning.info("folder \(folder.id, privacy: .public) moved across a pin: re-reporting its subtree")
-                try await resolver.walk(from: folder.id, policy: newPolicy, pins: PinSet(), report: reportAndNote)
-            }
-        }
-        try await resolver.reapplyChangedPins(store: pinning.store, gone: Set(goneIDs), report: reportAndNote)
-        if announce { pinning.notifyPinnedContent() }
+    /// Persists the pinning state, announces new kept content, and asks for a working-set
+    /// round when work was queued outside of it.
+    static func finishPinning(_ pinning: PinningContext, announce: [String], workingSet: Bool) {
+        pinning.flush()
+        if !announce.isEmpty { pinning.announce(announce) }
+        if !workingSet, !pinning.queue.isEmpty { pinning.requestWorkingSetRound() }
     }
 
     /// Splits changes into upserts and deletions (optionally only the direct children of

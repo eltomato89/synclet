@@ -20,7 +20,8 @@ Sources/SyncletKit/
                  RangeDownloader (streamed, resumable downloads)
   Pinning/       PinStore (offline pins per account/space), PinPolicy (content policy decision),
                  ParentMap (folder → parent, first-level ancestor), PinResolver (policy per item,
-                 re-reporting subtrees when pins change)
+                 PinWorkQueue: persistent, bounded re-reports), PinningState (flock,
+                 PinnedContentLedger, PinnedDownloadQueue for the app)
   Credentials/   CredentialStore (device tokens in the shared keychain), SecureStorage
   Account/       AccountManager (add/remove accounts and domains), AccountStore (JSON in the
                  app group), InstallationID, ServerURL

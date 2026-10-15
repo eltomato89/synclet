@@ -8,11 +8,28 @@ final class FakeOfflineContent: OfflineContentManaging, @unchecked Sendable {
     private let lock = NSLock()
     private var _signals: [(domain: String, containers: [String])] = []
     private var _ensured: [(domain: String, containers: [String])] = []
+    private var _requested: [[String]] = []
+    private var _cancelledWalks = 0
     /// Bytes reported per container id.
     var bytes: [String: Int64] = [:]
+    /// Ids whose download request fails (once each).
+    var failOnce: Set<String> = []
+    /// `ensureDownloaded` waits this long (cancellable).
+    var walkDuration: Duration = .zero
 
     var signals: [(domain: String, containers: [String])] { lock.withLock { _signals } }
     var ensured: [(domain: String, containers: [String])] { lock.withLock { _ensured } }
+    var requested: [[String]] { lock.withLock { _requested } }
+    var cancelledWalks: Int { lock.withLock { _cancelledWalks } }
+
+    func requestDownloads(domain: NSFileProviderDomainIdentifier, ids: [String]) async -> [String] {
+        lock.withLock {
+            _requested.append(ids)
+            let failed = ids.filter { failOnce.contains($0) }
+            failOnce.subtract(failed)
+            return failed
+        }
+    }
 
     func signal(domain: NSFileProviderDomainIdentifier, containers: [NSFileProviderItemIdentifier]) async {
         lock.withLock { _signals.append((domain.rawValue, containers.map(\.rawValue))) }
@@ -23,6 +40,13 @@ final class FakeOfflineContent: OfflineContentManaging, @unchecked Sendable {
         let bytes = lock.withLock { () -> [String: Int64] in
             _ensured.append((domain.rawValue, containers.map(\.rawValue)))
             return self.bytes
+        }
+        if walkDuration > .zero {
+            try? await Task.sleep(for: walkDuration)
+            if Task.isCancelled {
+                lock.withLock { _cancelledWalks += 1 }
+                return [:]
+            }
         }
         return Dictionary(containers.compactMap { id in bytes[id.rawValue].map { (id, $0) } }, uniquingKeysWith: { a, _ in a })
     }
@@ -67,7 +91,7 @@ final class PinningModelTests: XCTestCase {
         let posted = posted!
         return PinningModel(accounts: harness.accounts, content: content,
                             makeStore: { PinStore(stateDir: directory.accountDirectory(key: $0.key), post: { posted.record($0) }) },
-                            debounce: .zero)
+                            debounce: .zero, retryDelay: .zero)
     }
 
     private static func folder(_ id: String, _ name: String, parent: String = "root") -> String {
@@ -125,12 +149,12 @@ final class PinningModelTests: XCTestCase {
         let store = PinStore(stateDir: harness.manager.accounts.accountDirectory(key: account.key))
         XCTAssertEqual(store.pins(space: "personal"), PinSet(wholeSpace: false, folders: ["d_f"]))
         XCTAssertEqual(posted.all, ["tech.jensk.synclet.pinsChanged.\(account.key16)"])
-        XCTAssertEqual(content.signals.map(\.containers), [[NSFileProviderItemIdentifier.workingSet.rawValue, "d_f"]])
+        XCTAssertEqual(content.signals.map(\.containers), [[NSFileProviderItemIdentifier.workingSet.rawValue]])
         XCTAssertEqual(content.signals.first?.domain, account.key16)
         XCTAssertEqual(content.ensured.map(\.containers), [["d_f"]])
         let state = try XCTUnwrap(model.account(key: account.key))
-        XCTAssertEqual(state.spaces[0].folders.first { $0.id == "d_f" }?.pinned, true)
-        XCTAssertEqual(state.spaces[0].folders.first { $0.id == "d_f" }?.sizeHint, 4096)
+        XCTAssertTrue(state.spaces[0].isPinned("d_f"))
+        XCTAssertEqual(state.spaces[0].sizeHint("d_f"), 4096)
         XCTAssertEqual(state.offlineBytes, 4096)
 
         // Unpin: back to inherited via the store; the walk is not repeated for nothing.
@@ -153,8 +177,7 @@ final class PinningModelTests: XCTestCase {
         await model.waitForRefreshes()
 
         XCTAssertTrue(PinStore(stateDir: harness.manager.accounts.accountDirectory(key: account.key)).pins(space: "personal").wholeSpace)
-        XCTAssertEqual(content.signals.map(\.containers),
-                       [[NSFileProviderItemIdentifier.workingSet.rawValue, NSFileProviderItemIdentifier.rootContainer.rawValue]])
+        XCTAssertEqual(content.signals.map(\.containers), [[NSFileProviderItemIdentifier.workingSet.rawValue]])
         XCTAssertEqual(content.ensured.map(\.containers), [["space:personal"]])
         XCTAssertEqual(model.account(key: account.key)?.offlineBytes, 1_000_000)
     }
@@ -172,7 +195,7 @@ final class PinningModelTests: XCTestCase {
         let directory = harness.manager.accounts
         XCTAssertEqual(PinStore(stateDir: directory.accountDirectory(key: a.key)).pins(space: "personal").folders, ["d_f"])
         XCTAssertTrue(PinStore(stateDir: directory.accountDirectory(key: b.key)).pins(space: "personal").isEmpty)
-        XCTAssertEqual(model.account(key: b.key)?.spaces[0].folders[0].pinned, false)
+        XCTAssertEqual(model.account(key: b.key)?.spaces[0].isPinned("d_f"), false)
         XCTAssertEqual(content.signals.map(\.domain), [a.key16])
     }
 
@@ -187,7 +210,7 @@ final class PinningModelTests: XCTestCase {
         await model.waitForRefreshes()
 
         XCTAssertEqual(store.pins(space: "personal").folders, ["d_f"])   // the rename keeps the pin (same id)
-        XCTAssertEqual(model.account(key: account.key)?.spaces[0].folders.map(\.pinned), [true])
+        XCTAssertEqual(model.account(key: account.key)?.spaces[0].pins.folders, ["d_f"])
         XCTAssertEqual(content.ensured.map(\.containers), [["d_f"]])     // pinned content is caught up on load
     }
 
@@ -213,14 +236,98 @@ final class PinningModelTests: XCTestCase {
         // The extension (or another writer) pinned/unpinned: re-read without network.
         try store.setFolder("d_f", pinned: true, space: "personal")
         model.handle(notification: PinStore.notificationName(key16: account.key16))
-        XCTAssertEqual(model.account(key: account.key)?.spaces[0].folders[0].pinned, true)
+        XCTAssertEqual(model.account(key: account.key)?.spaces[0].isPinned("d_f"), true)
 
-        // New content under a pin ⇒ (debounced) download walk.
+        // New content under a pin ⇒ (debounced) requests of exactly the announced ids, no walk.
+        let queue = PinnedDownloadQueue(accountDirectory: harness.manager.accounts.accountDirectory(key: account.key))
+        try queue.append(["f_new1"])
         model.handle(notification: PinStore.pinnedContentNotificationName(key16: account.key16))
+        try queue.append(["f_new2"])
+        model.handle(notification: PinStore.pinnedContentNotificationName(key16: account.key16))
+        await model.waitForAnnouncements()
+        await model.waitForRefreshes()
+        XCTAssertEqual(content.requested, [["f_new1", "f_new2"]])
+        XCTAssertTrue(content.ensured.isEmpty)
+
+        // An announcement without queued ids (nothing new) requests nothing.
+        model.handle(notification: PinStore.pinnedContentNotificationName(key16: account.key16))
+        await model.waitForAnnouncements()
+        XCTAssertEqual(content.requested.count, 1)
+
+        // An overflowed queue falls back to one walk.
+        try queue.append((0...PinnedDownloadQueue.maxEntries).map { "f_\($0)" })
         model.handle(notification: PinStore.pinnedContentNotificationName(key16: account.key16))
         await model.waitForAnnouncements()
         await model.waitForRefreshes()
         XCTAssertEqual(content.ensured.map(\.containers), [["d_f"]])
+    }
+
+    func testFallbackWorksAtLaunchWithoutOpeningTheOfflineTab() async throws {
+        let account = try addAccount(host: "a.test", serverId: "srvA")
+        let store = PinStore(stateDir: harness.manager.accounts.accountDirectory(key: account.key))
+        try store.setFolder("d_f", pinned: true, space: "personal")
+        MockURLProtocol.reset { request in
+            XCTFail("no network expected: \(request.path)")
+            return .json(500, "{}")
+        }
+        content.bytes = ["d_f": 10]
+        let model = makeModel()   // no loadAll()
+        model.start()
+        await model.waitForRefreshes()
+        XCTAssertEqual(content.ensured.map(\.containers), [["d_f"]])
+        XCTAssertEqual(model.account(key: account.key)?.offlineBytes, 10)
+
+        try PinnedDownloadQueue(accountDirectory: harness.manager.accounts.accountDirectory(key: account.key)).append(["f_1"])
+        model.handle(notification: PinStore.pinnedContentNotificationName(key16: account.key16))
+        await model.waitForAnnouncements()
+        XCTAssertEqual(content.requested, [["f_1"]])
+    }
+
+    func testFailedDownloadRequestsAreRetriedOnce() async throws {
+        let account = try addAccount(host: "a.test", serverId: "srvA")
+        let model = makeModel()
+        content.failOnce = ["f_2"]
+        try PinnedDownloadQueue(accountDirectory: harness.manager.accounts.accountDirectory(key: account.key)).append(["f_1", "f_2"])
+        model.handle(notification: PinStore.pinnedContentNotificationName(key16: account.key16))
+        await model.waitForAnnouncements()
+        XCTAssertEqual(content.requested, [["f_1", "f_2"], ["f_2"]])
+    }
+
+    func testSignOutCancelsTheWalkAndPendingAnnouncements() async throws {
+        let account = try addAccount(host: "a.test", serverId: "srvA")
+        let store = PinStore(stateDir: harness.manager.accounts.accountDirectory(key: account.key))
+        try store.setFolder("d_f", pinned: true, space: "personal")
+        content.walkDuration = .seconds(30)
+        let model = PinningModel(accounts: harness.accounts, content: content, debounce: .seconds(30), retryDelay: .zero)
+        model.start()
+        XCTAssertTrue(model.isRefreshing(key: account.key))
+        try PinnedDownloadQueue(accountDirectory: harness.manager.accounts.accountDirectory(key: account.key)).append(["f_1"])
+        model.handle(notification: PinStore.pinnedContentNotificationName(key16: account.key16))
+        try await Task.sleep(for: .milliseconds(50))   // the walk is running
+
+        await harness.accounts.signOut(key: account.key)
+        model.reload()
+
+        let deadline = Date().addingTimeInterval(5)
+        while content.cancelledWalks == 0, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(content.cancelledWalks, 1)
+        XCTAssertFalse(model.isRefreshing(key: account.key))
+        await model.waitForAnnouncements()
+        await model.waitForRefreshes()
+        XCTAssertTrue(content.requested.isEmpty)   // the debounced announcement never fired
+        XCTAssertNil(model.account(key: account.key))
+    }
+
+    func testScanStopsWhenCancelled() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "synclet-scan-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir.appending(path: "sub"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try Data(count: 100).write(to: dir.appending(path: "a.bin"))
+        try Data(count: 50).write(to: dir.appending(path: "sub/b.bin"))
+        XCTAssertEqual(SystemOfflineContent.scan(dir).bytes, 150)
+        let stopped = SystemOfflineContent.scan(dir, isCancelled: { true })
+        XCTAssertEqual(stopped.bytes, 0)
+        XCTAssertTrue(stopped.missing.isEmpty)
     }
 
     func testRealDarwinNotificationReachesAnObserver() async throws {

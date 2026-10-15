@@ -10,16 +10,19 @@ import SyncletKit
 /// - Pins are stored in the ``PinStore`` (app group, per account and space, by item id), which
 ///   posts `tech.jensk.synclet.pinsChanged.<key16>`. The extension reads them and reports
 ///   `.downloadEagerlyAndKeepDownloaded` on every item below a pin (Strategy B).
-/// - After a toggle the model signals the working set (and the root container for a whole
-///   space), so the extension re-reports the affected items with their new policy.
-/// - Fallback (whether or not macOS acts on the policy by itself): after a toggle, at launch,
-///   and when the extension announces new pinned content
-///   (`tech.jensk.synclet.pinnedContentChanged.<key16>`), the model asks the system to
-///   download every file below a pin that is not downloaded yet
-///   (``OfflineContentManaging/ensureDownloaded(domain:containers:)``). That walk also
-///   measures the pinned bytes shown as "≈ …".
-/// - Unpinning only changes the policy back to `.inherited`; nothing is evicted, and files
-///   the user keeps via Finder's "Keep Downloaded" stay.
+/// - The model's view of what is pinned comes from the stored ``PinSet`` (not from the loaded
+///   folder list), so the fallback works from launch even if the tab is never opened.
+/// - After a toggle the model signals the working set, so the extension re-reports the
+///   affected items with their new policy.
+/// - Fallback (whether or not macOS acts on the policy by itself):
+///   - after a toggle, at launch and on load: a walk below the pins requests every file that
+///     is not downloaded yet (and measures the pinned bytes shown as "≈ …");
+///   - when the extension announces new pinned content
+///     (`tech.jensk.synclet.pinnedContentChanged.<key16>`): exactly the announced ids from
+///     the ``PinnedDownloadQueue`` are requested (no walk; metadata-only changes are never
+///     announced).
+/// - Unpinning only changes the policy back to `.inherited`; nothing is evicted.
+/// - Signing out cancels every walk, request and pending announcement of the account.
 @MainActor
 @Observable
 final class PinningModel {
@@ -28,33 +31,43 @@ final class PinningModel {
         var name: String
         /// Size from the server (folders report 0 today).
         var serverSize: Int64
-        var pinned: Bool
-        /// Bytes found below the folder on disk by the last offline walk.
-        var measuredBytes: Int64?
-
-        /// "≈ <bytes>" when a size is known.
-        var sizeHint: Int64? { serverSize > 0 ? serverSize : measuredBytes }
     }
 
     struct SpaceState: Identifiable, Equatable, Sendable {
         let space: SyncSpace
         var title: String
-        var wholeSpace = false
+        /// What is pinned (from the ``PinStore``).
+        var pins = PinSet()
+        /// First-level folders, once loaded.
         var folders: [Folder] = []
         var isLoading = false
         var error: String?
-        /// Bytes below the whole space (only measured while it is pinned).
-        var measuredBytes: Int64?
+        /// Bytes found below a container by the last walk (key: container identifier).
+        var measured: [String: Int64] = [:]
 
         var id: String { space.id }
+        var wholeSpace: Bool { pins.wholeSpace }
 
-        /// Bytes kept offline in this space; `nil` while not measured yet.
+        func isPinned(_ folderId: String) -> Bool { pins.folders.contains(folderId) }
+
+        /// "≈ <bytes>" of a folder when a size is known.
+        func sizeHint(_ folderId: String) -> Int64? {
+            if let size = folders.first(where: { $0.id == folderId })?.serverSize, size > 0 { return size }
+            return measured[folderId]
+        }
+
+        /// The containers kept offline: the space folder, else the pinned folders.
+        var pinnedContainers: [NSFileProviderItemIdentifier] {
+            if pins.wholeSpace { return [SpaceLayout.identifier(for: space)] }
+            return pins.folders.sorted().map { NSFileProviderItemIdentifier($0) }
+        }
+
+        /// Bytes of the pinned content in this space; `nil` while not measured.
         var offlineBytes: Int64? {
-            if wholeSpace { return measuredBytes }
-            let pinned = folders.filter(\.pinned)
+            if pins.wholeSpace { return measured[SpaceLayout.identifier(for: space).rawValue] }
             var total: Int64 = 0
-            for folder in pinned {
-                guard let size = folder.sizeHint else { return nil }
+            for id in pins.folders {
+                guard let size = sizeHint(id) else { return nil }
                 total += size
             }
             return total
@@ -67,8 +80,9 @@ final class PinningModel {
         var spaces: [SpaceState]
 
         var id: String { key }
+        var key16: String { AccountStore.key16(for: key) }
 
-        /// Footer total; `nil` while a pinned part is not measured yet.
+        /// Footer total; `nil` while a pinned part is not measured.
         var offlineBytes: Int64? {
             var total: Int64 = 0
             for space in spaces {
@@ -78,33 +92,45 @@ final class PinningModel {
             return total
         }
 
-        var hasPins: Bool { spaces.contains { $0.wholeSpace || $0.folders.contains(where: \.pinned) } }
+        var hasPins: Bool { spaces.contains { !$0.pins.isEmpty } }
+        var pinnedContainers: [NSFileProviderItemIdentifier] { spaces.flatMap(\.pinnedContainers) }
     }
 
     private(set) var accounts: [AccountState] = []
+    /// Accounts with a walk in progress ("Calculating…").
+    private(set) var refreshing: Set<String> = []
     /// Last error of a toggle.
     var errorMessage: String?
 
     @ObservationIgnored let accountsModel: AccountsModel
     @ObservationIgnored let content: OfflineContentManaging
     @ObservationIgnored private let makeStore: @Sendable (StoredAccount) -> PinStore
+    @ObservationIgnored private let makeDownloads: @Sendable (StoredAccount) -> PinnedDownloadQueue
     @ObservationIgnored private let debounce: Duration
+    @ObservationIgnored private let retryDelay: Duration
     @ObservationIgnored private var observers: [String: DarwinNotificationObserver] = [:]
     @ObservationIgnored private var refreshes: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var refreshAgain: Set<String> = []
-    @ObservationIgnored private var pendingAnnouncements: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private var announcements: [String: Task<Void, Never>] = [:]
 
     /// - Parameters:
     ///   - makeStore: the pin store of an account (default: `accounts/<key16>/` in the app group).
-    ///   - debounce: wait after an announcement of the extension before walking (lets the
-    ///     system apply the reported items first; coalesces bursts).
+    ///   - makeDownloads: the queue of announced downloads (default: same directory).
+    ///   - debounce: wait after an announcement (coalesces bursts, lets the system apply the
+    ///     reported items first).
+    ///   - retryDelay: wait before the one retry of failed download requests.
     init(accounts: AccountsModel, content: OfflineContentManaging = SystemOfflineContent(),
-         makeStore: (@Sendable (StoredAccount) -> PinStore)? = nil, debounce: Duration = .seconds(2)) {
+         makeStore: (@Sendable (StoredAccount) -> PinStore)? = nil,
+         makeDownloads: (@Sendable (StoredAccount) -> PinnedDownloadQueue)? = nil,
+         debounce: Duration = .seconds(2), retryDelay: Duration = .seconds(5)) {
         self.accountsModel = accounts
         self.content = content
         let directoryStore = accounts.manager.accounts
         self.makeStore = makeStore ?? { PinStore(stateDir: directoryStore.accountDirectory(key: $0.key)) }
+        self.makeDownloads = makeDownloads
+            ?? { PinnedDownloadQueue(accountDirectory: directoryStore.accountDirectory(key: $0.key)) }
         self.debounce = debounce
+        self.retryDelay = retryDelay
         reload()
     }
 
@@ -120,8 +146,8 @@ final class PinningModel {
 
     // MARK: - Accounts
 
-    /// Follows the account list (and space lists) of ``AccountsModel``; keeps loaded folders.
-    /// Pins are re-read from the store.
+    /// Follows the account list (and space lists) of ``AccountsModel``; keeps loaded folders,
+    /// re-reads the pins, and cancels all work of accounts that are gone.
     func reload() {
         let previous = Dictionary(accounts.map { ($0.key, $0) }, uniquingKeysWith: { a, _ in a })
         accounts = accountsModel.entries.map { entry in
@@ -130,19 +156,25 @@ final class PinningModel {
             let spaces = entry.account.spaces.map { space -> SpaceState in
                 var state = old?.spaces.first { $0.id == space.id }
                     ?? SpaceState(space: space, title: SpaceLayout.displayName(for: space))
-                Self.apply(store.pins(space: space.id), to: &state)
+                state.pins = store.pins(space: space.id)
                 return state
             }
             return AccountState(key: entry.id, title: entry.title, spaces: spaces)
         }
+        let current = Set(accounts.map(\.key))
+        for key in Set(refreshes.keys).union(announcements.keys).union(refreshAgain) where !current.contains(key) {
+            cancelWork(key: key)
+        }
         observeSignals()
     }
 
-    private static func apply(_ pins: PinSet, to state: inout SpaceState) {
-        state.wholeSpace = pins.wholeSpace
-        for index in state.folders.indices {
-            state.folders[index].pinned = pins.folders.contains(state.folders[index].id)
-        }
+    /// Cancels the walk, requests and pending announcement of an account.
+    private func cancelWork(key: String) {
+        Logger.app.info("cancelling offline work of a removed account")
+        refreshes.removeValue(forKey: key)?.cancel()
+        announcements.removeValue(forKey: key)?.cancel()
+        refreshAgain.remove(key)
+        refreshing.remove(key)
     }
 
     /// App launch: watch the account list, and catch up on pinned downloads.
@@ -193,12 +225,8 @@ final class PinningModel {
                 try store.prune(existingFirstLevel: Set(folders.map(\.id)), space: space.id)
                 let pins = store.pins(space: space.id)
                 update(key: key, space: space.id) { state in
-                    let measured = Dictionary(state.folders.map { ($0.id, $0.measuredBytes) }, uniquingKeysWith: { a, _ in a })
-                    state.folders = folders.map {
-                        Folder(id: $0.id, name: $0.name, serverSize: $0.size, pinned: pins.folders.contains($0.id),
-                               measuredBytes: measured[$0.id] ?? nil)
-                    }
-                    state.wholeSpace = pins.wholeSpace
+                    state.folders = folders.map { Folder(id: $0.id, name: $0.name, serverSize: $0.size) }
+                    state.pins = pins
                     state.isLoading = false
                 }
             } catch {
@@ -240,10 +268,9 @@ final class PinningModel {
             fail(error)
             return
         }
-        update(key: key, space: space) { $0.wholeSpace = on }
-        // The space folder lives in the root container; its descendants come with the working set.
-        await content.signal(domain: domain(key: key), containers: [.workingSet, .rootContainer])
-        refreshOffline(key: key)
+        let pins = store.pins(space: space)
+        update(key: key, space: space) { $0.pins = pins }
+        await signalPinsChanged(key: key)
     }
 
     /// A first-level folder.
@@ -255,10 +282,15 @@ final class PinningModel {
             fail(error)
             return
         }
-        update(key: key, space: space) { state in
-            if let index = state.folders.firstIndex(where: { $0.id == id }) { state.folders[index].pinned = pinned }
-        }
-        await content.signal(domain: domain(key: key), containers: [.workingSet, NSFileProviderItemIdentifier(id)])
+        let pins = store.pins(space: space)
+        update(key: key, space: space) { $0.pins = pins }
+        await signalPinsChanged(key: key)
+    }
+
+    /// The extension applies pin changes in its working-set round (the space folder too);
+    /// replicated providers ignore signals of other containers.
+    private func signalPinsChanged(key: String) async {
+        await content.signal(domain: domain(key: key), containers: [.workingSet])
         refreshOffline(key: key)
     }
 
@@ -269,34 +301,29 @@ final class PinningModel {
 
     // MARK: - Offline fallback
 
-    /// The containers to keep offline: a pinned space's folder, else its pinned folders.
-    static func pinnedContainers(_ account: AccountState) -> [NSFileProviderItemIdentifier] {
-        account.spaces.flatMap { space -> [NSFileProviderItemIdentifier] in
-            if space.wholeSpace { return [SpaceLayout.identifier(for: space.space)] }
-            return space.folders.filter(\.pinned).map { NSFileProviderItemIdentifier($0.id) }
-        }
-    }
-
-    /// Requests downloads for everything below the pins that is not downloaded yet and
-    /// updates the measured sizes. One walk per account at a time; a request during a walk
-    /// runs once more afterwards.
+    /// Walks below the pins: requests every file that is not downloaded yet and updates the
+    /// measured sizes. One walk per account at a time; a request during a walk runs once more
+    /// afterwards.
     func refreshOffline(key: String) {
         guard refreshes[key] == nil else {
             refreshAgain.insert(key)
             return
         }
-        guard let account = account(key: key) else { return }
-        let containers = Self.pinnedContainers(account)
-        guard !containers.isEmpty else { return }
+        guard let containers = account(key: key)?.pinnedContainers, !containers.isEmpty else { return }
         let domain = domain(key: key)
         let content = content
+        refreshing.insert(key)
         refreshes[key] = Task {
             let bytes = await content.ensureDownloaded(domain: domain, containers: containers)
+            guard !Task.isCancelled else { return }
             self.applyMeasurements(bytes, key: key)
             self.refreshes[key] = nil
+            self.refreshing.remove(key)
             if self.refreshAgain.remove(key) != nil { self.refreshOffline(key: key) }
         }
     }
+
+    func isRefreshing(key: String) -> Bool { refreshing.contains(key) }
 
     /// Waits for running walks (tests).
     func waitForRefreshes() async {
@@ -306,13 +333,7 @@ final class PinningModel {
     private func applyMeasurements(_ bytes: [NSFileProviderItemIdentifier: Int64], key: String) {
         guard let a = accounts.firstIndex(where: { $0.key == key }) else { return }
         for s in accounts[a].spaces.indices {
-            let space = accounts[a].spaces[s]
-            if let total = bytes[SpaceLayout.identifier(for: space.space)] { accounts[a].spaces[s].measuredBytes = total }
-            for f in space.folders.indices {
-                if let total = bytes[NSFileProviderItemIdentifier(space.folders[f].id)] {
-                    accounts[a].spaces[s].folders[f].measuredBytes = total
-                }
-            }
+            for (container, total) in bytes { accounts[a].spaces[s].measured[container.rawValue] = total }
         }
     }
 
@@ -320,38 +341,62 @@ final class PinningModel {
 
     /// `pinsChanged` (a pin dropped by the extension, or written elsewhere): re-read the pins.
     func pinsChanged(key16: String) {
-        guard let account = accounts.first(where: { AccountStore.key16(for: $0.key) == key16 }),
+        guard let account = accounts.first(where: { $0.key16 == key16 }),
               let store = store(key: account.key) else { return }
         for space in account.spaces {
             let pins = store.pins(space: space.id)
-            update(key: account.key, space: space.id) { Self.apply(pins, to: &$0) }
+            update(key: account.key, space: space.id) { $0.pins = pins }
         }
     }
 
-    /// `pinnedContentChanged`: new or changed items below a pin were reported to the system.
+    /// `pinnedContentChanged`: new content below a pin was reported to the system. After the
+    /// debounce, exactly the announced ids are requested (an overflowed queue ⇒ one walk).
     func pinnedContentChanged(key16: String) {
-        guard let key = accounts.first(where: { AccountStore.key16(for: $0.key) == key16 })?.key else { return }
-        pendingAnnouncements[key]?.cancel()
+        guard let entry = accountsModel.entries.first(where: { $0.account.key16 == key16 }) else { return }
+        let key = entry.id
+        let downloads = makeDownloads(entry.account)
+        announcements[key]?.cancel()
         let debounce = debounce
-        pendingAnnouncements[key] = Task {
+        let retryDelay = retryDelay
+        let domain = domain(key: key)
+        let content = content
+        announcements[key] = Task {
             try? await Task.sleep(for: debounce)
             guard !Task.isCancelled else { return }
-            self.pendingAnnouncements[key] = nil
-            self.refreshOffline(key: key)
+            let batch: PinnedDownloadQueue.Batch
+            do {
+                batch = try downloads.drain()
+            } catch {
+                Logger.app.error("pinned downloads unreadable: \(String(describing: error), privacy: .public)")
+                batch = PinnedDownloadQueue.Batch(overflow: true)
+            }
+            if batch.overflow { self.refreshOffline(key: key) }
+            if !batch.ids.isEmpty {
+                var failed = await content.requestDownloads(domain: domain, ids: batch.ids)
+                if !failed.isEmpty, !Task.isCancelled {
+                    // The system may not have applied the reported items yet: one retry.
+                    try? await Task.sleep(for: retryDelay)
+                    if !Task.isCancelled { failed = await content.requestDownloads(domain: domain, ids: failed) }
+                    if !failed.isEmpty { Logger.app.error("\(failed.count) pinned downloads could not be requested") }
+                }
+            }
+            if !Task.isCancelled { self.announcements[key] = nil }
         }
     }
 
-    /// Waits for a pending announcement (tests).
+    /// Waits for pending announcements (tests).
     func waitForAnnouncements() async {
-        while let task = pendingAnnouncements.values.first { await task.value }
+        while let task = announcements.values.first {
+            await task.value
+            if announcements.values.first == task { break }
+        }
     }
 
     private func observeSignals() {
         guard !AppDelegate.isRunningTests else { return }
         var wanted: [String: DarwinNotificationObserver] = [:]
         for account in accounts {
-            let key16 = AccountStore.key16(for: account.key)
-            for name in [PinStore.notificationName(key16: key16), PinStore.pinnedContentNotificationName(key16: key16)] {
+            for name in [PinStore.notificationName(key16: account.key16), PinStore.pinnedContentNotificationName(key16: account.key16)] {
                 wanted[name] = observers[name] ?? DarwinNotificationObserver(name: name) { [weak self] name in
                     Task { @MainActor in self?.handle(notification: name) }
                 }
@@ -369,7 +414,8 @@ final class PinningModel {
     }
 }
 
-/// Observes one Darwin notification until released.
+/// Observes one Darwin notification until released. The Darwin center delivers on the main
+/// thread, and observers are released on the main actor only, so no callback can race `deinit`.
 final class DarwinNotificationObserver: @unchecked Sendable {
     let name: String
     private let handler: @Sendable (String) -> Void
@@ -398,9 +444,19 @@ protocol OfflineContentManaging: Sendable {
     /// Lets the extension re-report the containers (new content policy).
     func signal(domain: NSFileProviderDomainIdentifier, containers: [NSFileProviderItemIdentifier]) async
     /// Requests a download of every file below `containers` that is not downloaded yet and
-    /// returns the bytes found below each container.
+    /// returns the bytes found below each container. Stops promptly when cancelled.
     func ensureDownloaded(domain: NSFileProviderDomainIdentifier, containers: [NSFileProviderItemIdentifier]) async
         -> [NSFileProviderItemIdentifier: Int64]
+    /// Requests downloads of these items; returns the ids whose request failed.
+    func requestDownloads(domain: NSFileProviderDomainIdentifier, ids: [String]) async -> [String]
+}
+
+/// Set once; read from the scanning thread.
+final class CancellationFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = false
+    var isSet: Bool { lock.withLock { value } }
+    func set() { lock.withLock { value = true } }
 }
 
 /// Production: `NSFileProviderManager` plus a walk of the folders in `~/Library/CloudStorage`.
@@ -408,7 +464,7 @@ protocol OfflineContentManaging: Sendable {
 /// Walking a dataless folder makes the system enumerate it, so the whole pinned tree becomes
 /// known; each file whose `ubiquitousItemDownloadingStatus` is `.notDownloaded` is requested
 /// with `requestDownloadForItem(withIdentifier:requestedRange:)` (macOS 13+). Already
-/// downloaded files are not touched.
+/// downloaded files are not touched. Cancelling stops the walk within a few entries.
 struct SystemOfflineContent: OfflineContentManaging {
     /// Upper bound of entries per walk (protects against runaway trees).
     static let maxEntries = 200_000
@@ -429,6 +485,21 @@ struct SystemOfflineContent: OfflineContentManaging {
         }
     }
 
+    func requestDownloads(domain: NSFileProviderDomainIdentifier, ids: [String]) async -> [String] {
+        guard let manager = manager(domain) else { return ids }
+        var failed: [String] = []
+        for id in ids {
+            guard !Task.isCancelled else { return [] }
+            do {
+                try await manager.requestDownloadForItem(withIdentifier: NSFileProviderItemIdentifier(id), requestedRange: nil)
+            } catch {
+                failed.append(id)
+            }
+        }
+        Logger.app.info("requested \(ids.count - failed.count) announced pinned downloads")
+        return failed
+    }
+
     func ensureDownloaded(domain: NSFileProviderDomainIdentifier, containers: [NSFileProviderItemIdentifier]) async
         -> [NSFileProviderItemIdentifier: Int64] {
         guard let manager = manager(domain) else { return [:] }
@@ -442,10 +513,17 @@ struct SystemOfflineContent: OfflineContentManaging {
                 Logger.app.info("no folder for \(container.rawValue, privacy: .public): \(String(describing: error), privacy: .public)")
                 continue
             }
-            let scan = await Task.detached(priority: .utility) { Self.scan(url) }.value
+            let flag = CancellationFlag()
+            let scan = await withTaskCancellationHandler {
+                await Task.detached(priority: .utility) { Self.scan(url, isCancelled: { flag.isSet }) }.value
+            } onCancel: {
+                flag.set()
+            }
+            guard !Task.isCancelled else { break }
             result[container] = scan.bytes
             var requested = 0
             for file in scan.missing {
+                guard !Task.isCancelled else { break }
                 do {
                     let (identifier, _) = try await NSFileProviderManager.identifierForUserVisibleFile(at: file)
                     try await manager.requestDownloadForItem(withIdentifier: identifier, requestedRange: nil)
@@ -461,8 +539,9 @@ struct SystemOfflineContent: OfflineContentManaging {
         return result
     }
 
-    /// Logical size of all files below `url` and the files that are not downloaded.
-    static func scan(_ url: URL) -> (bytes: Int64, missing: [URL]) {
+    /// Logical size of all files below `url` and the files that are not downloaded; stops
+    /// (with what it has) when `isCancelled` turns true.
+    static func scan(_ url: URL, isCancelled: () -> Bool = { false }) -> (bytes: Int64, missing: [URL]) {
         let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey, .ubiquitousItemDownloadingStatusKey]
         guard let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: keys,
                                                               options: [.skipsPackageDescendants]) else { return (0, []) }
@@ -470,6 +549,7 @@ struct SystemOfflineContent: OfflineContentManaging {
         var missing: [URL] = []
         var count = 0
         for case let file as URL in enumerator {
+            if isCancelled() { break }
             count += 1
             if count > maxEntries {
                 Logger.app.error("offline walk stopped after \(maxEntries) entries")

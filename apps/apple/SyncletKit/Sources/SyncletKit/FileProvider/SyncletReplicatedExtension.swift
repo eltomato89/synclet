@@ -46,18 +46,15 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
         }
 
         /// `item` with its content policy (``PinPolicy``). A failed ancestor lookup leaves
-        /// `.inherited`: the next enumeration corrects it, and the operation itself succeeds.
+        /// `.inherited` and is queued for a retry; the operation itself succeeds.
         func withPolicy(_ item: FileProviderItem) async -> FileProviderItem {
             guard let pinning else { return item }
             let resolver = pinning.resolver(layout: layout, client: client)
             if let space = item.space { return item.withContentPolicy(resolver.spacePolicy(space)) }
             guard let syncItem = item.syncItem else { return item }
-            do {
-                return try await resolver.item(syncItem)
-            } catch {
-                Log.pinning.error("content policy of \(syncItem.id, privacy: .public) unknown: \(String(describing: error), privacy: .public)")
-                return item
-            }
+            guard let resolved = try? await resolver.items([syncItem]), let first = resolved.items.first else { return item }
+            FileProviderEnumerator.finishPinning(pinning, announce: resolved.announce, workingSet: false)
+            return first
         }
     }
 

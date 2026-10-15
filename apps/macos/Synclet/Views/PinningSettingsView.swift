@@ -2,7 +2,7 @@ import SwiftUI
 import SyncletKit
 
 /// Tab "Offline": per account and space a "whole space" switch and one switch per
-/// first-level folder; the footer shows what is stored offline.
+/// first-level folder; the footer shows the size of the pinned content.
 struct PinningSettingsView: View {
     let model: PinningModel
 
@@ -27,11 +27,13 @@ struct PinningSettingsView: View {
                             SpacePinsSection(model: model, account: account, space: space)
                         }
                         Section {
-                            LabeledContent("Stored offline") {
+                            LabeledContent("Pinned content") {
                                 if let bytes = account.offlineBytes {
                                     Text(verbatim: "≈ \(bytes.formatted(.byteCount(style: .file)))")
-                                } else {
+                                } else if model.isRefreshing(key: account.key) {
                                     Text("Calculating…")
+                                } else {
+                                    Text(verbatim: "–")
                                 }
                             }
                         }
@@ -69,13 +71,13 @@ private struct SpacePinsSection: View {
             }
             ForEach(space.folders) { folder in
                 Toggle(isOn: Binding(
-                    get: { space.wholeSpace || folder.pinned },
+                    get: { space.wholeSpace || space.isPinned(folder.id) },
                     set: { on in Task { await model.setFolder(folder.id, pinned: on, key: account.key, space: space.id) } }
                 )) {
                     HStack {
                         Label(folder.name, systemImage: "folder")
                         Spacer()
-                        if let size = folder.sizeHint {
+                        if let size = space.sizeHint(folder.id) {
                             Text(verbatim: "≈ \(size.formatted(.byteCount(style: .file)))")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
