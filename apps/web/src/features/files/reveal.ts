@@ -25,10 +25,14 @@ export function useRevealParam(items: SyncItem[] | undefined, settled: boolean, 
   const id = params.get(PREVIEW_PARAM);
   const cb = useRef(onReveal);
   cb.current = onReveal;
+  /** The id already handled: the effect may run again before the removed parameter commits. */
+  const handled = useRef<string | null>(null);
   useEffect(() => {
-    if (!id || !items) return;
+    if (!id) { handled.current = null; return; }
+    if (!items || handled.current === id) return;
     const item = items.find((i) => i.id === id);
     if (!item && !settled) return; // a stale cached listing may not have it yet
+    handled.current = id;
     setParams((p) => { const next = new URLSearchParams(p); next.delete(PREVIEW_PARAM); return next; }, { replace: true });
     if (item) cb.current(item);
   }, [id, items, settled, setParams]);

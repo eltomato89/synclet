@@ -160,7 +160,8 @@
       "unauthorized": "Your session has expired. Sign in again.",
       "network": "No connection to the server.",
       "server_error": "The server sent an unexpected response.",
-      "unknown": "That didn't work. Try again."
+      "unknown": "That didn't work. Try again.",
+      "upload_expired": "The interrupted upload has expired. Upload the file again."
     },
     "uploads": {
       "region": "Uploads",

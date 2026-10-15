@@ -11,6 +11,7 @@ import { FileIcon, fileKind, kindStyle } from '@/features/files/FileIcon';
 import { errorKey } from '@/features/files/errors';
 import { ROOT_ID } from '@/features/files/queries';
 import { revealUrl } from '@/features/files/reveal';
+import { Thumbnail } from '@/features/preview/Thumbnail';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
@@ -166,6 +167,8 @@ function PaletteBody({ scope, userId, close }: { scope: PaletteScope | null; use
       case 'Enter': {
         const o = options[active];
         if (!o) return;
+        // The list still shows the previous query's (or scope's) hits: wait for the new ones.
+        if (o.kind === 'hit' && search.stale) { e.preventDefault(); return; }
         choose(o);
         break;
       }
@@ -183,7 +186,10 @@ function PaletteBody({ scope, userId, close }: { scope: PaletteScope | null; use
   };
 
   let body: ReactNode;
+  /** Whether `body` is options (inside the listbox) or a notice (outside it). */
+  let isList = false;
   if (!typed) {
+    isList = recents.length > 0;
     body = recents.length > 0 ? (
       <Group label={t('search.recentSearches')} id={`${baseId}-recent`}>
         {options.map((o, i) => renderOption(o, i))}
@@ -212,6 +218,7 @@ function PaletteBody({ scope, userId, close }: { scope: PaletteScope | null; use
       </Notice>
     );
   } else {
+    isList = true;
     body = (
       <>
         {groups.names.length > 0 && (
@@ -243,7 +250,7 @@ function PaletteBody({ scope, userId, close }: { scope: PaletteScope | null; use
           autoFocus
           role="combobox"
           aria-expanded={options.length > 0}
-          aria-controls={listboxId}
+          aria-controls={isList ? listboxId : undefined}
           aria-autocomplete="list"
           aria-activedescendant={activeId}
           aria-label={t('search.title')}
@@ -277,8 +284,8 @@ function PaletteBody({ scope, userId, close }: { scope: PaletteScope | null; use
           </ScopeChip>
         </div>
       )}
-      <div id={listboxId} role="listbox" aria-label={t('search.results')} className="min-h-0 flex-1 overflow-y-auto overscroll-contain border-t p-1.5">
-        {body}
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain border-t p-1.5">
+        {isList ? <div id={listboxId} role="listbox" aria-label={t('search.results')}>{body}</div> : body}
       </div>
       <footer className={cn('flex shrink-0 items-center gap-4 border-t bg-muted/40 px-4 py-2 text-xs text-muted-foreground', !footerExtras && 'max-sm:hidden')}>
         <span className="flex items-center gap-1.5 max-sm:hidden"><Kbd>↑</Kbd><Kbd>↓</Kbd>{t('search.hintMove')}</span>
@@ -369,8 +376,14 @@ function HitRow({ hit, query }: { hit: SearchHit; query: string }) {
   const kind = fileKind(item);
   return (
     <>
-      <span style={kindStyle(kind)} className="flex size-8 shrink-0 items-center justify-center rounded-md bg-(--ft)/10">
-        <FileIcon item={item} className="size-4.5" />
+      <span style={kindStyle(kind)} className="shrink-0">
+        <Thumbnail
+          item={item}
+          className="flex size-8 items-center justify-center overflow-hidden rounded-md bg-(--ft)/10 data-[thumb=loaded]:ring-1 data-[thumb=loaded]:ring-foreground/10"
+          imgClassName="object-cover"
+        >
+          <FileIcon item={item} className="size-4.5" />
+        </Thumbnail>
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium text-foreground" title={item.name}>
@@ -396,7 +409,7 @@ function HitRow({ hit, query }: { hit: SearchHit; query: string }) {
 
 function Notice({ title, body, children }: { title: string; body: string; children?: ReactNode }) {
   return (
-    <div className="px-4 py-10 text-center" role="presentation">
+    <div className="px-4 py-10 text-center" role="status">
       <p className="text-base font-medium text-foreground">{title}</p>
       <p className="mx-auto mt-1 max-w-[42ch] text-sm text-muted-foreground">{body}</p>
       {children && <div className="mt-3">{children}</div>}

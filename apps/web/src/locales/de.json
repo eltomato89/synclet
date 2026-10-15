@@ -160,7 +160,8 @@
       "unauthorized": "Deine Sitzung ist abgelaufen. Melde dich erneut an.",
       "server_error": "Der Server hat unerwartet geantwortet.",
       "network": "Keine Verbindung zum Server.",
-      "unknown": "Das hat nicht geklappt. Versuch es noch einmal."
+      "unknown": "Das hat nicht geklappt. Versuch es noch einmal.",
+      "upload_expired": "Der unterbrochene Upload ist abgelaufen. Lade die Datei noch einmal hoch."
     },
     "uploads": {
       "region": "Uploads",

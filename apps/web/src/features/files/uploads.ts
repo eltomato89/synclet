@@ -16,7 +16,7 @@ export interface UploadTask {
 }
 
 const MAX_PARALLEL = 3;
-const STATUS_CODES: Record<number, string> = { 401: 'unauthorized', 403: 'forbidden', 404: 'not_found', 409: 'name_conflict', 412: 'conflict', 413: 'too_large' };
+const STATUS_CODES: Record<number, string> = { 401: 'unauthorized', 403: 'forbidden', 404: 'not_found', 409: 'name_conflict', 410: 'upload_expired', 412: 'conflict', 413: 'too_large' };
 
 export const TUS_ENDPOINT = '/api/sync/v1/uploads';
 export const TUS_CHUNK_SIZE = 16 * 1024 * 1024;
@@ -69,6 +69,35 @@ export function itemFromResponse(res: ResponseLike | null | undefined): SyncItem
     const item = JSON.parse(res.getBody()) as SyncItem | null;
     return item && item.id === id ? item : null;
   } catch { return null; }
+}
+
+/** Refresh the access token before a request when it expires within this window. */
+export const TOKEN_REFRESH_MARGIN_MS = 30_000;
+
+/** `exp` of a JWT in ms (payload decoded, not verified); null when unreadable. */
+export function tokenExpiry(token: string | null): number | null {
+  const part = token?.split('.')[1];
+  if (!part) return null;
+  try {
+    const json = atob(part.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(part.length / 4) * 4, '='));
+    const exp = (JSON.parse(json) as { exp?: unknown }).exp;
+    return typeof exp === 'number' ? exp * 1000 : null;
+  } catch { return null; }
+}
+
+/**
+ * Forgets every stored tus upload (fingerprint → upload URL, file name). Called on logout: on a
+ * shared machine the next user must not see the previous user's file names in localStorage.
+ */
+export function clearUploadFingerprints(): void {
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k?.startsWith('tus::')) keys.push(k);
+    }
+    keys.forEach((k) => localStorage.removeItem(k));
+  } catch { /* storage unavailable */ }
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => { setTimeout(r, ms); });
@@ -149,6 +178,22 @@ export class UploadQueue {
     this.onDone(t.parentId);
   }
 
+  /**
+   * The access token for the next request, refreshed first when it expires within
+   * {@link TOKEN_REFRESH_MARGIN_MS}. A tus HEAD answered 401 makes tus-js-client drop the stored
+   * upload and start over from byte 0, so an expired token must never reach the server.
+   * `refreshSession` is single-flight; a failed refresh sends the old token (the 401 path decides).
+   */
+  private async freshToken(): Promise<string | null> {
+    const tok = this.token();
+    const exp = tokenExpiry(tok);
+    if (this.refresh && exp !== null && exp - Date.now() < TOKEN_REFRESH_MARGIN_MS) {
+      await this.refresh().catch(() => false);
+      return this.token();
+    }
+    return tok;
+  }
+
   /** False once the task was cancelled (removed from the queue). */
   private alive(t: UploadTask) { return this.tasks.includes(t); }
 
@@ -186,7 +231,7 @@ export class UploadQueue {
       // Read the token per request, so a long upload picks up refreshed tokens.
       onBeforeRequest: async (req) => {
         if (refreshing) await refreshing;
-        const tok = this.token();
+        const tok = await this.freshToken();
         if (tok) req.setHeader('Authorization', `Bearer ${tok}`);
       },
       onAfterResponse: (_req, res) => { if (res.getStatus() !== 401) refreshedSinceLast401 = false; },
@@ -263,7 +308,7 @@ export class UploadQueue {
       if (!this.alive(t)) return 'cancelled';
       let res: Response;
       try {
-        const tok = this.token();
+        const tok = await this.freshToken();
         res = await fetch(url, {
           method: 'PATCH',
           credentials: 'include',

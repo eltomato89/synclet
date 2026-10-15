@@ -98,6 +98,15 @@ describe('CommandPalette', () => {
     expect(readRecentSearches('u1')).toEqual(['rechnung']);
   });
 
+  it('ignores Enter while the shown hits belong to the previous query', async () => {
+    const { input } = setup();
+    fireEvent.change(input, { target: { value: 'rechnung' } });
+    await screen.findByRole('group', { name: 'Names' });
+    fireEvent.change(input, { target: { value: 'rechnung 2' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.getByTestId('location')).toHaveTextContent(/^\/files$/);
+  });
+
   it('Enter on a folder opens the folder', async () => {
     const { input } = setup();
     fireEvent.change(input, { target: { value: 'rechnung' } });
@@ -126,7 +135,9 @@ describe('CommandPalette', () => {
       return { hits: [], total: 0 };
     });
     fireEvent.change(input, { target: { value: 'zzz' } });
-    expect(await screen.findByText('Nothing found for “zzz”')).toBeInTheDocument();
+    const notice = await screen.findByText('Nothing found for “zzz”');
+    expect(notice.closest('[role="listbox"]')).toBeNull(); // notices are not options
+    expect(input).not.toHaveAttribute('aria-controls');
     fail = true;
     fireEvent.change(input, { target: { value: 'yyy' } });
     expect(await screen.findByText('Search didn’t work')).toBeInTheDocument();

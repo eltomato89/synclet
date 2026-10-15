@@ -79,6 +79,7 @@ export function FilesPage() {
         pending.clear();
         void qc.invalidateQueries({ queryKey: ['account'] });
         void qc.invalidateQueries({ queryKey: ['recent'] });
+        void qc.invalidateQueries({ queryKey: ['search'] });
       }, 250);
     });
   });
@@ -157,8 +158,11 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
     const el = id ? itemEl(id) : null;
     if (el) { focusAfterRender.current = null; el.focus({ preventScroll: true }); el.scrollIntoView({ block: 'nearest' }); }
   });
-  // `?preview=<id>` (search results, recent files): select and focus that item.
-  useRevealParam(folderQ.data ? items : undefined, !folderQ.isFetching, (item) => focusItem(item.id));
+  // `?preview=<id>` (search results, recent files): select that item and preview it if possible.
+  useRevealParam(folderQ.data ? items : undefined, !folderQ.isFetching, (item) => {
+    focusItem(item.id);
+    if (isPreviewable(item)) preview(item);
+  });
   /** After a dialog closes, focus goes back to the selection so the keyboard keeps working. */
   const restoreFocus = () => {
     const sel = selectedRef.current;

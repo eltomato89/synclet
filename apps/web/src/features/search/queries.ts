@@ -36,8 +36,15 @@ export function useSearch(query: string, folderId: string | null) {
     staleTime: 15_000,
     retry: false,
   });
-  /** The query the shown data belongs to (lags behind while typing). */
-  return { ...result, settledQuery: q, pending: q !== query.trim().slice(0, MAX_QUERY_LENGTH) || result.isFetching };
+  const current = query.trim().slice(0, MAX_QUERY_LENGTH);
+  return {
+    ...result,
+    /** The query the shown data belongs to (lags behind while typing). */
+    settledQuery: q,
+    pending: q !== current || result.isFetching,
+    /** The shown hits belong to another query or scope (debounce running, or placeholder data). */
+    stale: q !== current || result.isPlaceholderData,
+  };
 }
 
 export interface HitGroups { names: SearchHit[]; contents: SearchHit[] }

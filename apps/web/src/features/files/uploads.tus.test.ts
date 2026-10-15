@@ -1,7 +1,9 @@
 import type { SyncItem } from '@synclet/shared';
 import type { DetailedError, HttpRequest, HttpResponse, PreviousUpload, UploadOptions } from 'tus-js-client';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { itemFromResponse, TUS_CHUNK_SIZE, TUS_ENDPOINT, TUS_RETRY_DELAYS, type UploadTransport, UploadQueue } from './uploads';
+import {
+  clearUploadFingerprints, itemFromResponse, tokenExpiry, TUS_CHUNK_SIZE, TUS_ENDPOINT, TUS_RETRY_DELAYS, type UploadTransport, UploadQueue,
+} from './uploads';
 
 const item = (id = 'f_1', name = 'a.txt') => ({ id, name }) as SyncItem;
 
@@ -15,11 +17,11 @@ function response(status: number, body = '', headers: Record<string, string> = {
 }
 const itemResponse = (it: SyncItem, status = 200) => response(status, JSON.stringify(it), { 'X-Synclet-Item': it.id });
 
-function request(): HttpRequest & { headers: Record<string, string> } {
+function request(method = 'PATCH'): HttpRequest & { headers: Record<string, string> } {
   const headers: Record<string, string> = {};
   return {
     headers,
-    getMethod: () => 'PATCH', getURL: () => '', setHeader: (k, v) => { headers[k] = v; }, getHeader: (k) => headers[k],
+    getMethod: () => method, getURL: () => '', setHeader: (k, v) => { headers[k] = v; }, getHeader: (k) => headers[k],
     setProgressHandler: () => {}, send: () => Promise.reject(new Error('unused')), abort: () => Promise.resolve(), getUnderlyingObject: () => null,
   };
 }
@@ -232,6 +234,71 @@ describe('UploadQueue over tus', () => {
       for (let i = 0; i < 4; i++) await flush();
       expect(q.snapshot()[0]).toMatchObject({ status: 'error', error: 'not_found' });
     });
+  });
+});
+
+/** An unsigned JWT whose `exp` is `inMs` from now. */
+const jwt = (inMs: number, tag = 'x') => {
+  const b64 = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+  return `${b64({ alg: 'HS256' })}.${b64({ sub: tag, exp: Math.floor((Date.now() + inMs) / 1000) })}.sig`;
+};
+
+describe('token refresh before requests', () => {
+  it('reads exp from a JWT payload', () => {
+    const tok = jwt(60_000);
+    expect(tokenExpiry(tok)).toBeGreaterThan(Date.now() + 50_000);
+    expect(tokenExpiry('garbage')).toBeNull();
+    expect(tokenExpiry(null)).toBeNull();
+  });
+
+  it('a resumed HEAD with an (almost) expired token refreshes first and carries the new token', async () => {
+    let tok = jwt(10_000, 'old');
+    const order: string[] = [];
+    const refresh = vi.fn(async () => { order.push('refresh'); tok = jwt(15 * 60_000, 'new'); return true; });
+    const { q } = setup(refresh, () => tok);
+    FakeUpload.previous = [{ size: 4, metadata: {}, creationTime: '2024-01-03T00:00:00Z', urlStorageKey: 'k', uploadUrl: 'http://localhost/api/sync/v1/uploads/u1', parallelUploadUrls: null }];
+    q.enqueue([file()], 'd_1');
+    await flush();
+    const [u] = FakeUpload.instances;
+    expect(u.resumedFrom?.uploadUrl).toBe('http://localhost/api/sync/v1/uploads/u1');
+    // Two requests at once (e.g. HEAD after a retry and a racing one) share one refresh.
+    const head = request('HEAD');
+    const other = request('HEAD');
+    await Promise.all([u.options.onBeforeRequest!(head), u.options.onBeforeRequest!(other)].map((p) => Promise.resolve(p).then(() => order.push('sent'))));
+    expect(order[0]).toBe('refresh');
+    expect(head.headers.Authorization).toBe(`Bearer ${tok}`);
+    expect(tokenExpiry(head.headers.Authorization.slice(7))! - Date.now()).toBeGreaterThan(60_000);
+    // The upload carries on from the stored URL: no new tus upload was created.
+    expect(FakeUpload.instances).toHaveLength(1);
+  });
+
+  it('does not refresh while the token is fresh', async () => {
+    const refresh = vi.fn(async () => true);
+    const tok = jwt(10 * 60_000);
+    const { q } = setup(refresh, () => tok);
+    const [u] = await started(q, [file()]);
+    const r = request('HEAD');
+    await u.options.onBeforeRequest!(r);
+    expect(refresh).not.toHaveBeenCalled();
+    expect(r.headers.Authorization).toBe(`Bearer ${tok}`);
+  });
+});
+
+describe('410 and logout', () => {
+  it('maps 410 to upload_expired', async () => {
+    const { q } = setup();
+    const [u] = await started(q, [file()]);
+    u.options.onError!(httpError(410, 'The file for this url no longer exists\n'));
+    await flush();
+    expect(q.snapshot()[0]).toMatchObject({ status: 'error', error: 'upload_expired' });
+  });
+
+  it('clearUploadFingerprints removes only tus entries', () => {
+    localStorage.setItem('tus::synclet|root|a.txt::1', '{}');
+    localStorage.setItem('tus::synclet|d_1|b.txt::2', '{}');
+    localStorage.setItem('synclet.files.view', '"list"');
+    clearUploadFingerprints();
+    expect(Object.keys(localStorage)).toEqual(['synclet.files.view']);
   });
 });
 
