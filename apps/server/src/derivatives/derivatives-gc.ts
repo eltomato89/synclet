@@ -1,0 +1,69 @@
+import { Injectable } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { DerivedStore } from './derived-store';
+
+const BATCH = 500;
+
+/**
+ * Garbage collection of derivatives (maintenance). A content hash stays live while a live item,
+ * a tombstoned item (it may still be paired with a move), a trash manifest entry or an unfinished
+ * job references it.
+ *
+ * Live items are looked up per batch through the partial index `Item_contentHash_idx`
+ * (`WHERE "deletedAt" IS NULL`); tombstones and manifest hashes – small sets – are loaded once
+ * per run.
+ */
+@Injectable()
+export class DerivativesGc {
+  constructor(private readonly prisma: PrismaService, private readonly store: DerivedStore) {}
+
+  /** Hashes referenced by tombstones and trash manifests (old-format manifests carry none). */
+  private async offlineShas(): Promise<Set<string>> {
+    const rows = await this.prisma.$queryRaw<{ sha: string }[]>`
+      SELECT "contentHash" AS sha FROM "Item" WHERE "deletedAt" IS NOT NULL AND "contentHash" IS NOT NULL
+      UNION
+      SELECT e->>'contentHash' AS sha
+      FROM "TrashEntry" t
+      CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(t.manifest) = 'array' THEN t.manifest ELSE '[]'::jsonb END) e
+      WHERE jsonb_typeof(e) = 'object' AND e->>'contentHash' IS NOT NULL`;
+    return new Set(rows.map((r) => r.sha));
+  }
+
+  /** The subset of `batch` that is still referenced (`offline` from offlineShas()). */
+  async liveShas(batch: string[], offline?: Set<string>): Promise<Set<string>> {
+    if (!batch.length) return new Set();
+    const off = offline ?? (await this.offlineShas());
+    const rows = await this.prisma.$queryRaw<{ sha: string }[]>`
+      SELECT DISTINCT "contentHash" AS sha FROM "Item" WHERE "deletedAt" IS NULL AND "contentHash" = ANY(${batch}::text[])
+      UNION
+      SELECT sha FROM "DerivativeJob" WHERE sha = ANY(${batch}::text[]) AND status IN ('pending', 'running')`;
+    const live = new Set(rows.map((r) => r.sha));
+    for (const s of batch) if (off.has(s)) live.add(s);
+    return live;
+  }
+
+  /** Removes finished job rows of dead hashes, unreferenced derivative dirs and stale temp files. */
+  async run(): Promise<{ dirs: number; jobs: number }> {
+    const offline = await this.offlineShas();
+    // Job rows first: a finished row for a dead hash would otherwise claim `thumbnail: true`
+    // (and block re-enqueueing) if the same content is uploaded again after its files are gone.
+    let jobs = 0;
+    let after = '';
+    for (;;) {
+      const rows = await this.prisma.derivativeJob.findMany({
+        where: { sha: { gt: after }, status: { notIn: ['pending', 'running'] } },
+        select: { sha: true }, distinct: ['sha'], orderBy: { sha: 'asc' }, take: BATCH,
+      });
+      if (!rows.length) break;
+      const shas = rows.map((r) => r.sha);
+      after = shas[shas.length - 1];
+      const live = await this.liveShas(shas, offline);
+      const dead = shas.filter((s) => !live.has(s));
+      if (dead.length) {
+        jobs += (await this.prisma.derivativeJob.deleteMany({ where: { sha: { in: dead }, status: { notIn: ['pending', 'running'] } } })).count;
+      }
+    }
+    const dirs = await this.store.gc((batch) => this.liveShas(batch, offline), BATCH);
+    return { dirs, jobs };
+  }
+}

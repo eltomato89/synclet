@@ -4,6 +4,7 @@ import path from 'node:path';
 import { APP_CONFIG, AppConfig } from '../config';
 import { AppEvents } from '../common/events';
 import { isTempName } from '../common/names';
+import { DerivativesGc } from '../derivatives/derivatives-gc';
 import { userRoot } from '../common/paths';
 import type { IndexUser } from '../common/types';
 import { FilesService } from '../files/files.service';
@@ -34,6 +35,7 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     private readonly files: FilesService,
     private readonly trash: TrashService,
     private readonly uploads: TusService,
+    private readonly derivativesGc: DerivativesGc,
     events: AppEvents,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {
@@ -134,5 +136,8 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     // Abandoned resumable uploads (tus parts in /meta/uploads older than 24 h).
     const expired = await this.uploads.expire().catch((e) => { this.log.warn(`upload expiry failed: ${(e as Error).message}`); return 0; });
     if (expired) this.log.log(`removed ${expired} abandoned upload(s)`);
+    // Last: tombstones purged above no longer keep their derivatives alive.
+    const gc = await this.derivativesGc.run();
+    if (gc.dirs || gc.jobs) this.log.log(`derivatives gc: ${gc.dirs} dirs, ${gc.jobs} job rows removed`);
   }
 }

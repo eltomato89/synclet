@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="120" height="80" onload="alert('onload')">
+  <script type="text/javascript">alert('xss');document.cookie;</script>
+  <rect width="120" height="80" fill="#3366cc"/>
+  <image xlink:href="file:///etc/passwd" width="10" height="10"/>
+  <a xlink:href="javascript:alert(1)"><circle cx="60" cy="40" r="20" fill="#ffcc00"/></a>
+</svg>
