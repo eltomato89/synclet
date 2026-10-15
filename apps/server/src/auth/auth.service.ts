@@ -6,6 +6,7 @@ import * as argon2 from 'argon2';
 import { APP_CONFIG, AppConfig } from '../config';
 import { SyncError } from '../common/sync-error';
 import { PrismaService } from '../prisma/prisma.service';
+import { SsoSettingsService } from '../sso/sso-settings.service';
 import { hashToken, randomToken } from './crypto';
 import { ServerConfigService } from './server-config.service';
 import { UsersService } from './users.service';
@@ -34,6 +35,7 @@ export class AuthService {
     private readonly jwt: JwtService,
     private readonly serverConfig: ServerConfigService,
     private readonly users: UsersService,
+    private readonly sso: SsoSettingsService,
     @Inject(APP_CONFIG) readonly config: AppConfig,
   ) {}
 
@@ -67,6 +69,12 @@ export class AuthService {
     return { access: { accessToken: await this.signAccess(u), user: this.users.toPublic(u) }, refreshToken };
   }
 
+  /** Session for a completed login (password, OIDC, forward-auth, setup): records `lastLoginAt`, then `issue()`. */
+  async issueLogin(u: User, userAgent?: string): Promise<{ access: AuthResponse; refreshToken: string }> {
+    await this.prisma.user.update({ where: { id: u.id }, data: { lastLoginAt: new Date() } });
+    return this.issue(u, userAgent);
+  }
+
   async login(login: string, password: string, userAgent?: string) {
     const key = login.trim().toLowerCase();
     const user = await this.prisma.user.findFirst({
@@ -77,7 +85,9 @@ export class AuthService {
     // Always run one argon2 verification so unknown/disabled users are not distinguishable by timing.
     const valid = await argon2.verify(hash ?? (await dummyHash()), password).catch(() => false);
     if (!user || !hash || !valid) throw new SyncError('unauthorized', 'invalid credentials');
-    return this.issue(user, userAgent);
+    // Checked only after a valid password, so the rule does not reveal which accounts exist or are admins.
+    if (!(await this.sso.isPasswordLoginAllowed(user))) throw new SyncError('password_login_disabled', 'password login is disabled, use single sign-on');
+    return this.issueLogin(user, userAgent);
   }
 
   async refresh(raw: string | undefined, userAgent?: string) {

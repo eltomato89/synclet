@@ -38,8 +38,24 @@ export class UsersService {
 
   async create(input: CreateUserInput): Promise<User> {
     this.validateUsername(input.username);
-    await this.ensureUserRoot(input.username); // before the DB write: a failure must not leave a user without a folder
     const passwordHash = await argon2.hash(input.password, { type: argon2.argon2id });
+    return this.insert(input, { provider: 'local', subject: input.username.toLowerCase(), passwordHash });
+  }
+
+  /**
+   * Creates a user that logs in through an external identity (SSO provisioning): user row, sync
+   * scope, folder and the given identity, but no local password identity.
+   */
+  async createExternal(input: Omit<CreateUserInput, 'password'>, identity: { provider: string; subject: string }): Promise<User> {
+    this.validateUsername(input.username);
+    return this.insert(input, { provider: identity.provider, subject: identity.subject, passwordHash: null });
+  }
+
+  private async insert(
+    input: Omit<CreateUserInput, 'password'>,
+    identity: { provider: string; subject: string; passwordHash: string | null },
+  ): Promise<User> {
+    await this.ensureUserRoot(input.username); // before the DB write: a failure must not leave a user without a folder
     const user = await this.prisma.$transaction(async (tx) => {
       const exists = await tx.user.findFirst({
         where: { OR: [{ username: { equals: input.username, mode: 'insensitive' } }, ...(input.email ? [{ email: input.email.toLowerCase() }] : [])] },
@@ -48,7 +64,7 @@ export class UsersService {
       const created = await tx.user.create({
         data: { username: input.username, displayName: input.displayName, email: input.email?.toLowerCase() ?? null, role: input.role },
       });
-      await tx.identity.create({ data: { userId: created.id, provider: 'local', subject: input.username.toLowerCase(), passwordHash } });
+      await tx.identity.create({ data: { userId: created.id, ...identity } });
       await tx.syncScope.create({ data: { userId: created.id } });
       return created;
     });

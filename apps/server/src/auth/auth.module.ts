@@ -9,11 +9,12 @@ import { RateLimits } from './rate-limit';
 import { ServerConfigService } from './server-config.service';
 import { SetupController } from './setup.controller';
 import { UsersService } from './users.service';
+import { SsoSettingsService } from '../sso/sso-settings.service';
 
 @Module({
   imports: [JwtModule.register({})],
   controllers: [SetupController, AuthController, AdminUsersController],
-  providers: [RateLimits, AuthGuard, AuthService, DevicesService, ServerConfigService, UsersService],
-  exports: [RateLimits, AuthGuard, AuthService, DevicesService, ServerConfigService, UsersService],
+  providers: [RateLimits, AuthGuard, AuthService, DevicesService, ServerConfigService, UsersService, SsoSettingsService],
+  exports: [RateLimits, AuthGuard, AuthService, DevicesService, ServerConfigService, UsersService, SsoSettingsService],
 })
 export class AuthModule {}

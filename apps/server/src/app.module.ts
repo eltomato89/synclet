@@ -11,6 +11,7 @@ import { SharesModule } from './shares/shares.module';
 import { TrashModule } from './trash/trash.module';
 import { UploadsModule } from './uploads/uploads.module';
 import { SearchModule } from './search/search.module';
+import { SsoModule } from './sso/sso.module';
 import { HealthController } from './health.controller';
 
 @Module({})
@@ -18,7 +19,7 @@ export class AppModule {
   static forRoot(config: AppConfig): DynamicModule {
     return {
       module: AppModule,
-      imports: [CoreModule.forRoot(config), PrismaModule, AuthModule, JournalModule, IndexerModule, FilesModule, SyncModule, TrashModule, UploadsModule, SharesModule, SearchModule],
+      imports: [CoreModule.forRoot(config), PrismaModule, AuthModule, JournalModule, IndexerModule, FilesModule, SyncModule, TrashModule, UploadsModule, SharesModule, SearchModule, SsoModule],
       controllers: [HealthController],
     };
   }
