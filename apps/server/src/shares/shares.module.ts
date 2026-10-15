@@ -15,5 +15,6 @@ import { SharesService } from './shares.service';
   providers: [
     SharesService, ShareAuth, ShareRateLimits, ShareQuotas,
   ],
+  exports: [SharesService],
 })
 export class SharesModule {}
