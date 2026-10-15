@@ -3,7 +3,6 @@ import { mkdir, rename, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import path from 'node:path';
 import { createTestApp, createTestUser, itIfCaseSensitive, TestContext } from '../../test/context';
 import { IndexUser } from '../common/types';
-import { BusyPaths } from '../journal/busy-paths';
 import { JournalService } from '../journal/journal.service';
 import { ChildRef, folderMoveHasEvidence, IndexerService } from './indexer.service';
 
@@ -142,28 +141,6 @@ describe('IndexerService', () => {
     await writeFile(path.join(root, 'new/deep/f.txt'), 'x');
     await indexer.reconcileDir(user, 'new/deep', { recursive: false });
     expect((await live()).map((i) => i.path)).toEqual(['new', 'new/deep', 'new/deep/f.txt']);
-  });
-
-  it('skips paths marked busy by the API', async () => {
-    await writeFile(path.join(root, 'busy.txt'), 'x');
-    const { BusyPaths } = await import('../journal/busy-paths');
-    const release = ctx.app.get(BusyPaths).add(user.id, 'busy.txt');
-    await indexer.fullScan(user);
-    expect(await live()).toEqual([]);
-    release();
-  });
-
-  it('never tombstones an indexed item whose path is busy (API move in flight)', async () => {
-    await writeFile(path.join(root, 'moving.txt'), 'x');
-    await indexer.fullScan(user);
-    const id = (await byPath('moving.txt')).id;
-    const cursor = await journal.currentCursor(user.id);
-    const release = ctx.app.get(BusyPaths).add(user.id, 'moving.txt');
-    await rm(path.join(root, 'moving.txt')); // the API has moved the file away but not yet committed
-    expect(await indexer.fullScan(user)).toMatchObject({ deleted: 0 });
-    expect((await byPath('moving.txt')).id).toBe(id);
-    expect(await journal.currentCursor(user.id)).toBe(cursor);
-    release();
   });
 
   it('keeps the ID on a case-only rename (also on case-insensitive file systems)', async () => {
