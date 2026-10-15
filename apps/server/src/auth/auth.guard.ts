@@ -26,6 +26,15 @@ export class AuthGuard implements CanActivate {
     return true;
   }
 
+  /**
+   * Authenticates a request outside the Nest pipeline (raw Fastify routes such as tus):
+   * Bearer JWT or `syd_` device token only. Throws a SyncError when unauthenticated.
+   */
+  resolveFromHeaders(req: { headers: Record<string, string | string[] | undefined> }): Promise<AuthUser> {
+    const authorization = req.headers.authorization;
+    return this.resolve({ headers: { authorization: Array.isArray(authorization) ? authorization[0] : authorization } }, false);
+  }
+
   private async resolve(req: { headers: Record<string, string | undefined>; query?: Record<string, string>; params?: Record<string, string> }, allowDt: boolean): Promise<AuthUser> {
     const header = req.headers.authorization ?? '';
     const bearer = header.startsWith('Bearer ') ? header.slice(7).trim() : '';

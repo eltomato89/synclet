@@ -139,11 +139,19 @@ export async function moveAcrossFs(src: string, dst: string): Promise<void> {
   await copyThenRemove(src, dst);
 }
 
+/**
+ * Copies a file or folder tree to the new path `dst` (refuses an existing `dst`), keeping
+ * timestamps and symlinks verbatim. The caller owns `dst` and removes it on failure.
+ */
+export async function copyTree(src: string, dst: string): Promise<void> {
+  await cp(src, dst, { recursive: true, preserveTimestamps: true, errorOnExist: true, force: false, verbatimSymlinks: true });
+}
+
 /** The cross-device half of `moveAcrossFs` (exported for tests): copy to an ignored temp, publish no-replace, remove `src`. */
 export async function copyThenRemove(src: string, dst: string): Promise<void> {
   const partial = path.join(path.dirname(dst), tempName(randomBytes(8).toString('hex')));
   try {
-    await cp(src, partial, { recursive: true, preserveTimestamps: true, errorOnExist: true, force: false, verbatimSymlinks: true });
+    await copyTree(src, partial);
     const st = await lstat(partial);
     if (st.isDirectory()) {
       if (await lstatOrNull(dst)) throw eexist(dst);

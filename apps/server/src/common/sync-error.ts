@@ -12,9 +12,10 @@ const STATUS: Record<SyncErrorCode, number> = {
 
 export class SyncError extends Error {
   readonly status: number;
-  constructor(readonly code: SyncErrorCode, message?: string, readonly itemRow?: Item) {
+  /** `status` overrides the code's default HTTP status (e.g. 409 for a trash `conflict`). */
+  constructor(readonly code: SyncErrorCode, message?: string, readonly itemRow?: Item, status?: number) {
     super(message ?? code);
-    this.status = STATUS[code];
+    this.status = status ?? STATUS[code];
   }
 }
 
