@@ -49,4 +49,17 @@ describe('loadConfig', () => {
     const e = loadConfig({ SYNCLET_VERSIONS: '', OFFICE_URL: '', OFFICE_API_URL: '', SYNCLET_SSO_EMERGENCY: '' });
     expect(e).toMatchObject({ versions: false, officeUrl: null, officeApiUrl: 'http://server:3000/api', ssoEmergency: false });
   });
+
+  it('SYNCLET_SSO_EMERGENCY accepts the usual boolean spellings', () => {
+    for (const v of ['1', 'true', 'TRUE', 'on', 'yes']) expect(loadConfig({ SYNCLET_SSO_EMERGENCY: v }).ssoEmergency).toBe(true);
+    for (const v of ['0', 'false', 'off', 'no', '']) expect(loadConfig({ SYNCLET_SSO_EMERGENCY: v }).ssoEmergency).toBe(false);
+  });
+
+  it('SYNCLET_MAX_UPLOAD_BYTES must be a plain byte count (like the bundled Caddy needs it)', () => {
+    expect(loadConfig({ SYNCLET_MAX_UPLOAD_BYTES: '1048576' }).maxUploadBytes).toBe(1048576);
+    expect(loadConfig({ SYNCLET_MAX_UPLOAD_BYTES: '' }).maxUploadBytes).toBe(50 * 1024 ** 3);
+    for (const v of ['50G', '1e9', '10 MB', '-1', ' 5', 'abc']) {
+      expect(() => loadConfig({ SYNCLET_MAX_UPLOAD_BYTES: v })).toThrow(/SYNCLET_MAX_UPLOAD_BYTES must be a plain number of bytes/);
+    }
+  });
 });

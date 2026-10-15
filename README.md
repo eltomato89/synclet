@@ -84,13 +84,13 @@ All settings go into `deploy/.env` (read by `docker compose --env-file deploy/.e
 | `SYNCLET_PREVIEW_MAX_BYTES` | `2147483648` (2 GiB) | Files larger than this get no thumbnail, preview or text extraction. |
 | `SYNCLET_WATCH` | `on` | `off` disables the file watcher and relies on periodic scans (NFS/SMB). |
 | `SYNCLET_SCAN_INTERVAL` | `900` (`120` with `SYNCLET_WATCH=off`) | Seconds between full scans of all user folders. |
-| `SYNCLET_MAX_UPLOAD_BYTES` | `53687091200` (50 GiB) | Largest accepted upload. Also the request body limit of the bundled Caddy for `/api/*` (larger requests get `413` from the proxy); raise the limit of an outer reverse proxy accordingly. |
+| `SYNCLET_MAX_UPLOAD_BYTES` | `53687091200` (50 GiB) | Largest accepted upload, as a plain number of bytes (digits only; `50G` or `1e9` are refused by both the server and Caddy, which then do not start). Also the request body limit of the bundled Caddy for `/api/*` (larger requests get `413` from the proxy); raise the limit of an outer reverse proxy accordingly. |
 | `SYNCLET_MASS_DELETE_THRESHOLD` | `25` | Safety guard: if a user folder suddenly looks empty while more than this many top-level items are indexed, Synclet refuses to delete them from the index (and from every client) and logs an error. `0` turns the guard off. If you really emptied the folder, set it to `0`, restart the server, then set it back. An unmounted data volume is always refused. |
 | `SYNCLET_TOMBSTONE_WINDOW` | `3600` | Seconds within which an item that vanished and reappears elsewhere is still recognised as a move (keeps its ID). |
 | `SYNCLET_JOURNAL_RETENTION_DAYS` | `30` | Days of change history kept for sync clients. A client offline for longer does a full resync. |
 | `SYNCLET_VERSIONS` | `off` | `on` keeps previous contents of files overwritten through Synclet; see [Versions](#versions). |
 | `SYNCLET_VERSIONS_MAX_BYTES` | `0` (unlimited) | Per-user cap for stored version bytes; the oldest versions are evicted first. |
-| `SYNCLET_SSO_EMERGENCY` | (empty) | `1` ignores OIDC and forward-auth and allows password login for everyone; see [Locked out?](#locked-out-emergency-recovery). |
+| `SYNCLET_SSO_EMERGENCY` | (empty) | `1` (or `true`, `on`, `yes`) ignores OIDC and forward-auth and allows password login for everyone; see [Locked out?](#locked-out-emergency-recovery). |
 | `SYNCLET_SSO_ALLOW_HTTP_ISSUER` | (empty) | `1` accepts an `http://` OIDC issuer on a loopback/private host (lab setups only; otherwise `https://` is required). |
 | `SYNCLET_OFFICE_SITE_ADDRESS` | (empty) | Office override only: Caddy site address of the Document Server (domain, or `http://...` behind a TLS-terminating proxy). Required with `compose.office.yml`. |
 | `SYNCLET_OFFICE_PUBLIC_URL` | (empty) | Office override only: browser-facing `https://` URL of the office site; also added to the Synclet site's CSP. Required with `compose.office.yml`. |
