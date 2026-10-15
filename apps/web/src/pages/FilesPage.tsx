@@ -1,6 +1,6 @@
-import type { SyncAccount, SyncItem } from '@synclet/shared';
+import type { OfficeNewFormat, SyncAccount, SyncItem } from '@synclet/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { FolderPlus, LayoutGrid, List, Plus, Share2, Upload } from 'lucide-react';
+import { FilePlus, FileSpreadsheet, FileText, FolderPlus, LayoutGrid, List, Plus, Presentation, Share2, Upload } from 'lucide-react';
 import { type KeyboardEvent, lazy, type MouseEvent, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useParams } from 'react-router';
@@ -8,7 +8,10 @@ import { toast } from 'sonner';
 import { useTopbar } from '@/components/app-shell/Topbar';
 import { Button } from '@/components/ui/button';
 import { ContextMenu, ContextMenuTrigger } from '@/components/ui/context-menu';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuSub, DropdownMenuSubContent,
+  DropdownMenuSubTrigger, DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Breadcrumbs } from '@/features/files/Breadcrumbs';
@@ -24,6 +27,8 @@ import {
 import { useRevealParam } from '@/features/files/reveal';
 import { UploadPanel } from '@/features/files/UploadPanel';
 import { getUploadQueue, type UploadQueue } from '@/features/files/uploads';
+import { MORE_FORMATS, openOfficeTab, PRIMARY_FORMATS, reserveOfficeTab } from '@/features/office/office';
+import { useCapabilities, useCreateOfficeFile } from '@/features/office/queries';
 import { quickLookEntries } from '@/features/preview/navigation';
 import { isPreviewable, syncPreviewSource } from '@/features/preview/source';
 import { ApiError, api } from '@/lib/api';
@@ -33,6 +38,7 @@ const RenameDialog = lazy(() => import('@/features/files/RenameDialog').then((m)
 const MoveDialog = lazy(() => import('@/features/files/MoveDialog').then((m) => ({ default: m.MoveDialog })));
 const DeleteDialog = lazy(() => import('@/features/files/DeleteDialog').then((m) => ({ default: m.DeleteDialog })));
 const QuickLook = lazy(() => import('@/features/preview/QuickLook').then((m) => ({ default: m.QuickLook })));
+const NewOfficeDialog = lazy(() => import('@/features/office/NewOfficeDialog').then((m) => ({ default: m.NewOfficeDialog })));
 const ShareDialog = lazy(() => import('@/features/shares/ShareDialog').then((m) => ({ default: m.ShareDialog })));
 
 const FOLDER_ID = /^(root|d_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
@@ -62,7 +68,7 @@ const notify = {
   error: (msg: string) => toast.error(msg, { position: 'bottom-center' }),
 };
 
-type DialogState = { kind: 'newFolder' } | { kind: 'rename' | 'move' | 'delete' | 'share'; item: SyncItem };
+type DialogState = { kind: 'newFolder' } | { kind: 'newOffice'; format: OfficeNewFormat } | { kind: 'rename' | 'move' | 'delete' | 'share'; item: SyncItem };
 
 export function FilesPage() {
   const { folderId = ROOT_ID } = useParams();
@@ -115,6 +121,8 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   const folderQ = useFolder(folderId);
   const ancestors = useAncestors(folderId);
   const mutations = useFileMutations();
+  const createOffice = useCreateOfficeFile();
+  const officeEnabled = useCapabilities().office.enabled;
 
   const [view, setViewState] = useState<View>(() => readPref(VIEW_KEY, 'list', (v) => v === 'list' || v === 'grid'));
   const [sort, setSort] = useState<Sort>(() => readPref(SORT_KEY, { key: 'name', dir: 'asc' }, isSort));
@@ -204,10 +212,12 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
     move: (item) => { setSelectedId(item.id); if (item.capabilities.move) openDialog({ kind: 'move', item }); },
     remove: (item) => { setSelectedId(item.id); if (item.capabilities.delete) openDialog({ kind: 'delete', item }); },
     share: (item) => { setSelectedId(item.id); if (item.kind !== 'root') openDialog({ kind: 'share', item }); },
+    openInOffice: officeEnabled ? (item) => openOfficeTab(item.id) : undefined,
   };
   const selectedItem = items.find((i) => i.id === selectedId) ?? null;
   const startUpload = () => fileInput.current?.click();
   const newFolder = () => { if (canAdd) openDialog({ kind: 'newFolder' }); };
+  const newOffice = (format: OfficeNewFormat) => { if (canAdd) openDialog({ kind: 'newOffice', format }); };
   const enqueue = (files: File[]) => { if (canAdd && files.length) queue.enqueue(files, folderId); };
 
   const onSort = (key: SortKey) => setSort((s) => {
@@ -311,8 +321,23 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
               <Plus /><span className="max-sm:hidden">{t('files.newMenu')}</span>
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-48">
+          <DropdownMenuContent align="end" className="w-52">
             <DropdownMenuItem onSelect={newFolder}><FolderPlus />{t('files.newFolder')}</DropdownMenuItem>
+            <DropdownMenuSeparator />
+            {PRIMARY_FORMATS.map((f) => {
+              const Icon = { docx: FileText, xlsx: FileSpreadsheet, pptx: Presentation }[f];
+              return <DropdownMenuItem key={f} onSelect={() => newOffice(f)}><Icon />{t(`office.new.${f}.menu`)}</DropdownMenuItem>;
+            })}
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger><FilePlus />{t('office.new.more')}</DropdownMenuSubTrigger>
+              <DropdownMenuSubContent className="w-52">
+                {MORE_FORMATS.map((f) => (
+                  <DropdownMenuItem key={f} onSelect={() => newOffice(f)}>
+                    {t(`office.new.${f}.menu`)}<DropdownMenuShortcut>.{f}</DropdownMenuShortcut>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
             {/* The view toggle has no room in the topbar on phones. */}
             <DropdownMenuItem className="sm:hidden" onSelect={() => setView(view === 'list' ? 'grid' : 'list')}>
               {view === 'list' ? <LayoutGrid /> : <List />}
@@ -389,6 +414,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
             resolveSource={syncPreviewSource}
             onDownload={download}
             onShare={actions.share}
+            onOpenInOffice={actions.openInOffice}
           />
         )}
         {d?.kind === 'newFolder' && (
@@ -403,6 +429,31 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
               patchItems((list) => [...list.filter((i) => i.id !== created.id), created]);
               setSelectedId(created.id);
               return created;
+            }}
+          />
+        )}
+        {d?.kind === 'newOffice' && (
+          <NewOfficeDialog
+            key={d.n}
+            open={d.open}
+            onOpenChange={onDialogOpenChange}
+            onClosed={restoreFocus}
+            format={d.format}
+            folderName={folderName}
+            opensEditor={officeEnabled}
+            onCreate={async (name) => {
+              // Opened inside the submit click so popup blockers allow it; pointed at the editor once the file exists.
+              const tab = officeEnabled ? reserveOfficeTab() : null;
+              try {
+                const created = await createOffice.mutateAsync({ parentId: folderId, name, format: d.format });
+                patchItems((list) => [...list.filter((i) => i.id !== created.id), created]);
+                setSelectedId(created.id);
+                tab?.go(created.id);
+                return created;
+              } catch (err) {
+                tab?.cancel();
+                throw err;
+              }
             }}
           />
         )}
