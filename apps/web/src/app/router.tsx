@@ -44,6 +44,11 @@ export const routes: RouteObject[] = [
       {
         element: <RequireAuth />,
         children: [
+          // Full-screen editor in its own tab, without the app chrome.
+          {
+            path: '/office/:itemId',
+            lazy: () => import('@/features/office/OfficeEditorPage').then((m) => ({ Component: m.OfficeEditorPage })),
+          },
           {
             element: <AppShell />,
             children: [

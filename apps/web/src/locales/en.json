@@ -512,5 +512,84 @@
     "emptyBody": "Files you upload or change show up here – across all folders, newest first.",
     "emptyAction": "Go to my files",
     "limitNote": "The {{count}} most recently modified files"
+  },
+  "office": {
+    "open": "Open in Office",
+    "new": {
+      "more": "More …",
+      "label": "Name",
+      "description": "The file is created in “{{folder}}”.",
+      "descriptionOpens": "The file is created in “{{folder}}” and opens in a new tab.",
+      "submit": "Create",
+      "submitOpen": "Create and open",
+      "submitting": "Creating …",
+      "docx": {
+        "menu": "Document",
+        "title": "New document",
+        "defaultName": "Untitled document"
+      },
+      "xlsx": {
+        "menu": "Spreadsheet",
+        "title": "New spreadsheet",
+        "defaultName": "Untitled spreadsheet"
+      },
+      "pptx": {
+        "menu": "Presentation",
+        "title": "New presentation",
+        "defaultName": "Untitled presentation"
+      },
+      "odt": {
+        "menu": "OpenDocument text",
+        "title": "New OpenDocument text",
+        "defaultName": "Untitled document"
+      },
+      "ods": {
+        "menu": "OpenDocument spreadsheet",
+        "title": "New OpenDocument spreadsheet",
+        "defaultName": "Untitled spreadsheet"
+      },
+      "odp": {
+        "menu": "OpenDocument presentation",
+        "title": "New OpenDocument presentation",
+        "defaultName": "Untitled presentation"
+      },
+      "txt": {
+        "menu": "Text file",
+        "title": "New text file",
+        "defaultName": "Untitled"
+      },
+      "csv": {
+        "menu": "CSV spreadsheet",
+        "title": "New CSV spreadsheet",
+        "defaultName": "Untitled"
+      }
+    },
+    "editor": {
+      "opening": "Opening in Office …",
+      "closeTab": "Close tab",
+      "backToFiles": "Go to my files"
+    },
+    "errors": {
+      "disabled": {
+        "title": "Office isn't set up",
+        "body": "Editing in the browser isn't set up on this server. Whoever manages Synclet can connect a Euro-Office server."
+      },
+      "unsupported": {
+        "title": "This file type can't be opened in Office",
+        "body": "Office opens text documents, spreadsheets and presentations. Download the file to open it in a suitable app."
+      },
+      "notFound": {
+        "title": "This file no longer exists",
+        "body": "It may have been deleted or moved, or it's a folder."
+      },
+      "editorUnreachable": {
+        "title": "The Office server isn't responding",
+        "body": "Synclet is reachable, but the editor isn't. Check the connection and try again."
+      },
+      "serverUnreachable": {
+        "title": "Can't reach Synclet",
+        "body": "The file couldn't be opened because the server isn't responding. Try again in a moment."
+      }
+    }
   }
 }
