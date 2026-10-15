@@ -198,7 +198,8 @@ export class SyncController {
       const st = await fh.stat();
       const tag = `${sha}-${size}`;
       reply.header('ETag', `"${tag}"`).header('Cache-Control', 'private, max-age=31536000, immutable')
-        .header('X-Content-Type-Options', 'nosniff').header('Content-Security-Policy', SANDBOX_CSP);
+        .header('X-Content-Type-Options', 'nosniff').header('Content-Security-Policy', SANDBOX_CSP)
+        .header('Referrer-Policy', 'no-referrer');
       if (etagList(req.headers['if-none-match']).includes(tag)) return reply.status(304).send();
       reply.header('Content-Type', 'image/webp').header('Content-Length', st.size);
       handedOver = true;

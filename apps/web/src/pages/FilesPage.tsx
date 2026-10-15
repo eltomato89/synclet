@@ -450,8 +450,10 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
             key={d.n}
             open={d.open}
             onOpenChange={onDialogOpenChange}
-            // Opened from QuickLook: Radix hands focus back to QuickLook's share button.
-            onClosed={quickLook?.open ? undefined : restoreFocus}
+            // Opened from QuickLook: focus goes back to QuickLook, so ←/→ and Space keep working.
+            onClosed={quickLook?.open
+              ? () => document.querySelector<HTMLElement>('[data-slot="quicklook"]')?.focus({ preventScroll: true })
+              : restoreFocus}
             item={d.item}
           />
         )}

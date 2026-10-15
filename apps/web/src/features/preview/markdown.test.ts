@@ -47,9 +47,22 @@ describe('markdown sanitizer', () => {
   });
 
   it('removes iframes, forms, styles and embedded SVG', () => {
-    const html = renderMarkdown('<iframe src="https://e.x"></iframe><form action="https://e.x"><input></form><style>body{display:none}</style><svg><script>alert(1)</script></svg><span style="position:fixed">s</span>');
+    const html = renderMarkdown('<iframe src="https://e.x"></iframe><form action="https://e.x"><input type="text"><input type="password"></form><style>body{display:none}</style><svg><script>alert(1)</script></svg><span style="position:fixed">s</span>');
     const d = dom(html);
     expect(d.querySelector('iframe, form, input, style, svg, script')).toBeNull();
     expect(d.querySelector('[style]')).toBeNull();
+  });
+
+  it('keeps GFM task-list checkboxes, disabled', () => {
+    const d = dom(renderMarkdown('- [x] done\n- [ ] open\n\n<input type="checkbox" onclick="alert(1)" name="x">'));
+    const boxes = [...d.querySelectorAll('input')];
+    expect(boxes).toHaveLength(3);
+    for (const b of boxes) {
+      expect(b.type).toBe('checkbox');
+      expect(b.disabled).toBe(true);
+      expect(b.hasAttribute('onclick') || b.hasAttribute('name')).toBe(false);
+    }
+    expect(boxes[0].checked).toBe(true);
+    expect(boxes[1].checked).toBe(false);
   });
 });

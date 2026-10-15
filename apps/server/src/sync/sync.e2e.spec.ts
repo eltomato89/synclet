@@ -201,6 +201,7 @@ describe('Sync API v1', () => {
     expect(full.headers['x-content-type-options']).toBe('nosniff');
     expect(full.headers['content-security-policy']).toContain('sandbox');
     expect(full.headers['cache-control']).toBe('private, no-store');
+    expect(full.headers['referrer-policy']).toBe('no-referrer');
     expect(full.headers['content-disposition']).toBeUndefined();
     expect((await api('GET', `/items/${f.id}/content`, { headers: { 'if-none-match': 'W/"v0", "v1"' } })).statusCode).toBe(304);
     expect((await api('GET', `/items/${f.id}/content`, { headers: { 'if-none-match': '"v0"' } })).statusCode).toBe(200);
@@ -257,6 +258,7 @@ describe('Sync API v1', () => {
     expect(inline.statusCode).toBe(200);
     expect(inline.body).toBe('hello');
     expect(inline.headers['content-disposition']).toBeUndefined();
+    expect(inline.headers['referrer-policy']).toBe('no-referrer');
     // Accepted by the thumbnail route (404 only because a text file has no thumbnail, not 401).
     const thumb = await ctx.app.inject({ method: 'GET', url: `/api/sync/v1/items/${file.id}/thumbnail?size=256&dt=${encodeURIComponent(pv.token)}` });
     expect(thumb.statusCode).toBe(404);

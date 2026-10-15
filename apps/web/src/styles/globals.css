@@ -303,6 +303,7 @@
 .md-view li + li { margin-top: 0.25em; }
 .md-view li > ul, .md-view li > ol { margin: 0.25em 0 0; }
 .md-view li:has(> input[type="checkbox"]) { list-style: none; }
+.md-view li > input[type="checkbox"] { margin: 0 0.5em 0 -1.35em; vertical-align: -0.1em; accent-color: var(--primary); }
 .md-view a { color: var(--primary); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
 .md-view a:not([href]) { color: inherit; text-decoration: none; }
 .md-view strong { font-weight: 600; }

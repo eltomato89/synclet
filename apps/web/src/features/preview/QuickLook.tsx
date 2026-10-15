@@ -111,6 +111,10 @@ export function QuickLook<E extends QuickLookEntry>(props: QuickLookProps<E>) {
           onOpenAutoFocus={(e) => { e.preventDefault(); contentRef.current?.focus({ preventScroll: true }); }}
           onCloseAutoFocus={(e) => { e.preventDefault(); onClosed?.(activeId); }}
           onKeyDown={onKeyDown}
+          // Full-screen: anything "outside" is another layer opened from here (the share dialog);
+          // it must not close QuickLook underneath it. Esc and the close button still do.
+          onFocusOutside={(e) => e.preventDefault()}
+          onPointerDownOutside={(e) => e.preventDefault()}
           className="fixed inset-0 z-50 flex flex-col text-white outline-none duration-200 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-[0.985] data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-[0.985]"
         >
           <header className="dark flex h-14 shrink-0 items-center gap-3 pr-2 pl-4 text-foreground md:pr-3 md:pl-5">

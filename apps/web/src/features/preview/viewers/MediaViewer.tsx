@@ -13,7 +13,6 @@ export function MediaViewer({ source, onUnavailable }: ViewerProps) {
         src={source.contentUrl}
         poster={poster}
         controls
-        autoPlay
         playsInline
         preload="metadata"
         onError={onUnavailable}
@@ -29,7 +28,7 @@ export function MediaViewer({ source, onUnavailable }: ViewerProps) {
           ? <img src={poster} alt="" className="size-full object-cover" />
           : <FileIcon item={item} strokeWidth={1} className="size-20" />}
       </div>
-      <audio src={source.contentUrl} controls autoPlay preload="metadata" onError={onUnavailable} className="w-full" />
+      <audio src={source.contentUrl} controls preload="metadata" onError={onUnavailable} className="w-full" />
     </div>
   );
 }
