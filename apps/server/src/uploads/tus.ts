@@ -13,6 +13,7 @@ import type { Readable } from 'node:stream';
 import { AuthGuard } from '../auth/auth.guard';
 import { APP_CONFIG, AppConfig } from '../config';
 import { validateName } from '../common/names';
+import { InsufficientStorageError } from '../common/storage-errors';
 import { SyncError } from '../common/sync-error';
 import type { AuthUser } from '../common/types';
 import { FilesService, OnConflict } from '../files/files.service';
@@ -210,8 +211,8 @@ export class TusService implements OnModuleInit {
       item = (await this.serializer.toSyncItems(user, [row]))[0];
     } catch (e) {
       // Client errors (conflict, parent gone) cannot be fixed by retrying this upload: drop it.
-      // Anything else (I/O, database) keeps it; an empty PATCH at the final offset retries.
-      if (e instanceof SyncError) await this.discard(upload.id);
+      // Anything else (I/O, database, full disk = 507) keeps it; an empty PATCH at the final offset retries.
+      if (e instanceof SyncError && !(e instanceof InsufficientStorageError)) await this.discard(upload.id);
       this.finishing.delete(upload.id);
       throw e;
     }

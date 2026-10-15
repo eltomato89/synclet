@@ -6,7 +6,7 @@ export type SyncErrorCode =
   | 'invalid_move' | 'invalid_name' | 'invalid_request' | 'cursor_expired' | 'conflict'
   | 'precondition_required' | 'too_large' | 'range_not_satisfiable' | 'setup_done'
   | 'share_password_required' | 'share_expired' | 'rate_limited' | 'upload_not_allowed'
-  | 'office_disabled' | 'sso_not_allowed' | 'password_login_disabled';
+  | 'office_disabled' | 'sso_not_allowed' | 'password_login_disabled' | 'insufficient_storage';
 
 export interface SyncCapabilities {
   read: true; write: boolean; rename: boolean; move: boolean; delete: boolean; addChildren: boolean;
@@ -32,10 +32,15 @@ export interface SyncItem {
   preview?: PreviewInfo;
 }
 
+export type SyncSpaceKind = 'personal' | 'shared' | 'external';
+/** A top-level space of the account; each has its own root folder. Clients store sync state per space. */
+export interface SyncSpace { id: string; kind: SyncSpaceKind; name: string; rootId: string; canWrite: boolean }
+
 export interface SyncAccount {
   userId: string; email: string | null; displayName: string;
   organizationId: string; organizationName: string; slug: string;
   canWrite: boolean;
+  spaces: SyncSpace[];
   areas: { personal: true; shared: boolean; customers: boolean; projects: boolean };
   quotaBytes: number; usedBytes: number; maxUploadBytes: number;
   cursor: string;

@@ -105,6 +105,13 @@ describe('account', () => {
     expect(schemaErrors('SyncAccount', acc)).toBe('');
     expect(acc).toMatchObject({ organizationName: 'Synclet', canWrite: true, areas: { personal: true, shared: false, customers: false, projects: false } });
     expect(acc.organizationId).toBe(`${acc.organizationId.split(':')[0]}:${acc.userId}`);
+    expect(Array.isArray(acc.spaces) && acc.spaces.length).toBeGreaterThanOrEqual(1);
+    for (const sp of acc.spaces) {
+      expect(typeof sp.id).toBe('string');
+      expect(typeof sp.name).toBe('string');
+      expect(typeof sp.rootId).toBe('string');
+      expect(['personal', 'shared', 'external']).toContain(sp.kind);
+    }
     const cursor = await api.get('/sync/v1/cursor');
     expect(schemaErrors('CursorResponse', cursor.json())).toBe('');
     const me = await api.get('/auth/me');

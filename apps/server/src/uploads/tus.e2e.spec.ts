@@ -1,3 +1,4 @@
+import fsp from 'node:fs/promises';
 import { createHash, randomBytes } from 'node:crypto';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import http from 'node:http';
@@ -271,5 +272,21 @@ describe('tus uploads', () => {
     await ctx.app.get(SchedulerService).maintenance();
     expect((await readdir(stagingDir())).sort()).toEqual([fresh, `${fresh}.json`]);
     expect(await readdir(userDir())).toEqual([]);
+  });
+
+  it('ENOSPC while publishing answers 507 and keeps the upload resumable', async () => {
+    const data = randomBytes(1000);
+    const created = await create(data.length, { name: 'full.bin' });
+    const location = created.headers.location;
+    jest.spyOn(fsp, 'link').mockRejectedValueOnce(Object.assign(new Error('no space left on device'), { code: 'ENOSPC' }));
+    const res = await patch(location, 0, data);
+    expect(res.statusCode).toBe(507);
+    expect(res.json()).toMatchObject({ code: 'insufficient_storage' });
+    expect(await readdir(userDir())).toEqual([]);
+    // The staged part survives: HEAD shows the full offset and an empty PATCH retries the publish.
+    expect((await tus('HEAD', location)).headers['upload-offset']).toBe(String(data.length));
+    const retry = await patch(location, data.length, Buffer.alloc(0));
+    expect(retry.statusCode).toBe(200);
+    expect(await readFile(path.join(userDir(), 'full.bin'))).toEqual(data);
   });
 });

@@ -12,6 +12,7 @@ import { splitExt } from '../common/names';
 import { absPath } from '../common/paths';
 import { SyncError } from '../common/sync-error';
 import type { IndexUser } from '../common/types';
+import { rethrowStorageError } from '../common/storage-errors';
 import { NO_HARDLINK } from '../files/fs-ops';
 import { JournalService, Tx } from '../journal/journal.service';
 import { PrismaService, TX_OPTS } from '../prisma/prisma.service';
@@ -162,7 +163,7 @@ export class VersionsService {
         }
       } catch (e) {
         await rm(tmp, { force: true });
-        throw e;
+        rethrowStorageError(e);
       }
       await rm(tmp, { force: true }); // changed while copying: once more
     }

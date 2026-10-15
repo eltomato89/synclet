@@ -15,6 +15,7 @@ import { ItemStore } from '../journal/item-store';
 import { JournalService, Tx } from '../journal/journal.service';
 import { PrismaService, TX_OPTS } from '../prisma/prisma.service';
 import { PreparedVersion, StaleVersionError, VersionContentReplacer, VersionsService } from '../versions/versions.service';
+import { rethrowStorageError } from '../common/storage-errors';
 import { copyNoReplace, linkNoReplace, moveAcrossFs, moveNoReplace, replaceAtomic, statEntry } from './fs-ops';
 
 export type OnConflict = 'fail' | 'rename';
@@ -204,7 +205,7 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
     } catch (e) {
       await rm(tmp, { force: true });
       if ((e as { tooLarge?: boolean }).tooLarge) throw new SyncError('too_large');
-      throw e;
+      rethrowStorageError(e);
     }
     return { tmp, size: BigInt(size), sha256: hash.digest('hex') };
   }
@@ -215,9 +216,13 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
     await this.prisma.$transaction((tx) => this.parentPath(tx, user, parentId)); // fail fast before streaming
     const { tmp, sha256 } = await this.receive(user, body, opts.modifiedAt);
     try {
-      return await this.publishNew(user, parentId, desired, tmp, sha256, opts.onConflict ?? 'fail');
-    } finally {
-      await rm(tmp, { force: true });
+      try {
+        return await this.publishNew(user, parentId, desired, tmp, sha256, opts.onConflict ?? 'fail');
+      } finally {
+        await rm(tmp, { force: true });
+      }
+    } catch (e) {
+      rethrowStorageError(e);
     }
   }
 
@@ -261,7 +266,7 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
         const now = await statEntry(p.abs).catch(() => null);
         if (now && now.ino === p.ino) await unlink(p.abs).catch(() => {});
       }
-      throw e;
+      rethrowStorageError(e);
     }
   }
 
@@ -404,6 +409,8 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
       }, TX_OPTS));
       if ('conflict' in outcome) throw new SyncError('conflict', outcome.reason, outcome.conflict);
       return outcome.ok;
+    } catch (e) {
+      rethrowStorageError(e); // the temp file is removed by `finally` right after
     } finally {
       await rm(tmp, { force: true });
     }
@@ -463,6 +470,8 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
         }
       }
       return { outcome: 'orphaned', item: await this.publishNew(user, null, name, tmp, sha256, 'rename') };
+    } catch (e) {
+      rethrowStorageError(e); // the temp file is removed by `finally` right after
     } finally {
       await rm(tmp, { force: true });
     }

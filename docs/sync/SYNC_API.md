@@ -52,10 +52,22 @@ DocumentsProvider, Linux). All clients build on this document; change it only by
 | `precondition_required` | 428 | `If-Match` missing on `PUT /items/:id/content` |
 | `too_large` | 413 | Body above `maxUploadBytes` (a 413 from a reverse proxy with the same limit may have no JSON body; treat any 413 as too large) |
 | `range_not_satisfiable` | 416 | `Range` outside the file (`Content-Range: bytes */<size>`) |
+| `insufficient_storage` | 507 | The server's disk (or the user's quota) is full; see below. Retry later and show the problem to the user |
 | `rate_limited` | 429 | Too many attempts on a public auth route; wait `Retry-After` seconds |
 | `password_login_disabled` | 403 | Password login is disabled for non-admin users (SSO only) → use the browser login (§2.1) |
 | `setup_done` | 409 | `POST /api/setup` after the first user exists |
 | `sso_not_allowed`, `office_disabled`, `share_*`, `upload_not_allowed` | – | Web-only routes (SSO, Office, public shares); never returned by the routes in this document |
+
+### Insufficient storage (`507`)
+
+Every route that writes file content (upload, replace, tus completion, version restore, trash
+restore, office save) answers `507 { code: "insufficient_storage", message }` when the server's file
+system reports a full disk or an exceeded disk quota (`ENOSPC` / `EDQUOT`). Nothing was changed: no
+item, version or journal entry exists for the failed write and no temporary file is left behind. A
+tus upload whose completion hits `507` stays resumable: the uploaded bytes are kept, and an empty
+`PATCH` at the final offset retries the publish once space is free. Clients treat `507` as
+retryable with backoff, do not mark the item as failed for good, and tell the user that the server
+is out of space.
 
 Codes Buro had and Synclet never returns: `feature_disabled` (no modules).
 
@@ -172,13 +184,32 @@ SyncAccount = {
   organizationName: "Synclet",
   slug: string,                // the username (= the user's folder name on the server)
   canWrite: true,
+  spaces: SyncSpace[],         // top-level spaces, see below
   areas: { personal: true, shared: false, customers: false, projects: false },
   quotaBytes: number,          // 0 = no quota
   usedBytes: number,           // sum of the sizes of the user's live files
   maxUploadBytes: number,      // per file (upload, replace, tus)
   cursor: string               // current change cursor
 }
+
+SyncSpace = {
+  id: string,                  // stable per account; "personal" for the user's own files
+  kind: "personal" | "shared" | "external",
+  name: string,                // display name; the server has no UI language, so "Meine Dateien" – localize by `kind`
+  rootId: string,              // the space's root folder id; use as `parentId` / `children` id ("root" for personal)
+  canWrite: boolean
+}
 ```
+
+Spaces (Phase 2):
+
+- Currently every account has exactly one space: `[{ id: "personal", kind: "personal", name: "Meine Dateien", rootId: "root", canWrite: true }]`.
+  Future servers may add `shared` and `external` spaces.
+- The virtual top level that lists the spaces is client-side and read-only: a client never creates, moves or
+  renames anything into or out of it, only inside a space.
+- A client that meets an unknown `kind` shows the space as an ordinary folder.
+- Clients store sync state (cursor, pins) per space.
+- `areas` stays for Buro compatibility; new clients use `spaces`.
 
 - The client's domain / sync-root identifier is `organizationId`. `serverId` is generated once per
   installation, so two Synclet servers (or a reinstalled one) never share a domain.
@@ -638,7 +669,7 @@ a folder id is `400 invalid_request` whether versions are on or off.
 | Changes | trigger-based journal, BIGSERIAL cursor | journal written in the same transaction as the change; per-user sequence; same `410` semantics |
 | Subtree delete in `/changes` | folder only | folder **and** every descendant |
 | Name validation | Buro rules | Windows-safe rules of §4.3 (reserved names, trailing dot/space, 255 bytes), ignored names |
-| Error codes | – | adds `rate_limited`, `password_login_disabled`, `setup_done` and web-only codes; drops `feature_disabled` |
+| Error codes | – | adds `rate_limited`, `password_login_disabled`, `setup_done`, `insufficient_storage` (507) and web-only codes; drops `feature_disabled` |
 | Conflict copy name | `(Konflikt <device> …)` | `(Conflict <device> …)` (translatable) |
 
 ---

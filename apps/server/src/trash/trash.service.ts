@@ -10,6 +10,7 @@ import { absPath, joinRel, parentRel } from '../common/paths';
 import { SyncError } from '../common/sync-error';
 import type { IndexUser } from '../common/types';
 import { FilesService, TrashManifestEntry } from '../files/files.service';
+import { rethrowStorageError } from '../common/storage-errors';
 import { copyTree, moveNoReplace, statEntry } from '../files/fs-ops';
 import { readDisk } from '../indexer/disk';
 import { ItemStore } from '../journal/item-store';
@@ -144,7 +145,7 @@ export class TrashService {
       await copyTree(entry.storePath, copy.payload);
     } catch (e) {
       await this.dropCopy(copy);
-      throw e;
+      rethrowStorageError(e);
     }
     return copy;
   }
