@@ -46,7 +46,15 @@ export class WatcherService implements OnApplicationBootstrap, OnModuleDestroy {
 
   async onApplicationBootstrap() {
     await this.refreshUsers();
-    if (!this.config.background) return;
+  }
+
+  /**
+   * Subscribes to file events. Called by SchedulerService after startup recovery (temp cleanup,
+   * staged-trash recovery) – never from a lifecycle hook: Nest runs a module's bootstrap hooks
+   * concurrently, and a reconcile during recovery would journal deletes for vacated entries.
+   */
+  async start(): Promise<void> {
+    if (!this.config.background || this.sub) return;
     if (!this.config.watch) { this.mode = 'scan-only'; return; }
     try {
       const watcher = await import('@parcel/watcher');
@@ -84,5 +92,6 @@ export class WatcherService implements OnApplicationBootstrap, OnModuleDestroy {
   async onModuleDestroy() {
     this.debouncer.stop();
     await this.sub?.unsubscribe();
+    this.sub = undefined;
   }
 }

@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Headers, HttpCode, Inject, Param, Patch,
 import type { Item } from '@prisma/client';
 import type { SyncAccount, SyncChange, SyncChangesPage, SyncChildrenPage, SyncItem } from '@synclet/shared';
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { PassThrough, Readable } from 'node:stream';
 import { z } from 'zod';
@@ -187,17 +188,29 @@ export class SyncController {
     const { item, abs } = await this.files.openRead(user, parsed.uuid);
     // Size and dates come from the opened file, so Content-Length always matches the bytes sent
     // (the file may have been edited on the host and not be indexed yet).
-    const fh = await open(abs, 'r').catch(() => { throw new SyncError('not_found'); });
+    // O_NOFOLLOW: a symlink swapped in after the realpath check is never followed.
+    const fh = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW).catch(() => { throw new SyncError('not_found'); });
     let handedOver = false;
     try {
-      const st = await fh.stat();
+      const st = await fh.stat({ bigint: true });
       if (!st.isFile()) throw new SyncError('not_found');
-      const size = st.size;
+      const size = Number(st.size);
+      const mtime = new Date(Number(st.mtimeMs)); // same derivation as the indexer (statEntry)
       const tag = `v${item.version}`;
-      reply.header('ETag', `"${tag}"`).header('Accept-Ranges', 'bytes').header('Last-Modified', st.mtime.toUTCString());
+      reply.header('ETag', `"${tag}"`).header('Accept-Ranges', 'bytes').header('Last-Modified', mtime.toUTCString());
       const inm = etagList(req.headers['if-none-match']);
       if (inm.includes(tag) || inm.includes('*')) return reply.status(304).send();
-      const range = parseRange(first(req.headers.range), size);
+      // If-Range: resume only if the client's validator still describes these bytes; otherwise
+      // send the full file (200) so a resumed download never splices bytes of a changed file.
+      // The version tag only counts while the file on disk still matches the indexed row (a host
+      // edit that is not indexed yet keeps the old version number).
+      const onDiskMatchesRow = st.size === item.size && mtime.getTime() === item.mtime.getTime() &&
+        (item.ino === null || (st.ino === item.ino && st.dev === item.dev));
+      const ifRange = first(req.headers['if-range'])?.trim();
+      const rangeAllowed = !ifRange || (/^(W\/)?"/.test(ifRange)
+        ? !ifRange.startsWith('W/') && unquote(ifRange) === tag && onDiskMatchesRow
+        : ifRange === mtime.toUTCString());
+      const range = rangeAllowed ? parseRange(first(req.headers.range), size) : null;
       if (range === 'invalid') {
         return reply.status(416).header('Content-Range', `bytes */${size}`).type('application/json')
           .send({ statusCode: 416, message: 'range not satisfiable', code: 'range_not_satisfiable' });
@@ -225,10 +238,12 @@ export class SyncController {
     const row = await this.resolveFile(user, id);
     const ifMatch = unquote(first(headers['if-match']));
     if (!ifMatch) throw new SyncError('precondition_required', 'If-Match required');
-    const m = /^v(\d+)$/.exec(ifMatch);
-    if (!m) throw new SyncError('conflict', 'unknown etag', row);
+    // `*` = any current version. An unindexed edit on the host still yields 412 (it is recorded
+    // as a new version first), so host changes are never silently overwritten.
+    const m = ifMatch === '*' ? null : /^v(\d+)$/.exec(ifMatch);
+    if (ifMatch !== '*' && !m) throw new SyncError('conflict', 'unknown etag', row);
     const stream = this.rawBody(body, headers);
-    const updated = await this.files.replaceContent(user, row.id, stream, { ifMatchVersion: Number(m[1]), modifiedAt: modifiedAt(headers) });
+    const updated = await this.files.replaceContent(user, row.id, stream, { ifMatchVersion: m ? Number(m[1]) : null, modifiedAt: modifiedAt(headers) });
     return this.one(user, updated);
   }
 

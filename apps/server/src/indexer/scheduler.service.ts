@@ -14,6 +14,7 @@ import { IndexerService } from './indexer.service';
 import { WatcherService } from './watcher.service';
 
 const DAY = 24 * 3600 * 1000;
+const SESSION_RETENTION_DAYS = 30;
 
 @Injectable()
 export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy {
@@ -40,9 +41,20 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
   async onApplicationBootstrap() {
     if (!this.config.background) return;
     await this.startup();
-    void this.scanAll();
+    // Only now: a watcher-triggered reconcile during recovery could tombstone vacated entries.
+    await this.watcher.start();
+    // Maintenance also runs once right after the first scan: hosts that restart daily would
+    // otherwise never reach the 24 h timer.
+    this.initialRun = this.scanAll().then(() => this.runMaintenance());
     this.timers.push(setInterval(() => void this.scanAll(), this.config.scanIntervalSec * 1000));
-    this.timers.push(setInterval(() => void this.maintenance().catch((e) => this.log.error(`maintenance failed: ${(e as Error).message}`)), DAY));
+    this.timers.push(setInterval(() => void this.runMaintenance(), DAY));
+  }
+
+  /** First scan + first maintenance after boot (awaitable for tests). */
+  initialRun: Promise<void> = Promise.resolve();
+
+  private runMaintenance(): Promise<void> {
+    return this.maintenance().catch((e) => this.log.error(`maintenance failed: ${(e as Error).message}`));
   }
 
   onModuleDestroy() { this.timers.forEach(clearInterval); }
@@ -110,5 +122,8 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     const before = new Date(Date.now() - this.config.journalRetentionDays * DAY);
     for (const u of await this.users()) await this.journal.trim(u.id, before);
     await this.store.purgeTombstones(new Date(Date.now() - Math.max(this.config.tombstoneWindowSec * 1000, DAY)));
+    // Expired or revoked web sessions are kept for a while (refresh-token reuse detection), then dropped.
+    const sessionCutoff = new Date(Date.now() - SESSION_RETENTION_DAYS * DAY);
+    await this.prisma.session.deleteMany({ where: { OR: [{ expiresAt: { lt: sessionCutoff } }, { revokedAt: { lt: sessionCutoff } }] } });
   }
 }

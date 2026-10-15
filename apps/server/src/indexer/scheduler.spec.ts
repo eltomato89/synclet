@@ -128,4 +128,64 @@ describe('SchedulerService', () => {
     expect(await ctx.prisma.fileChange.count()).toBe(before);
     expect((await ctx.prisma.item.findUniqueOrThrow({ where: { id: x.id } })).deletedAt).toBeNull();
   });
+  it('bootstrap starts the watcher only after cleanup and staged-trash recovery, before the first scan', async () => {
+    const s = ctx.app.get(SchedulerService);
+    const watcher = ctx.app.get(WatcherService);
+    const files = ctx.app.get(FilesService);
+    const order: string[] = [];
+    let releaseRecovery!: () => void;
+    const recoveryGate = new Promise<void>((r) => { releaseRecovery = r; });
+    jest.spyOn(s, 'startupCleanup').mockImplementation(async () => { order.push('cleanup'); return 0; });
+    jest.spyOn(files, 'recoverStagedTrash').mockImplementation(async () => { order.push('recover:start'); await recoveryGate; order.push('recover:end'); return 0; });
+    const start = jest.spyOn(watcher, 'start').mockImplementation(async () => { order.push('watcher'); });
+    jest.spyOn(s, 'scanAll').mockImplementation(async () => { order.push('scan'); });
+    ctx.config.background = true;
+    try {
+      // The watcher's own bootstrap hook must not subscribe (Nest runs hooks concurrently).
+      await watcher.onApplicationBootstrap();
+      expect(watcher.mode).toBe('off');
+      const boot = s.onApplicationBootstrap();
+      await new Promise((r) => setImmediate(r));
+      expect(order).toEqual(['cleanup', 'recover:start']);
+      expect(start).not.toHaveBeenCalled();
+      releaseRecovery();
+      await boot;
+      expect(order).toEqual(['cleanup', 'recover:start', 'recover:end', 'watcher', 'scan']);
+    } finally {
+      s.onModuleDestroy();
+      ctx.config.background = false;
+    }
+  });
+  it('runs maintenance once right after the first scan at boot', async () => {
+    const s = ctx.app.get(SchedulerService);
+    const order: string[] = [];
+    jest.spyOn(s, 'startup').mockResolvedValue();
+    jest.spyOn(ctx.app.get(WatcherService), 'start').mockResolvedValue();
+    jest.spyOn(s, 'scanAll').mockImplementation(async () => { order.push('scan'); });
+    jest.spyOn(s, 'maintenance').mockImplementation(async () => { order.push('maintenance'); });
+    ctx.config.background = true;
+    try {
+      await s.onApplicationBootstrap();
+      await s.initialRun;
+      expect(order).toEqual(['scan', 'maintenance']);
+    } finally {
+      s.onModuleDestroy();
+      ctx.config.background = false;
+    }
+  });
+
+  it('maintenance purges sessions expired or revoked more than 30 days ago', async () => {
+    const user = await createTestUser(ctx);
+    const day = 24 * 3600 * 1000;
+    const mk = (tokenHash: string, expiresAt: Date, revokedAt: Date | null = null) =>
+      ctx.prisma.session.create({ data: { userId: user.id, tokenHash, expiresAt, revokedAt } });
+    await mk('live', new Date(Date.now() + 10 * day));
+    await mk('recently-expired', new Date(Date.now() - 5 * day));
+    await mk('recently-revoked', new Date(Date.now() + 10 * day), new Date(Date.now() - 5 * day));
+    await mk('old-expired', new Date(Date.now() - 31 * day));
+    await mk('old-revoked', new Date(Date.now() - 1 * day), new Date(Date.now() - 31 * day));
+    await ctx.app.get(SchedulerService).maintenance();
+    const left = (await ctx.prisma.session.findMany()).map((x) => x.tokenHash).sort();
+    expect(left).toEqual(['live', 'recently-expired', 'recently-revoked']);
+  });
 });

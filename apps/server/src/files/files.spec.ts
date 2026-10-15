@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { mkdir, readdir, readFile, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
@@ -114,6 +115,7 @@ describe('FilesService', () => {
     await files.upload(user, a.id, 'x.txt', body('x'), {});
     const cursor = await ctx.app.get(JournalService).currentCursor(user.id);
     await files.remove(user, a.id);
+    await files.pendingTrash();
     expect(await visible()).toEqual([]);
     const entry = await ctx.prisma.trashEntry.findFirstOrThrow();
     expect(entry.originalPath).toBe('A');
@@ -248,6 +250,7 @@ describe('FilesService', () => {
     const a = await files.createFolder(user, null, 'A');
     const x = await files.upload(user, a.id, 'x.txt', body('x'), {});
     await Promise.all([files.remove(user, x.id), files.update(user, a.id, { name: 'B' })]);
+    await files.pendingTrash();
     expect(await visible()).toEqual(['B']);
     expect(await visible(path.join(root, 'B'))).toEqual([]);
     const entry = await ctx.prisma.trashEntry.findFirstOrThrow();
@@ -315,7 +318,60 @@ describe('FilesService', () => {
   it('remove leaves no intent file behind', async () => {
     const f = await files.upload(user, null, 'a.txt', body('x'), {});
     await files.remove(user, f.id);
+    await files.pendingTrash();
     expect(await readdir(path.join(ctx.config.metaRoot, 'staging'))).toEqual([]);
+  });
+
+  it('remove returns after commit and finishes the move to /meta in the background', async () => {
+    const a = await files.createFolder(user, null, 'A');
+    await files.upload(user, a.id, 'x.txt', body('x'), {});
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const proto = Object.getPrototypeOf(files) as { finishTrash: (s: string, p: string) => Promise<void> };
+    const orig = proto.finishTrash;
+    const spy = jest.spyOn(proto, 'finishTrash').mockImplementation(async function (this: FilesService, s: string, p: string) {
+      await gate;
+      return orig.call(this, s, p);
+    });
+    try {
+      await files.remove(user, a.id); // must not wait for the gate
+      expect((await ctx.prisma.item.findUniqueOrThrow({ where: { id: a.id } })).deletedAt).not.toBeNull();
+      const staged = (await readdir(root)).filter((n) => n.startsWith('.synclet-trash-'));
+      expect(staged).toHaveLength(1);
+      expect(await visible()).toEqual(staged);
+      // Meanwhile the staged entry stays invisible to the indexer: no create, no journal entry.
+      const journal = ctx.app.get(JournalService);
+      const cursor = await journal.currentCursor(user.id);
+      expect(await ctx.app.get(IndexerService).fullScan(user)).toMatchObject({ created: 0, updated: 0, moved: 0, deleted: 0 });
+      expect(await journal.currentCursor(user.id)).toBe(cursor);
+      release();
+      await files.pendingTrash();
+      expect(await readdir(root)).toEqual([]);
+      const entry = await ctx.prisma.trashEntry.findFirstOrThrow();
+      expect(await readFile(path.join(entry.storePath, 'x.txt'), 'utf8')).toBe('x');
+      expect(await readdir(path.join(ctx.config.metaRoot, 'staging'))).toEqual([]);
+    } finally {
+      release();
+      spy.mockRestore();
+    }
+  });
+
+  it('a failed background trash move is logged and left staged for recovery at the next start', async () => {
+    const f = await files.upload(user, null, 'a.txt', body('x'), {});
+    const proto = Object.getPrototypeOf(files) as { finishTrash: (s: string, p: string) => Promise<void> };
+    const spy = jest.spyOn(proto, 'finishTrash').mockRejectedValueOnce(new Error('meta unavailable'));
+    const logError = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    await files.remove(user, f.id);
+    await files.pendingTrash(); // never rejects
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining('left staged for recovery'));
+    logError.mockRestore();
+    expect((await readdir(root)).filter((n) => n.startsWith('.synclet-trash-'))).toHaveLength(1);
+    expect(await readdir(path.join(ctx.config.metaRoot, 'staging'))).toHaveLength(1);
+    spy.mockRestore();
+    expect(await files.recoverStagedTrash()).toBe(1);
+    expect(await readdir(root)).toEqual([]);
+    const entry = await ctx.prisma.trashEntry.findFirstOrThrow();
+    expect(await readFile(entry.storePath, 'utf8')).toBe('x');
   });
 
   it('recoverStagedTrash restores an entry staged by a delete that never committed', async () => {

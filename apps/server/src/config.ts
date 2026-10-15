@@ -16,7 +16,8 @@ export interface AppConfig {
   secureCookies: boolean;
 }
 
-const bool = (v: string | undefined, dflt: boolean) => (v === undefined ? dflt : !['0', 'false', 'off', 'no'].includes(v.toLowerCase()));
+// Empty values (compose passes `${VAR:-}`) mean "use the default".
+const bool = (v: string | undefined, dflt: boolean) => (v === undefined || v === '' ? dflt : !['0', 'false', 'off', 'no'].includes(v.toLowerCase()));
 const int = (v: string | undefined, dflt: number) => (v === undefined || v === '' ? dflt : Number.parseInt(v, 10));
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {

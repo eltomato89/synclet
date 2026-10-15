@@ -187,8 +187,10 @@ export class IndexerService {
     if (!unmounted && !(limit > 0 && liveRoot > limit)) return false;
     this.log.error(
       `user root ${abs} is empty but ${liveRoot} item(s) are indexed there – refusing to delete them ` +
-        (unmounted ? '(data root looks unmounted). ' : `(more than SYNCLET_MASS_DELETE_THRESHOLD=${limit}). `) +
-        'If the deletion is intended, set SYNCLET_MASS_DELETE_THRESHOLD=0 temporarily and rescan.',
+        (unmounted
+          ? '(data root looks unmounted). Check the SYNCLET_DATA mount and restart the server.'
+          : `(more than SYNCLET_MASS_DELETE_THRESHOLD=${limit}). If the deletion is intended, ` +
+            'set SYNCLET_MASS_DELETE_THRESHOLD=0 and restart the server (then set it back).'),
     );
     return true;
   }

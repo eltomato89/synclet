@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { mkdir, rename, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createTestApp, createTestUser, itIfCaseSensitive, TestContext } from '../../test/context';
@@ -258,7 +259,9 @@ describe('IndexerService', () => {
     const cursor = await journal.currentCursor(user.id);
     for (let i = 0; i < 26; i++) await rm(path.join(root, `f${i}.txt`));
     expect(ctx.config.massDeleteThreshold).toBe(25);
+    const logError = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     expect(await indexer.fullScan(user)).toBeNull();
+    expect(logError).toHaveBeenCalledWith(expect.stringContaining('set SYNCLET_MASS_DELETE_THRESHOLD=0 and restart the server (then set it back)'));
     expect(await indexer.reconcileDir(user, '', { recursive: false })).toMatchObject({ deleted: 0 });
     expect(await live()).toHaveLength(26);
     expect(await journal.currentCursor(user.id)).toBe(cursor);

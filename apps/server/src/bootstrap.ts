@@ -17,4 +17,25 @@ export async function configureApp(app: NestFastifyApplication): Promise<void> {
     }
     done(null, payload);
   });
+  // Any other content type: Fastify would answer a bare 415. On the raw-upload sync routes the
+  // handler answers instead with a Sync-format 400 invalid_request (the marker body is rejected by
+  // rawBody without reading the stream); everywhere else the 415 stays.
+  fastify.addContentTypeParser('*', (req, _payload: Readable, done) => {
+    if (isRawUploadRoute(req.method, req.url)) {
+      done(null, UNSUPPORTED_BODY);
+      return;
+    }
+    const err = Object.assign(new Error(`Unsupported Media Type: ${req.headers['content-type'] ?? ''}`), {
+      statusCode: 415, code: 'FST_ERR_CTP_INVALID_MEDIA_TYPE',
+    });
+    done(err, undefined);
+  });
+}
+
+/** Marker body for a sync upload sent with an unsupported Content-Type. */
+export const UNSUPPORTED_BODY = Symbol('unsupported-body');
+
+function isRawUploadRoute(method: string, url: string): boolean {
+  const p = url.split('?')[0];
+  return (method === 'POST' && p === '/api/sync/v1/items/upload') || (method === 'PUT' && /^\/api\/sync\/v1\/items\/[^/]+\/content$/.test(p));
 }
