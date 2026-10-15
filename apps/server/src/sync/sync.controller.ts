@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Headers, HttpCode, Inject, Param, Patch, Post, Put, Query, Req, Res, UseGuards } from '@nestjs/common';
 import type { Item } from '@prisma/client';
-import type { SyncAccount, SyncChange, SyncChangesPage, SyncChildrenPage, SyncItem } from '@synclet/shared';
+import type { ServerCapabilities, SyncAccount, SyncChange, SyncChangesPage, SyncChildrenPage, SyncItem } from '@synclet/shared';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
@@ -95,6 +95,12 @@ export class SyncController {
       quotaBytes: 0, usedBytes: Number(used._sum.size ?? 0n), maxUploadBytes: this.config.maxUploadBytes,
       cursor: await this.journal.currentCursor(user.id),
     };
+  }
+
+  /** Optional server features, for clients to show or hide UI (versions, office editing). */
+  @Get('capabilities')
+  capabilities(): ServerCapabilities {
+    return { versions: this.config.versions, office: { enabled: this.config.officeUrl !== null, url: this.config.officeUrl } };
   }
 
   @Get('cursor')

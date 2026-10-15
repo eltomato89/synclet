@@ -1,5 +1,5 @@
 import type { SyncItem } from '@synclet/shared';
-import { Download, Eye, FolderInput, FolderOpen, FolderPlus, MoreHorizontal, PencilLine, Share2, Trash2, Upload } from 'lucide-react';
+import { Download, Eye, FilePen, FolderInput, FolderOpen, FolderPlus, MoreHorizontal, PencilLine, Share2, Trash2, Upload } from 'lucide-react';
 import type { ComponentType, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
@@ -9,6 +9,7 @@ import {
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuShortcut, DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { isOfficeFile } from '@/features/office/office';
 import { cn } from '@/lib/utils';
 
 export interface ItemActions {
@@ -19,6 +20,13 @@ export interface ItemActions {
   move(item: SyncItem): void;
   remove(item: SyncItem): void;
   share(item: SyncItem): void;
+  /** Opens an office file in the editor; set only when office editing is available. */
+  openInOffice?(item: SyncItem): void;
+}
+
+/** Whether the menus offer "Open in Office" for this item. */
+export function canOpenInOffice(item: Pick<SyncItem, 'type' | 'name'>, actions: Pick<ItemActions, 'openInOffice'>): boolean {
+  return !!actions.openInOffice && item.type === 'file' && isOfficeFile(item.name);
 }
 
 interface MenuParts {
@@ -39,6 +47,11 @@ function ItemMenuItems({ item, actions, parts: { Item, Separator, Shortcut } }: 
         {item.type === 'folder' ? t('files.open') : t('common.download')}
         <Shortcut>↵</Shortcut>
       </Item>
+      {canOpenInOffice(item, actions) && (
+        <Item onSelect={() => actions.openInOffice?.(item)}>
+          <FilePen />{t('office.open')}
+        </Item>
+      )}
       {actions.preview && item.type === 'file' && (
         <Item onSelect={() => actions.preview?.(item)}>
           <Eye />{t('files.preview')}<Shortcut>{t('files.shortcutPreview')}</Shortcut>

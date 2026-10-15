@@ -18,6 +18,18 @@
 	}
 
 	handle /api/* {
+		# Forward-auth identity headers are only honored from the direct peers in
+		# SYNCLET_TRUSTED_PROXIES (an authenticating outer proxy); from anyone else they are removed
+		# before reaching the server, which trusts Caddy as its forward-auth proxy.
+		# remote_ip = the direct connection, never X-Forwarded-For. Without SYNCLET_TRUSTED_PROXIES
+		# nothing is trusted (192.0.2.255 is a documentation address that never connects).
+		# Custom header names configured in the admin UI (SSO > forward-auth) must be added here too.
+		@untrusted_auth_headers not remote_ip {$SYNCLET_TRUSTED_PROXIES:192.0.2.255/32}
+		request_header @untrusted_auth_headers -Remote-User
+		request_header @untrusted_auth_headers -Remote-Email
+		request_header @untrusted_auth_headers -Remote-Name
+		request_header @untrusted_auth_headers -Remote-Groups
+
 		reverse_proxy server:3000 {
 			# Exactly one address: the client IP as determined above (the server trusts XFF from Caddy).
 			header_up X-Forwarded-For {client_ip}

@@ -8,12 +8,12 @@ const THUMB_SAMPLE = 500;
 
 /**
  * Garbage collection of derivatives (maintenance). A content hash stays live while a live item,
- * a tombstoned item (it may still be paired with a move), a trash manifest entry or an unfinished
- * job references it.
+ * a tombstoned item (it may still be paired with a move), a trash manifest entry, a file version
+ * or an unfinished job references it.
  *
  * Live items are looked up per batch through the partial index `Item_contentHash_idx`
- * (`WHERE "deletedAt" IS NULL`); tombstones and manifest hashes – small sets – are loaded once
- * per run.
+ * (`WHERE "deletedAt" IS NULL`), versions through `FileVersion_sha_idx`; tombstones and manifest
+ * hashes – small sets – are loaded once per run.
  */
 @Injectable()
 export class DerivativesGc {
@@ -37,6 +37,8 @@ export class DerivativesGc {
     const off = offline ?? (await this.offlineShas());
     const rows = await this.prisma.$queryRaw<{ sha: string }[]>`
       SELECT DISTINCT "contentHash" AS sha FROM "Item" WHERE "deletedAt" IS NULL AND "contentHash" = ANY(${batch}::text[])
+      UNION
+      SELECT DISTINCT sha FROM "FileVersion" WHERE sha = ANY(${batch}::text[])
       UNION
       SELECT sha FROM "DerivativeJob" WHERE sha = ANY(${batch}::text[]) AND status IN ('pending', 'running')`;
     const live = new Set(rows.map((r) => r.sha));

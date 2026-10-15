@@ -18,6 +18,8 @@ export interface NameDialogProps {
   label: string;
   placeholder?: string;
   initial?: string;
+  /** Submit the initial value as is (a suggested name) instead of treating it as "no change". */
+  submitInitial?: boolean;
   /** Characters preselected when the dialog opens (base name without extension). */
   selectLength?: number;
   submitLabel: string;
@@ -28,7 +30,7 @@ export interface NameDialogProps {
   onClosed?(): void;
 }
 
-/** Single-field name dialog used for "new folder" and "rename". */
+/** Single-field name dialog used for "new folder", "new document" and "rename". */
 export function NameDialog(p: NameDialogProps) {
   const { t } = useTranslation();
   const initial = p.initial ?? '';
@@ -43,7 +45,7 @@ export function NameDialog(p: NameDialogProps) {
   // Live feedback for bad characters etc.; "empty" only after a submit attempt.
   const shownNameError = nameError && (submitted || nameError !== 'empty') ? t(`files.nameErrors.${nameError}`) : null;
   const error = shownNameError ?? serverError;
-  const unchanged = p.initial !== undefined && name === p.initial;
+  const unchanged = !p.submitInitial && p.initial !== undefined && name === p.initial;
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
