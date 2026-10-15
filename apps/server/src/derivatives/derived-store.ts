@@ -1,9 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 
 const SHA_RE = /^[0-9a-f]{64}$/;
+/** Temp files/dirs older than this are crash leftovers (no write takes that long). */
+const STALE_TMP_MS = 3600_000;
 
 /** Content-addressed store for derivatives below `<metaRoot>/derived` (never inside the data root). */
 @Injectable()
@@ -46,7 +48,8 @@ export class DerivedStore {
 
   /**
    * Deletes `<sha>` directories whose sha is not in the set returned by `liveShas` (given a batch of candidates;
-   * the callback must cover live items, trashed manifests and versions). Returns the number of removed directories.
+   * the callback must cover live items, trashed manifests and in-flight jobs). Returns the number of removed
+   * directories; stale temp files are cleaned afterwards (`cleanTemp`).
    */
   async gc(liveShas: (batch: string[]) => Promise<Set<string>>, batchSize = 500): Promise<number> {
     let removed = 0;
@@ -72,6 +75,33 @@ export class DerivedStore {
       }
     }
     await flush();
+    await this.cleanTemp();
+    return removed;
+  }
+
+  /**
+   * Removes stale temp entries: `.tmp-*` files of interrupted atomic writes inside sha dirs and
+   * worker scratch dirs below `<root>/.tmp`. Returns the number of removed entries.
+   */
+  async cleanTemp(maxAgeMs = STALE_TMP_MS, now = Date.now()): Promise<number> {
+    let removed = 0;
+    const dropIfStale = async (p: string) => {
+      const st = await lstat(p).catch(() => null);
+      if (!st || now - st.mtimeMs < maxAgeMs) return;
+      await rm(p, { recursive: true, force: true });
+      removed++;
+    };
+    for (const name of await readdir(path.join(this.root, '.tmp')).catch(() => [] as string[])) {
+      await dropIfStale(path.join(this.root, '.tmp', name));
+    }
+    for (const prefix of await readdir(this.root).catch(() => [] as string[])) {
+      if (!/^[0-9a-f]{2}$/.test(prefix)) continue;
+      for (const sha of await readdir(path.join(this.root, prefix)).catch(() => [] as string[])) {
+        if (!SHA_RE.test(sha)) continue;
+        const dir = path.join(this.root, prefix, sha);
+        for (const f of await readdir(dir).catch(() => [] as string[])) if (f.startsWith('.tmp-')) await dropIfStale(path.join(dir, f));
+      }
+    }
     return removed;
   }
 }

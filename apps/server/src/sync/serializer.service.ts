@@ -4,6 +4,7 @@ import type { SyncItem } from '@synclet/shared';
 import { lookup } from 'mime-types';
 import { createHash } from 'node:crypto';
 import { assignDisplayNames } from '../common/names';
+import { codeLanguage, previewKind } from '../derivatives/preview-kind';
 import type { IndexUser } from '../common/types';
 import { itemEtag } from '../files/files.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -50,17 +51,25 @@ export class SerializerService {
       });
       for (const [id, name] of assignDisplayNames(sibs)) display.set(id, name);
     }
-    return rows.map((r) => this.one(r, display.get(r.id) ?? r.name));
+    // One query per page: which content hashes have a finished thumbnail.
+    const shas = [...new Set(rows.flatMap((r) => (r.type === 'file' && r.contentHash ? [r.contentHash] : [])))];
+    const thumbs = new Set(shas.length
+      ? (await this.prisma.derivativeJob.findMany({ where: { sha: { in: shas }, kind: 'thumb', status: 'done' }, select: { sha: true } })).map((j) => j.sha)
+      : []);
+    return rows.map((r) => this.one(r, display.get(r.id) ?? r.name, r.contentHash !== null && thumbs.has(r.contentHash)));
   }
 
-  private one(r: Item, name: string): SyncItem {
+  private one(r: Item, name: string, thumbnail: boolean): SyncItem {
     const isFile = r.type === 'file';
+    const mime = isFile ? mimeFor(r.name) : null;
+    const language = isFile ? codeLanguage(r.name) : undefined;
+    const kind = previewKind(r.name, mime);
     return {
       id: toSyncId(r),
       parentId: r.parentId ? `d_${r.parentId}` : ROOT_ID,
       type: r.type, kind: r.type, name,
       size: isFile ? Number(r.size) : 0,
-      mime: isFile ? mimeFor(r.name) : null,
+      mime,
       version: isFile ? r.version : null,
       sha256: isFile ? r.contentHash : null,
       etag: isFile ? itemEtag(r) : folderEtag(r, name),
@@ -69,6 +78,7 @@ export class SerializerService {
       modifiedAt: r.mtime.toISOString(),
       documentId: isFile ? toSyncId(r) : null,
       capabilities: { ...CAPS, addChildren: !isFile },
+      ...(isFile ? { preview: { kind, thumbnail, ...(kind === 'code' && language ? { language } : {}) } } : {}),
     };
   }
 }

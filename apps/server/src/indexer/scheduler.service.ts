@@ -4,6 +4,7 @@ import path from 'node:path';
 import { APP_CONFIG, AppConfig } from '../config';
 import { AppEvents } from '../common/events';
 import { isTempName } from '../common/names';
+import { DerivativesGc } from '../derivatives/derivatives-gc';
 import { userRoot } from '../common/paths';
 import type { IndexUser } from '../common/types';
 import { FilesService } from '../files/files.service';
@@ -30,6 +31,7 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     private readonly store: ItemStore,
     private readonly watcher: WatcherService,
     private readonly files: FilesService,
+    private readonly derivativesGc: DerivativesGc,
     events: AppEvents,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {
@@ -125,5 +127,8 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     // Expired or revoked web sessions are kept for a while (refresh-token reuse detection), then dropped.
     const sessionCutoff = new Date(Date.now() - SESSION_RETENTION_DAYS * DAY);
     await this.prisma.session.deleteMany({ where: { OR: [{ expiresAt: { lt: sessionCutoff } }, { revokedAt: { lt: sessionCutoff } }] } });
+    // Last: tombstones purged above no longer keep their derivatives alive.
+    const gc = await this.derivativesGc.run();
+    if (gc.dirs || gc.jobs) this.log.log(`derivatives gc: ${gc.dirs} dirs, ${gc.jobs} job rows removed`);
   }
 }

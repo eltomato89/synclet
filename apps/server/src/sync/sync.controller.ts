@@ -14,6 +14,7 @@ import { APP_CONFIG, AppConfig } from '../config';
 import { SyncError } from '../common/sync-error';
 import type { AuthUser } from '../common/types';
 import { ZodPipe } from '../common/zod.pipe';
+import { DerivedStore } from '../derivatives/derived-store';
 import { FilesService, itemEtag, OnConflict } from '../files/files.service';
 import { JournalService } from '../journal/journal.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -54,6 +55,7 @@ export class SyncController {
     private readonly serializer: SerializerService,
     private readonly serverConfig: ServerConfigService,
     private readonly auth: AuthService,
+    private readonly derived: DerivedStore,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -227,6 +229,37 @@ export class SyncController {
         return reply.send(fh.createReadStream({ start: range.start, end: range.end }));
       }
       reply.header('Content-Length', size);
+      return reply.send(fh.createReadStream());
+    } finally {
+      if (!handedOver) await fh.close();
+    }
+  }
+
+  /**
+   * Thumbnail (always re-encoded webp, never the original bytes – an SVG is only ever served
+   * rasterized). 404 until the worker has produced it.
+   */
+  @Get('items/:id/thumbnail')
+  @AllowDownloadToken()
+  async thumbnail(@CurrentUser() user: AuthUser, @Param('id') id: string, @Query('size') sizeRaw: string | undefined, @Req() req: FastifyRequest, @Res() reply: FastifyReply) {
+    const size = sizeRaw === undefined || sizeRaw === '256' ? 256 : sizeRaw === '1024' ? 1024 : null;
+    if (size === null) throw new SyncError('invalid_request', 'size must be 256 or 1024');
+    const row = await this.resolveFile(user, id);
+    const sha = row.contentHash;
+    if (!sha) throw new SyncError('not_found', 'no thumbnail');
+    const job = await this.prisma.derivativeJob.findUnique({ where: { sha_kind: { sha, kind: 'thumb' } }, select: { status: true } });
+    if (job?.status !== 'done') throw new SyncError('not_found', 'no thumbnail');
+    const fh = await open(this.derived.pathFor(sha, 'thumb', size), constants.O_RDONLY | constants.O_NOFOLLOW)
+      .catch(() => { throw new SyncError('not_found', 'no thumbnail'); });
+    let handedOver = false;
+    try {
+      const st = await fh.stat();
+      const tag = `${sha}-${size}`;
+      reply.header('ETag', `"${tag}"`).header('Cache-Control', 'private, max-age=31536000, immutable')
+        .header('X-Content-Type-Options', 'nosniff').header('Content-Security-Policy', SANDBOX_CSP);
+      if (etagList(req.headers['if-none-match']).includes(tag)) return reply.status(304).send();
+      reply.header('Content-Type', 'image/webp').header('Content-Length', st.size);
+      handedOver = true;
       return reply.send(fh.createReadStream());
     } finally {
       if (!handedOver) await fh.close();
