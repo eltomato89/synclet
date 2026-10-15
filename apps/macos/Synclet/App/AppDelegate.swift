@@ -59,6 +59,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             accounts.reload()
         }
+        #if DEBUG
+        if runDebugArguments() { return }
+        #endif
         if accounts.isEmpty || ProcessInfo.processInfo.arguments.contains("-SyncletShowLogin") {
             showLogin(prefill: nil)
         }
@@ -66,6 +69,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showSettings()
         }
     }
+
+    #if DEBUG
+    /// Debug builds only, for scripted manual checks without UI automation:
+    /// - `-SyncletAutoSignIn <server>` opens the login window and starts the browser login.
+    /// - `-SyncletSignOutAll` logs each account's pending-change count, signs every account
+    ///   out without asking (domain, token and state removed) and quits.
+    /// Returns `true` when an argument was handled.
+    private func runDebugArguments() -> Bool {
+        let arguments = ProcessInfo.processInfo.arguments
+        if let index = arguments.firstIndex(of: "-SyncletAutoSignIn"), index + 1 < arguments.count {
+            let model = showLogin(prefill: nil)
+            model.serverInput = arguments[index + 1]
+            Task { await model.signIn() }
+            return true
+        }
+        if arguments.contains("-SyncletSignOutAll") {
+            Task {
+                for entry in accounts.entries {
+                    let pending = await accounts.pendingChanges(key: entry.id)
+                    Logger.app.notice("debug sign-out \(entry.title, privacy: .public): pending \(String(describing: pending), privacy: .public)")
+                    await accounts.signOut(key: entry.id)
+                }
+                NSApp.terminate(nil)
+            }
+            return true
+        }
+        return false
+    }
+    #endif
 
     /// `synclet://` URLs outside a running browser login (the session receives its own redirect).
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -91,13 +123,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: - Windows
 
-    func showLogin(prefill: StoredAccount?) {
+    @discardableResult
+    func showLogin(prefill: StoredAccount?) -> LoginModel {
         loginWindow?.close()
         let model = LoginModel(accounts: accounts, prefill: prefill)
         let view = LoginView(model: model) { [weak self] in self?.loginWindow?.close() }
         let window = makeWindow(title: String(localized: "Add Account"), content: view)
         loginWindow = window
         present(window)
+        return model
     }
 
     func showSettings() {
