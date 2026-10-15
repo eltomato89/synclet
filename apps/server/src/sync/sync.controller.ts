@@ -2,6 +2,8 @@ import { Body, Controller, Delete, Get, Headers, HttpCode, Inject, Param, Patch,
 import type { Item } from '@prisma/client';
 import type { SyncAccount, SyncChange, SyncChangesPage, SyncChildrenPage, SyncItem } from '@synclet/shared';
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { constants } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { z } from 'zod';
 import { AuthGuard } from '../auth/auth.guard';
 import { AuthService } from '../auth/auth.service';
@@ -15,7 +17,7 @@ import { DerivedStore } from '../derivatives/derived-store';
 import { FilesService, itemEtag, OnConflict } from '../files/files.service';
 import { JournalService } from '../journal/journal.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { first, HeaderMap, rawBody, sendFile, unquote } from './http-content';
+import { etagList, first, HeaderMap, rawBody, SANDBOX_CSP, sendFile, unquote } from './http-content';
 import { SerializerService } from './serializer.service';
 import { parseSyncId, ROOT_ID, toSyncId, UUID } from './sync-ids';
 
