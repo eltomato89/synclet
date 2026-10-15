@@ -25,6 +25,7 @@ type TxResult =
   | { kind: 'ok'; subdirs: string[]; newDirs: string[]; parentId: string | null; pending: DiskEntry[] }
   | Exclude<OneResult, { kind: 'ok' }>;
 export interface InodeRef { dev: bigint | null; ino: bigint | null }
+export interface ChildRef extends InodeRef { type: Item['type']; size: bigint; mtime: Date }
 
 const isErrno = (e: unknown, ...codes: string[]) => codes.includes((e as NodeJS.ErrnoException)?.code ?? '');
 const inodeKey = (r: InodeRef) => `${r.dev}:${r.ino}`;
@@ -40,11 +41,18 @@ function chunks<T>(xs: T[], n: number): T[][] {
 /**
  * Folder inode-reuse guard: a disk folder may only be paired with an existing folder row when there is
  * evidence that it is the same folder – both are empty, or at least one former child is in the new folder.
+ * A former child only counts if it would itself be paired: same inode and type and, for files, the same
+ * size and mtime (file systems like ext4 hand a freed inode straight to the next new file).
  */
-export function folderMoveHasEvidence(oldChildren: InodeRef[], newChildren: InodeRef[]): boolean {
+export function folderMoveHasEvidence(oldChildren: ChildRef[], newChildren: ChildRef[]): boolean {
   if (oldChildren.length === 0) return newChildren.length === 0;
-  const fresh = new Set(newChildren.map(inodeKey));
-  return oldChildren.some((c) => c.ino !== null && c.dev !== null && fresh.has(inodeKey(c)));
+  const fresh = new Map(newChildren.map((c) => [inodeKey(c), c]));
+  return oldChildren.some((c) => {
+    if (c.ino === null || c.dev === null) return false;
+    const n = fresh.get(inodeKey(c));
+    if (!n || n.type !== c.type) return false;
+    return c.type === 'folder' || (n.size === c.size && n.mtime.getTime() === c.mtime.getTime());
+  });
 }
 
 @Injectable()
@@ -355,7 +363,7 @@ export class IndexerService {
     // Live candidate: its live children. Tombstoned candidate: the children tombstoned together with it.
     const oldChildren = await tx.item.findMany({
       where: { ownerId: user.id, parentId: cand.id, deletedAt: cand.deletedAt },
-      select: { dev: true, ino: true },
+      select: { dev: true, ino: true, type: true, size: true, mtime: true },
     });
     let fresh: DiskEntry[];
     try {
