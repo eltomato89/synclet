@@ -29,6 +29,19 @@ describe('listenConnectionString (Prisma DATABASE_URL → pg)', () => {
     for (const k of ['schema', 'connection_limit', 'pgbouncer']) expect(new URL(s).searchParams.has(k)).toBe(false);
   });
 
+  it("maps Prisma's sslcert (server CA) to sslrootcert with sslaccept=strict, else drops it", () => {
+    const strict = new URL(listenConnectionString('postgresql://u:p@db/s?sslmode=require&sslaccept=strict&sslcert=./certs/ca.pem', '/app/prisma')).searchParams;
+    expect(strict.get('sslrootcert')).toBe('/app/prisma/certs/ca.pem');
+    expect(strict.has('sslcert')).toBe(false);
+    expect(strict.get('sslmode')).toBe('verify-full');
+    const abs = new URL(listenConnectionString('postgresql://u:p@db/s?sslmode=require&sslaccept=strict&sslcert=/etc/ssl/ca.pem', '/app/prisma')).searchParams;
+    expect(abs.get('sslrootcert')).toBe('/etc/ssl/ca.pem');
+    const lax = new URL(listenConnectionString('postgresql://u:p@db/s?sslmode=require&sslcert=./ca.pem', '/app/prisma')).searchParams;
+    expect(lax.has('sslcert')).toBe(false);
+    expect(lax.has('sslrootcert')).toBe(false);
+    expect(ssl('postgresql://u:p@db/s?sslmode=require&sslcert=./ca.pem')).toMatchObject({ rejectUnauthorized: false });
+  });
+
   it("detects Prisma's transaction-pooler flag", () => {
     expect(usesTransactionPooler('postgresql://u:p@db/s?pgbouncer=true')).toBe(true);
     expect(usesTransactionPooler('postgresql://u:p@db/s')).toBe(false);
@@ -44,6 +57,16 @@ describe('listenClientFactory', () => {
     await c.query('LISTEN synclet_changes');
     await c.end();
   });
+
+  it.each(['sslmode=require', 'sslmode=verify-full', 'sslmode=require&sslaccept=strict', 'sslmode=verify-full&sslaccept=strict'])(
+    '%s never falls back to plaintext (server without TLS: every attempt fails)', async (params) => {
+      const make = listenClientFactory(`${url}?${params}`);
+      for (let i = 0; i < 3; i++) {
+        const c = make();
+        await expect(c.connect()).rejects.toThrow(/does not support SSL/i);
+        await c.end().catch(() => undefined);
+      }
+    });
 
   it('sslmode=prefer against a server without TLS falls back to plain on the next attempt', async () => {
     const make = listenClientFactory(`${url}?sslmode=prefer`);

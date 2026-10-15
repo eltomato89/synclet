@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { Client } from 'pg';
 import type { ListenClient } from './change-notifier';
 
@@ -8,12 +9,21 @@ import type { ListenClient } from './change-notifier';
  *   certificate), while `pg` reads them as `verify-full` unless `uselibpqcompat=true` is set, so a
  *   URL that works for Prisma against a self-signed server would never connect here.
  * - `sslaccept=strict` (Prisma: verify the certificate) becomes `sslmode=verify-full`.
+ * - Prisma's `sslcert` is the server's CA (path relative to the `prisma/` directory), pg's is a
+ *   client certificate: with `sslaccept=strict` it becomes pg's `sslrootcert` (resolved against
+ *   `prismaDir`), otherwise it is dropped (Prisma does not verify then either).
  * - Prisma-only parameters (`schema`, `connection_limit`, `pgbouncer`, ...) are dropped.
  */
-export function listenConnectionString(databaseUrl: string): string {
+/** `apps/server/prisma` (from `src/events` in tests and `dist/events` in the image). */
+const PRISMA_DIR = path.join(__dirname, '..', '..', 'prisma');
+
+export function listenConnectionString(databaseUrl: string, prismaDir: string = PRISMA_DIR): string {
   const url = new URL(databaseUrl);
   const q = url.searchParams;
   const strict = q.get('sslaccept') === 'strict';
+  const ca = q.get('sslcert');
+  q.delete('sslcert');
+  if (ca && strict && !q.has('sslrootcert')) q.set('sslrootcert', path.resolve(prismaDir, ca));
   for (const k of ['schema', 'connection_limit', 'pool_timeout', 'pgbouncer', 'statement_cache_size', 'socket_timeout', 'sslaccept', 'sslidentity', 'sslpassword', 'connect_timeout']) q.delete(k);
   const mode = q.get('sslmode');
   if (mode && strict && mode !== 'disable') q.set('sslmode', 'verify-full');

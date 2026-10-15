@@ -201,15 +201,17 @@ describe('GET /api/sync/v1/events (SSE)', () => {
     expect(s.of('bye').at(-1)?.data).toEqual({ reason: 'unauthorized' });
   });
 
-  it('streams that ended free their slot: 10 open, 5 closed by the client, 5 more → no bye', async () => {
+  it('streams that ended free their slot: 10 open, the newest 5 closed by the client, 5 more → no bye', async () => {
     const first: StreamClient[] = [];
     for (let i = 0; i < 10; i++) first.push(await opened());
-    for (const s of first.slice(0, 5)) s.close();
+    // Close the newest: were closed streams kept in the list, the next opens would evict the
+    // oldest (still open) ones with `bye`.
+    for (const s of first.slice(5)) s.close();
     await sleep(200);
     const more: StreamClient[] = [];
     for (let i = 0; i < 5; i++) more.push(await opened());
     await sleep(300);
-    for (const s of [...first.slice(5), ...more]) {
+    for (const s of [...first.slice(0, 5), ...more]) {
       expect(s.ended).toBe(false);
       expect(s.of('bye')).toEqual([]);
     }
