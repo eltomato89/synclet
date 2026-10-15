@@ -182,7 +182,9 @@
       "dismiss": "Remove from list"
     },
     "preview": "Preview",
-    "shortcutPreview": "Space"
+    "shortcutPreview": "Space",
+    "versionsShort": "Versions",
+    "versions": "Versions …"
   },
   "preview": {
     "close": "Close preview",
@@ -624,5 +626,26 @@
     "invalidLink": "This sign-in link is incomplete or damaged. Start the sign-in again in the app.",
     "invalidClient": "This app isn't allowed to sign in to this server. Start the sign-in again in the app, or update the app.",
     "unreachable": "The server isn't responding. Check the connection and try again."
+  },
+  "versions": {
+    "title": "Versions",
+    "description": "Earlier versions of “{{name}}”",
+    "number": "Version {{n}}",
+    "source": {
+      "office": "Office",
+      "restore": "Restored",
+      "api": "Synced"
+    },
+    "preview": "Preview version {{n}}",
+    "download": "Download version {{n}}",
+    "restore": "Restore version {{n}}",
+    "emptyTitle": "No earlier versions",
+    "emptyBody": "When this file is replaced, the previous content is kept here.",
+    "loadFailed": "The versions couldn't be loaded.",
+    "confirmTitle": "Restore version {{n}}?",
+    "confirmBody": "The current version is saved as a version first, so nothing is lost.",
+    "restoreAction": "Restore",
+    "restoring": "Restoring …",
+    "restored": "Version {{n}} restored"
   }
 }

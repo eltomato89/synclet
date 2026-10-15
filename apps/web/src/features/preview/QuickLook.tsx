@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Download, FilePen, Share2, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, FilePen, History, Share2, X } from 'lucide-react';
 import { Dialog as DialogPrimitive } from 'radix-ui';
 import { type ComponentProps, type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -30,6 +30,8 @@ export interface QuickLookProps<E extends QuickLookEntry> {
   onShare?(entry: E): void;
   /** Set when office editing is available; offered for office files. */
   onOpenInOffice?(entry: E): void;
+  /** Set when versions are enabled; opens the versions panel for the file. */
+  onVersions?(entry: E): void;
 }
 
 type Resolved = { id: string; source: PreviewSource } | { id: string; error: true };
@@ -40,7 +42,7 @@ type Resolved = { id: string; source: PreviewSource } | { id: string; error: tru
  * sort order, Space or Esc closes. Focus is trapped while open and handed back via `onClosed`.
  */
 export function QuickLook<E extends QuickLookEntry>(props: QuickLookProps<E>) {
-  const { entries, activeId, open, onActiveChange, onOpenChange, onClosed, resolveSource, onDownload, onShare, onOpenInOffice } = props;
+  const { entries, activeId, open, onActiveChange, onOpenChange, onClosed, resolveSource, onDownload, onShare, onOpenInOffice, onVersions } = props;
   const { t, i18n } = useTranslation();
   const contentRef = useRef<HTMLDivElement>(null);
   // The entry stays displayable if it vanishes from the list (deleted elsewhere) while open.
@@ -139,6 +141,7 @@ export function QuickLook<E extends QuickLookEntry>(props: QuickLookProps<E>) {
                   <FilePen /><span className="max-sm:sr-only">{t('office.open')}</span>
                 </Button>
               )}
+              {entry && onVersions && <HeaderButton label={t('files.versionsShort')} onClick={() => onVersions(entry)}><History /></HeaderButton>}
               {entry && onShare && <HeaderButton label={t('preview.share')} onClick={() => onShare(entry)}><Share2 /></HeaderButton>}
               {download && <HeaderButton label={t('common.download')} onClick={download}><Download /></HeaderButton>}
               <span aria-hidden className="mx-1.5 h-5 w-px bg-border" />

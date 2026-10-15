@@ -182,7 +182,9 @@
       "dismiss": "Aus der Liste entfernen"
     },
     "preview": "Vorschau",
-    "shortcutPreview": "Leertaste"
+    "shortcutPreview": "Leertaste",
+    "versionsShort": "Versionen",
+    "versions": "Versionen …"
   },
   "preview": {
     "close": "Vorschau schließen",
@@ -624,5 +626,26 @@
     "invalidLink": "Dieser Anmeldelink ist unvollständig oder beschädigt. Starte die Anmeldung erneut in der App.",
     "invalidClient": "Diese App darf sich bei diesem Server nicht anmelden. Starte die Anmeldung erneut in der App oder aktualisiere sie.",
     "unreachable": "Der Server antwortet nicht. Prüf die Verbindung und versuch es erneut."
+  },
+  "versions": {
+    "title": "Versionen",
+    "description": "Frühere Versionen von „{{name}}“",
+    "number": "Version {{n}}",
+    "source": {
+      "office": "Office",
+      "restore": "Wiederhergestellt",
+      "api": "Synchronisiert"
+    },
+    "preview": "Version {{n}} ansehen",
+    "download": "Version {{n}} herunterladen",
+    "restore": "Version {{n}} wiederherstellen",
+    "emptyTitle": "Keine früheren Versionen",
+    "emptyBody": "Wird diese Datei ersetzt, bleibt der bisherige Inhalt hier erhalten.",
+    "loadFailed": "Die Versionen konnten nicht geladen werden.",
+    "confirmTitle": "Version {{n}} wiederherstellen?",
+    "confirmBody": "Die aktuelle Fassung wird dabei als Version gesichert.",
+    "restoreAction": "Wiederherstellen",
+    "restoring": "Wird wiederhergestellt …",
+    "restored": "Version {{n}} wiederhergestellt"
   }
 }
