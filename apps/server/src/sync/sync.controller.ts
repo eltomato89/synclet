@@ -2,9 +2,6 @@ import { Body, Controller, Delete, Get, Headers, HttpCode, Inject, Param, Patch,
 import type { Item } from '@prisma/client';
 import type { SyncAccount, SyncChange, SyncChangesPage, SyncChildrenPage, SyncItem } from '@synclet/shared';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { constants } from 'node:fs';
-import { open } from 'node:fs/promises';
-import { PassThrough, Readable } from 'node:stream';
 import { z } from 'zod';
 import { AuthGuard } from '../auth/auth.guard';
 import { AuthService } from '../auth/auth.service';
@@ -17,32 +14,19 @@ import { ZodPipe } from '../common/zod.pipe';
 import { FilesService, itemEtag, OnConflict } from '../files/files.service';
 import { JournalService } from '../journal/journal.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { parseRange } from './range';
-import { mimeFor, SerializerService } from './serializer.service';
+import { first, HeaderMap, rawBody, sendFile, unquote } from './http-content';
+import { SerializerService } from './serializer.service';
 import { parseSyncId, ROOT_ID, toSyncId, UUID } from './sync-ids';
 
 const CreateBody = z.object({ parentId: z.string(), type: z.literal('folder'), name: z.string(), onConflict: z.enum(['fail', 'rename']).optional() });
 const PatchBody = z.object({ name: z.string().optional(), parentId: z.string().optional() });
 
-type HeaderMap = Record<string, string | string[] | undefined>;
-
-const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
-const unquote = (v: string | undefined) => v?.trim().replace(/^W\//, '').replace(/^"(.*)"$/, '$1');
-/** Entity tags of an If-None-Match / If-Match list, unquoted. */
-const etagList = (v: string | string[] | undefined) => (first(v) ?? '').split(',').map((t) => unquote(t) ?? '').filter(Boolean);
 const modifiedAt = (h: HeaderMap) => {
   const raw = first(h['x-synclet-modified-at']) ?? first(h['x-buro-modified-at']);
   const d = raw ? new Date(raw) : null;
   return d && !Number.isNaN(d.getTime()) ? d : null;
 };
 const clampLimit = (raw: string | undefined) => Math.min(Math.max(Math.floor(Number(raw)) || 500, 1), 1000);
-
-/** RFC 5987 encoding (encodeURIComponent leaves `'()*!` alone, which are not attr-chars). */
-const rfc5987 = (s: string) => encodeURIComponent(s).replace(/['()*!]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
-const asciiFallback = (s: string) => s.replace(/[^\x20-\x7e]|["\\]/g, '_');
-
-/** User content must never run as script on the app origin (HTML/SVG uploads). PDFs stay viewable inline. */
-const SANDBOX_CSP = "default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'; sandbox";
 
 @Controller('sync/v1')
 @UseGuards(AuthGuard)
@@ -83,21 +67,8 @@ export class SyncController {
     return (await this.serializer.toSyncItems(user, [row]))[0];
   }
 
-  /**
-   * Raw request body as a stream. The octet-stream parser hands us the request stream; an
-   * empty body never reaches the parser. Anything else (JSON, text) would be silently lost.
-   */
-  private rawBody(body: unknown, headers: HeaderMap): Readable {
-    const length = first(headers['content-length']);
-    if (length !== undefined && Number(length) > this.config.maxUploadBytes) throw new SyncError('too_large');
-    if (body instanceof Readable) return body;
-    const hasBody = (length !== undefined && Number(length) > 0) || headers['transfer-encoding'] !== undefined;
-    if ((body !== undefined && body !== null) || hasBody) {
-      throw new SyncError('invalid_request', 'body must be sent as application/octet-stream');
-    }
-    const empty = new PassThrough();
-    empty.end();
-    return empty;
+  private rawBody(body: unknown, headers: HeaderMap) {
+    return rawBody(body, headers, this.config.maxUploadBytes);
   }
 
   @Get('account')
@@ -186,51 +157,7 @@ export class SyncController {
     if (!parsed) throw new SyncError('invalid_request', 'invalid id');
     if (parsed.kind !== 'file') throw new SyncError('invalid_request', 'not a file');
     const { item, abs } = await this.files.openRead(user, parsed.uuid);
-    // Size and dates come from the opened file, so Content-Length always matches the bytes sent
-    // (the file may have been edited on the host and not be indexed yet).
-    // O_NOFOLLOW: a symlink swapped in after the realpath check is never followed.
-    const fh = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW).catch(() => { throw new SyncError('not_found'); });
-    let handedOver = false;
-    try {
-      const st = await fh.stat({ bigint: true });
-      if (!st.isFile()) throw new SyncError('not_found');
-      const size = Number(st.size);
-      const mtime = new Date(Number(st.mtimeMs)); // same derivation as the indexer (statEntry)
-      const tag = `v${item.version}`;
-      reply.header('ETag', `"${tag}"`).header('Accept-Ranges', 'bytes').header('Last-Modified', mtime.toUTCString());
-      const inm = etagList(req.headers['if-none-match']);
-      if (inm.includes(tag) || inm.includes('*')) return reply.status(304).send();
-      // If-Range: resume only if the client's validator still describes these bytes; otherwise
-      // send the full file (200) so a resumed download never splices bytes of a changed file.
-      // The version tag only counts while the file on disk still matches the indexed row (a host
-      // edit that is not indexed yet keeps the old version number).
-      const onDiskMatchesRow = st.size === item.size && mtime.getTime() === item.mtime.getTime() &&
-        (item.ino === null || (st.ino === item.ino && st.dev === item.dev));
-      const ifRange = first(req.headers['if-range'])?.trim();
-      const rangeAllowed = !ifRange || (/^(W\/)?"/.test(ifRange)
-        ? !ifRange.startsWith('W/') && unquote(ifRange) === tag && onDiskMatchesRow
-        : ifRange === mtime.toUTCString());
-      const range = rangeAllowed ? parseRange(first(req.headers.range), size) : null;
-      if (range === 'invalid') {
-        return reply.status(416).header('Content-Range', `bytes */${size}`).type('application/json')
-          .send({ statusCode: 416, message: 'range not satisfiable', code: 'range_not_satisfiable' });
-      }
-      const mime = mimeFor(item.name);
-      reply.header('Content-Type', mime).header('X-Content-Type-Options', 'nosniff');
-      if (mime !== 'application/pdf') reply.header('Content-Security-Policy', SANDBOX_CSP);
-      if (download === '1') {
-        reply.header('Content-Disposition', `attachment; filename="${asciiFallback(item.name)}"; filename*=UTF-8''${rfc5987(item.name)}`);
-      }
-      handedOver = true;
-      if (range) {
-        reply.status(206).header('Content-Range', `bytes ${range.start}-${range.end}/${size}`).header('Content-Length', range.end - range.start + 1);
-        return reply.send(fh.createReadStream({ start: range.start, end: range.end }));
-      }
-      reply.header('Content-Length', size);
-      return reply.send(fh.createReadStream());
-    } finally {
-      if (!handedOver) await fh.close();
-    }
+    return sendFile(req, reply, item, abs, { download: download === '1' });
   }
 
   @Put('items/:id/content')

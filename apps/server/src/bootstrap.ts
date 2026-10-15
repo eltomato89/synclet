@@ -10,14 +10,14 @@ export async function configureApp(app: NestFastifyApplication): Promise<void> {
   const fastify = app.getHttpAdapter().getInstance();
   // Raw uploads: application/octet-stream bodies are passed through as a stream (never buffered).
   fastify.addContentTypeParser('application/octet-stream', (req, payload: Readable, done) => {
-    if (!req.url.startsWith('/api/sync/')) {
+    if (!req.url.startsWith('/api/sync/') && !isPublicShareUpload(req.method, req.url)) {
       const err = Object.assign(new Error('Unsupported Media Type'), { statusCode: 415 });
       done(err, undefined);
       return;
     }
     done(null, payload);
   });
-  // Any other content type: Fastify would answer a bare 415. On the raw-upload sync routes the
+  // Any other content type: Fastify would answer a bare 415. On the raw-upload routes the
   // handler answers instead with a Sync-format 400 invalid_request (the marker body is rejected by
   // rawBody without reading the stream); everywhere else the 415 stays.
   fastify.addContentTypeParser('*', (req, _payload: Readable, done) => {
@@ -35,7 +35,12 @@ export async function configureApp(app: NestFastifyApplication): Promise<void> {
 /** Marker body for a sync upload sent with an unsupported Content-Type. */
 export const UNSUPPORTED_BODY = Symbol('unsupported-body');
 
+function isPublicShareUpload(method: string, url: string): boolean {
+  return method === 'POST' && /^\/api\/public\/shares\/[^/]+\/upload$/.test(url.split('?')[0]);
+}
+
 function isRawUploadRoute(method: string, url: string): boolean {
   const p = url.split('?')[0];
-  return (method === 'POST' && p === '/api/sync/v1/items/upload') || (method === 'PUT' && /^\/api\/sync\/v1\/items\/[^/]+\/content$/.test(p));
+  return (method === 'POST' && p === '/api/sync/v1/items/upload') || (method === 'PUT' && /^\/api\/sync\/v1\/items\/[^/]+\/content$/.test(p)) ||
+    isPublicShareUpload(method, url);
 }
