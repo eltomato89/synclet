@@ -179,5 +179,83 @@
       "close": "Close uploads",
       "dismiss": "Remove from list"
     }
+  },
+  "publicShare": {
+    "region": "Shared content",
+    "sharedFolder": "<b>{{name}}</b> shared a folder with you",
+    "sharedFile": "<b>{{name}}</b> shared a file with you",
+    "expires": "Available until {{date}}",
+    "viewOnly": "View only",
+    "download": "Download",
+    "downloadNamed": "Download {{name}}",
+    "downloadAll": "Download all as ZIP",
+    "downloadFolder": "Download folder",
+    "folder": "Folder",
+    "contents": "Contents",
+    "breadcrumb": "Location in this share",
+    "view": "View",
+    "viewList": "List",
+    "viewGrid": "Grid",
+    "empty": "This folder is empty",
+    "emptyUpload": "Add files with the upload area below.",
+    "folderGone": "That folder isn't in this share anymore.",
+    "footer": "Shared with Synclet. The files are stored on the owner's own server, and this page is hidden from search engines.",
+    "gate": {
+      "title": "This link is password protected",
+      "body": "Enter the password you received together with the link.",
+      "relock": "Your access has run out. Enter the password again to continue.",
+      "password": "Password",
+      "open": "Open",
+      "opening": "Opening …"
+    },
+    "gone": {
+      "notFoundTitle": "This link doesn't work",
+      "notFoundBody": "The owner may have removed it, or the address is incomplete. Ask the person who sent it for a new link.",
+      "expiredTitle": "This link has expired",
+      "expiredBody": "The owner set this link to stop working after a certain date. Ask them for a new link."
+    },
+    "failed": {
+      "title": "Can't open this link",
+      "rateLimitedTitle": "Too many requests"
+    },
+    "errors": {
+      "wrong_password": "That password isn't right.",
+      "rateLimited": "Too many attempts. Wait a moment, then try again.",
+      "rateLimitedWait_one": "Too many attempts. Try again in {{count}} second.",
+      "rateLimitedWait_other": "Too many attempts. Try again in {{count}} seconds.",
+      "network": "No connection to the server. Check your internet connection and try again.",
+      "unknown": "Something went wrong on the server. Try again in a moment.",
+      "listing": "This folder couldn't be loaded."
+    },
+    "preview": {
+      "imageAlt": "Preview of {{name}}",
+      "none": "There's no preview for this file. Download it to open it on your device.",
+      "noneNoDownload": "There's no preview for this file, and the owner has turned off downloads for this link."
+    },
+    "quickLook": {
+      "position": "{{index}} of {{count}}, {{size}}",
+      "previous": "Previous file",
+      "next": "Next file"
+    },
+    "upload": {
+      "title": "Add files to “{{folder}}”",
+      "hint": "Drop files anywhere on this page, or choose them from your device. Files with a name that's already taken are saved under a new name.",
+      "choose": "Choose files",
+      "listLabel": "Your uploads",
+      "queued": "Waiting",
+      "progress": "{{loaded}} of {{total}}",
+      "done": "Uploaded",
+      "renamed": "Uploaded as “{{name}}”, the original name was taken",
+      "cancel": "Cancel upload",
+      "clear": "Clear list",
+      "errors": {
+        "too_large": "The file is too large, or this link's upload limit for today is used up.",
+        "rate_limited": "Too many uploads from your connection. Try again later.",
+        "not_allowed": "This link no longer accepts uploads.",
+        "invalid_name": "This file name isn't allowed. Rename the file and try again.",
+        "network": "The connection was lost during the upload.",
+        "unknown": "The upload didn't work. Try again."
+      }
+    }
   }
 }

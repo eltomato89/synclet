@@ -1,8 +1,9 @@
-import { createBrowserRouter, Navigate, Outlet, useLocation } from 'react-router';
+import { createBrowserRouter, Navigate, Outlet, type RouteObject, useLocation } from 'react-router';
 import { AppShell } from '@/components/app-shell/AppShell';
 import { ConnectionError } from '@/components/ConnectionError';
 import { FullPageSpinner } from '@/components/FullPageSpinner';
-import { useAuth } from '@/lib/auth';
+import { PublicSharePage } from '@/features/public/PublicSharePage';
+import { AuthProvider, useAuth } from '@/lib/auth';
 import { FilesPage } from '@/pages/FilesPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
@@ -21,21 +22,37 @@ function RequireAuth() {
   return <Outlet />;
 }
 
-export const router = createBrowserRouter([
-  { path: '/setup', element: <SetupPage /> },
-  { path: '/login', element: <LoginPage /> },
-  { path: '/', element: <Navigate to="/files" replace /> },
+/**
+ * Session context for the app routes only. The public share page lives outside it, so visiting a
+ * share link never probes, refreshes or redirects a session (no `/api/auth/*` or setup calls).
+ */
+function AuthRoot() {
+  return <AuthProvider><Outlet /></AuthProvider>;
+}
+
+export const routes: RouteObject[] = [
+  { path: '/s/:token', element: <PublicSharePage /> },
   {
-    element: <RequireAuth />,
+    element: <AuthRoot />,
     children: [
+      { path: '/setup', element: <SetupPage /> },
+      { path: '/login', element: <LoginPage /> },
+      { path: '/', element: <Navigate to="/files" replace /> },
       {
-        element: <AppShell />,
+        element: <RequireAuth />,
         children: [
-          { path: '/files', element: <FilesPage /> },
-          { path: '/files/:folderId', element: <FilesPage /> },
+          {
+            element: <AppShell />,
+            children: [
+              { path: '/files', element: <FilesPage /> },
+              { path: '/files/:folderId', element: <FilesPage /> },
+            ],
+          },
         ],
       },
     ],
   },
   { path: '*', element: <NotFoundPage /> },
-]);
+];
+
+export const router = createBrowserRouter(routes);
