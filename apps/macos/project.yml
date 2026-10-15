@@ -1,0 +1,108 @@
+name: Synclet
+options:
+  bundleIdPrefix: tech.jensk
+  developmentLanguage: en
+  deploymentTarget:
+    macOS: "26.0"
+packages:
+  # Shared core with the later iOS app (Sync API client, credentials, accounts,
+  # File Provider base class). Not changed from this project.
+  SyncletKit:
+    path: ../apple/SyncletKit
+settings:
+  base:
+    DEVELOPMENT_TEAM: JC32M95WLZ
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: 1
+    SWIFT_VERSION: "6.0"
+    ENABLE_HARDENED_RUNTIME: true
+    LOCALIZATION_PREFERS_STRING_CATALOGS: true
+    SWIFT_EMIT_LOC_STRINGS: true
+    # Group identifiers (Info.plist + entitlements). On macOS the app group carries the
+    # team prefix ($(TeamIdentifierPrefix) = "$(DEVELOPMENT_TEAM).").
+    SYNCLET_APP_GROUP: "$(DEVELOPMENT_TEAM).group.tech.jensk.synclet"
+    SYNCLET_KEYCHAIN_GROUP: "$(DEVELOPMENT_TEAM).tech.jensk.synclet.shared"
+targets:
+  Synclet:
+    type: application
+    platform: macOS
+    sources:
+      - path: Synclet
+        excludes:
+          - "**/.*.swp"
+      - Shared
+    dependencies:
+      - package: SyncletKit
+      - target: SyncletFileProvider
+        embed: true
+    info:
+      path: Synclet/Info.plist
+      properties:
+        CFBundleDisplayName: Synclet
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSUIElement: true
+        LSApplicationCategoryType: public.app-category.productivity
+        NSHumanReadableCopyright: "© Jens Köhler"
+        SyncletAppGroup: $(SYNCLET_APP_GROUP)
+        SyncletKeychainAccessGroup: $(SYNCLET_KEYCHAIN_GROUP)
+        CFBundleURLTypes:
+          - CFBundleURLName: tech.jensk.synclet.oauth
+            CFBundleURLSchemes: [synclet]
+        # Local servers (http://localhost:<port>, LAN addresses) without an ATS exception for other hosts.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: tech.jensk.synclet.mac
+        PRODUCT_NAME: Synclet
+        CODE_SIGN_ENTITLEMENTS: Synclet/Synclet.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+    scheme:
+      testTargets:
+        - SyncletTests
+  SyncletFileProvider:
+    type: app-extension
+    platform: macOS
+    sources:
+      - SyncletFileProvider
+      - Shared
+    dependencies:
+      - package: SyncletKit
+    info:
+      path: SyncletFileProvider/Info.plist
+      properties:
+        CFBundleDisplayName: Synclet
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        SyncletAppGroup: $(SYNCLET_APP_GROUP)
+        SyncletKeychainAccessGroup: $(SYNCLET_KEYCHAIN_GROUP)
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.fileprovider-nonui
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).FileProviderExtension
+          NSExtensionFileProviderDocumentGroup: $(SYNCLET_APP_GROUP)
+          NSExtensionFileProviderSupportsEnumeration: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: tech.jensk.synclet.mac.fileprovider
+        PRODUCT_NAME: SyncletFileProvider
+        CODE_SIGN_ENTITLEMENTS: SyncletFileProvider/SyncletFileProvider.entitlements
+        ENABLE_APP_SANDBOX: true
+        SKIP_INSTALL: true
+  SyncletTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - SyncletTests
+    dependencies:
+      - target: Synclet
+    settings:
+      GENERATE_INFOPLIST_FILE: true
+      PRODUCT_BUNDLE_IDENTIFIER: tech.jensk.synclet.mac.tests
+      TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Synclet.app/Contents/MacOS/Synclet"
+      BUNDLE_LOADER: "$(TEST_HOST)"
