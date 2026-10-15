@@ -36,10 +36,10 @@
 
 | Wave | Tasks | Depends on |
 |---|---|---|
-| 0 | T1 Foundation (schema, config, shared types, SecretBox/import-esm extraction) | – |
-| 1 | T2 Versions backend · T3 Office backend · T4 App login (PKCE) backend · T5 SSO backend · T6 Admin backend | T1 |
+| 0 | T1 Foundation (schema, config, shared types, SecretBox/import-esm extraction) · T12a Caddy front proxy + office service (deploy only, no app code) | – |
+| 1 | T2 Versions backend · T3 Office backend · T4 App login (PKCE) backend · T5 SSO backend · T6 Admin backend | T1 (T3 verifies against the T12a stack) |
 | 2 | T7 Web Office · T8 Web Versions · T9 Web Admin · T10 Web login/SSO/app-login · T11 Sync contract (OpenAPI + conformance + SYNC_API.md) | wave 1 (T7←T3, T8←T2, T9←T5+T6, T10←T4+T5, T11←T4) |
-| 3 | T12 Docker/Caddy/README | T3, T5 |
+| 3 | T12b README + remaining deploy wiring (SSO env, forward-auth header stripping, CSP for office) | T3, T5, T12a |
 | 4 | T13 End-to-end | all |
 
 ---
@@ -321,9 +321,23 @@ Port Buro `app-login.service.ts` + `app-clients.ts` (single-tenant: no workspace
 
 ---
 
-### Task 12: Docker, Caddy, README
+### Task 12a: Caddy front proxy with Euro-Office on its own subdomain (wave 0)
 
-**Files:** `deploy/compose.yml` (service `office` with `profiles: ["office"]`, image `ghcr.io/euro-office/documentserver:${OFFICE_TAG:-latest}`, env `JWT_ENABLED=true`, `JWT_SECRET=${OFFICE_JWT_SECRET:?}` only when profile active (use a separate `compose.office.yml` override if `:?` interpolation would break non-office starts), `ALLOW_PRIVATE_IP_ADDRESS=true`, volumes for data/lib/logs, `mem_limit` note; server env `OFFICE_URL`, `OFFICE_JWT_SECRET`, `OFFICE_API_URL=http://server:3000/api`, `OFFICE_INTERNAL_URL=http://office`, `SYNCLET_VERSIONS`, `SYNCLET_VERSIONS_MAX_BYTES`, `SYNCLET_SSO_EMERGENCY`), `deploy/Caddyfile` (site block for `{$SYNCLET_OFFICE_SITE_ADDRESS}` → `office:80` with `header_up X-Forwarded-Proto {scheme}` and `X-Forwarded-Host {host}`; SPA CSP extended with `script-src 'self' {$OFFICE_URL}`, `frame-src 'self' blob: {$OFFICE_URL}`, `connect-src 'self' {$OFFICE_URL}`; strip forward-auth headers (`Remote-User`, `Remote-Email`, `Remote-Name`, `Remote-Groups`) from requests whose direct peer is not in `{$SYNCLET_TRUSTED_PROXIES}`), `deploy/.env.example`, `README.md` (Office setup incl. DNS/TLS for the office subdomain and RAM needs; versions explanation + retention table; SSO setup guides: Authentik, Keycloak, Authelia (OIDC) and Authelia/Authentik forward-auth via outer proxy or Caddy `forward_auth`; emergency recovery; app login; admin area).
+User decision (2026-10-15): Caddy is the single entry point in front of the whole stack and serves Euro-Office on its own subdomain.
+
+**Files:** `deploy/compose.yml`, `deploy/compose.office.yml` (office profile/override), `deploy/Caddyfile`, `deploy/.env.example`.
+
+**Requirements:**
+- Two Caddy sites: `{$SYNCLET_SITE_ADDRESS}` (web + `/api/*` as today) and `{$SYNCLET_OFFICE_SITE_ADDRESS}` → `reverse_proxy office:80` (unbuffered, WebSocket upgrade works – Document Server uses WebSockets – long timeouts, `header_up X-Forwarded-Proto {scheme}`, `header_up X-Forwarded-Host {host}`, request body unlimited for uploads up to `maxUploadBytes`). Site addresses can be domains (automatic Let's Encrypt for both; ports 80/443 required) or `:port` / `http://office.example.com` forms for running behind an existing proxy that terminates TLS; the office site is only active when the office profile/override is used (no Caddy error when the office container is absent: guard with an env-driven import or a second Caddyfile snippet included via `import` only in the office override).
+- `office` service: `ghcr.io/euro-office/documentserver:${OFFICE_TAG:-latest}`, `JWT_ENABLED=true`, `JWT_SECRET=${OFFICE_JWT_SECRET}`, `ALLOW_PRIVATE_IP_ADDRESS=true`, named volumes for data/lib/logs, not published on host ports (only Caddy reaches it), healthcheck on `/healthcheck`.
+- Server env (office override): `OFFICE_URL` defaults to the office site's public URL (`${SYNCLET_OFFICE_PUBLIC_URL}`; document that it must be the browser-facing https URL), `OFFICE_JWT_SECRET` (required, `:?` in the override only), `OFFICE_API_URL=http://server:3000/api`, `OFFICE_INTERNAL_URL=http://office`.
+- `.env.example`: `SYNCLET_OFFICE_SITE_ADDRESS`, `SYNCLET_OFFICE_PUBLIC_URL`, `OFFICE_JWT_SECRET` (with `openssl rand -hex 32` hint), `OFFICE_TAG`.
+- Start command documented: `docker compose -f deploy/compose.yml -f deploy/compose.office.yml --env-file deploy/.env up -d`.
+- **Verify:** `docker compose config` with and without the office override; `caddy validate` for both; bring the stack up with the office override on free ports (needs ~4 GB RAM; if the machine can't, verify config + a lightweight stand-in container answering `/healthcheck` and WebSocket upgrade through Caddy, and report it): `GET <office site>/healthcheck` → `true` through Caddy, WebSocket upgrade through Caddy succeeds, main site unaffected.
+
+### Task 12b: README and remaining deploy wiring (wave 3)
+
+**Files (office service + office site already done in 12a; this task adds the rest):** `deploy/compose.yml` (service `office` with `profiles: ["office"]`, image `ghcr.io/euro-office/documentserver:${OFFICE_TAG:-latest}`, env `JWT_ENABLED=true`, `JWT_SECRET=${OFFICE_JWT_SECRET:?}` only when profile active (use a separate `compose.office.yml` override if `:?` interpolation would break non-office starts), `ALLOW_PRIVATE_IP_ADDRESS=true`, volumes for data/lib/logs, `mem_limit` note; server env `OFFICE_URL`, `OFFICE_JWT_SECRET`, `OFFICE_API_URL=http://server:3000/api`, `OFFICE_INTERNAL_URL=http://office`, `SYNCLET_VERSIONS`, `SYNCLET_VERSIONS_MAX_BYTES`, `SYNCLET_SSO_EMERGENCY`), `deploy/Caddyfile` (site block for `{$SYNCLET_OFFICE_SITE_ADDRESS}` → `office:80` with `header_up X-Forwarded-Proto {scheme}` and `X-Forwarded-Host {host}`; SPA CSP extended with `script-src 'self' {$OFFICE_URL}`, `frame-src 'self' blob: {$OFFICE_URL}`, `connect-src 'self' {$OFFICE_URL}`; strip forward-auth headers (`Remote-User`, `Remote-Email`, `Remote-Name`, `Remote-Groups`) from requests whose direct peer is not in `{$SYNCLET_TRUSTED_PROXIES}`), `deploy/.env.example`, `README.md` (Office setup incl. DNS/TLS for the office subdomain and RAM needs; versions explanation + retention table; SSO setup guides: Authentik, Keycloak, Authelia (OIDC) and Authelia/Authentik forward-auth via outer proxy or Caddy `forward_auth`; emergency recovery; app login; admin area).
 
 **Verify:** `docker compose … config` with and without the office profile; `caddy validate`; bring up the stack **with** the office profile on a free port set (needs ~4 GB RAM – if the machine can't, verify without office and document); with office: open the editor config route and fetch `${OFFICE_URL}/healthcheck` through Caddy.
 
