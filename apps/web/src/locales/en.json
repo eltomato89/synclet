@@ -60,5 +60,124 @@
     "notFoundBack": "Go to my files",
     "skipToContent": "Skip to content"
   },
-  "files": {}
+  "files": {
+    "newMenu": "New",
+    "newFolder": "Folder",
+    "upload": "Upload",
+    "uploadFiles": "Upload files",
+    "view": "View",
+    "viewList": "List",
+    "viewGrid": "Grid",
+    "breadcrumb": "Folder path",
+    "showPath": "Show parent folders",
+    "columns": {
+      "name": "Name",
+      "modified": "Modified",
+      "size": "Size"
+    },
+    "sortBy": "Sort by {{column}}",
+    "itemActions": "Actions for {{name}}",
+    "listLabel": "Contents of {{name}}",
+    "folderCount_one": "{{count}} folder",
+    "folderCount_other": "{{count}} folders",
+    "fileCount_one": "{{count}} file",
+    "fileCount_other": "{{count}} files",
+    "open": "Open",
+    "shortcutDelete": "Del",
+    "empty": {
+      "title": "This folder is empty",
+      "rootTitle": "No files yet",
+      "body": "Drag files here or upload them. Everything you add is stored as a regular file on your server."
+    },
+    "loadError": {
+      "title": "This folder couldn't be loaded",
+      "retry": "Try again"
+    },
+    "notFound": {
+      "title": "This folder doesn't exist",
+      "body": "It may have been moved or deleted.",
+      "back": "Go to my files"
+    },
+    "drop": {
+      "title": "Drop to upload",
+      "target": "Files go into “{{folder}}”.",
+      "foldersUnsupported": "Folders can't be uploaded by drag and drop yet. Drag the files inside them here instead."
+    },
+    "newFolderDialog": {
+      "title": "New folder",
+      "description": "The folder is created in “{{folder}}”.",
+      "label": "Name",
+      "placeholder": "Untitled folder",
+      "submit": "Create folder",
+      "submitting": "Creating …"
+    },
+    "renameDialog": {
+      "title": "Rename",
+      "label": "New name",
+      "submit": "Rename",
+      "submitting": "Renaming …"
+    },
+    "moveDialog": {
+      "title": "Move “{{name}}”",
+      "description": "Choose the folder to move it to.",
+      "submit": "Move here",
+      "submitTo": "Move to “{{name}}”",
+      "submitting": "Moving …",
+      "currentLocation": "Current location",
+      "expand": "Expand {{name}}",
+      "collapse": "Collapse {{name}}",
+      "noSubfolders": "No subfolders",
+      "tree": "Destination folder"
+    },
+    "deleteDialog": {
+      "title": "Delete “{{name}}”?",
+      "fileBody": "The file moves to the trash and disappears from all connected devices.",
+      "folderBody": "The folder and everything in it move to the trash and disappear from all connected devices.",
+      "submit": "Move to trash",
+      "submitting": "Deleting …"
+    },
+    "toast": {
+      "deleted": "“{{name}}” moved to the trash",
+      "moved": "Moved “{{name}}” to “{{target}}”",
+      "downloadFailed": "The download couldn't be started."
+    },
+    "nameErrors": {
+      "empty": "Enter a name.",
+      "forbidden_char": "Names can't contain any of these characters: < > : \" / \\ | ? *",
+      "trailing": "Names can't end with a dot or a space.",
+      "reserved": "This name is reserved on Windows.",
+      "too_long": "The name is too long.",
+      "ignored": "This name is reserved for system files and wouldn't sync."
+    },
+    "errors": {
+      "name_conflict": "Something with this name already exists here.",
+      "invalid_name": "This name isn't allowed.",
+      "invalid_move": "A folder can't be moved into itself or one of its subfolders.",
+      "not_found": "This item doesn't exist anymore. The view has been refreshed.",
+      "conflict": "The item changed in the meantime. Try again.",
+      "too_large": "The file is larger than the server allows.",
+      "forbidden": "You don't have permission to do that.",
+      "unauthorized": "Your session has expired. Sign in again.",
+      "network": "No connection to the server.",
+      "unknown": "That didn't work. Try again."
+    },
+    "uploads": {
+      "region": "Uploads",
+      "uploading": "{{done}} of {{total}} uploaded",
+      "done_one": "{{count}} file uploaded",
+      "done_other": "{{count}} files uploaded",
+      "failed_one": "{{count}} upload failed",
+      "failed_other": "{{count}} uploads failed",
+      "finished": "Done",
+      "queued": "Waiting",
+      "progress": "{{loaded}} of {{total}}",
+      "renamed": "Saved as “{{name}}”",
+      "retry": "Try again",
+      "cancel": "Cancel upload",
+      "collapse": "Collapse uploads",
+      "expand": "Expand uploads",
+      "close": "Close uploads",
+      "dismiss": "Remove from list"
+    }
+  }
 }
