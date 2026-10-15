@@ -52,6 +52,8 @@ services:
     environment:
       SYNCLET_SITE_ADDRESS: ${SYNCLET_SITE_ADDRESS:-:80}
       SYNCLET_TRUSTED_PROXIES: ${SYNCLET_TRUSTED_PROXIES:-}
+      # Only these direct peers may pass forward-auth headers (Remote-*); empty = stripped always.
+      SYNCLET_FORWARD_AUTH_PROXIES: ${SYNCLET_FORWARD_AUTH_PROXIES:-}
       # Declared request body limit for /api/* (same variable and default as the server's upload
       # limit; Caddy would take an empty value literally, so the default is spelled out here).
       SYNCLET_MAX_UPLOAD_BYTES: ${SYNCLET_MAX_UPLOAD_BYTES:-53687091200}

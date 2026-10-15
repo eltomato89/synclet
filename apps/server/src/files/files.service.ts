@@ -415,31 +415,54 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
    * it was changed meanwhile by anything but this same session (sync client, host, another
    * session): then the content goes into a sibling conflict copy and the original stays untouched.
    * Repeated saves of one session (forcesave, then the final save) overwrite each other.
-   * A file that is gone (trashed, deleted on the host) discards the save.
+   * A file that is gone (trashed, deleted through Synclet or on the host and indexed) never loses
+   * the edits either: they become a conflict copy in the original parent folder, or in the user
+   * root when that folder is gone too (`fallbackName` when even the row was purged). A live row
+   * whose entry is briefly missing on disk (the middle of a host editor's delete+rename save)
+   * gives `retry`: the Document Server is told to send the save again later.
    */
   async saveOfficeContent(
     user: IndexUser, itemId: string, body: Readable,
-    opts: { key: string; baseVersion: number; by?: string; conflictName: (name: string) => string },
-  ): Promise<{ outcome: 'replaced' | 'conflict'; item: Item } | { outcome: 'discarded' }> {
+    opts: { key: string; baseVersion: number; by?: string; conflictName: (name: string) => string; fallbackName: string },
+  ): Promise<{ outcome: 'replaced' | 'conflict' | 'orphaned'; item: Item } | { outcome: 'retry' }> {
     guardBody(body);
     const { tmp, sha256 } = await this.receive(user, body);
     try {
       const decided = await this.withPreparedVersion(user, itemId, (prepared) => this.prisma.$transaction(async (tx) => {
         await this.journal.lockUser(tx, user.id);
+        const live = await this.store.getLive(tx, user.id, itemId);
+        if (!live || live.type !== 'file') {
+          const row = live ?? (await tx.item.findFirst({ where: { id: itemId, ownerId: user.id } }));
+          return { outcome: 'gone', row: row?.type === 'file' ? row : null } as const;
+        }
         let cur: Awaited<ReturnType<FilesService['lockedFile']>>;
         try {
           cur = await this.lockedFile(tx, user, itemId);
         } catch (e) {
-          if (e instanceof SyncError && e.code === 'not_found') return { outcome: 'discarded' } as const;
+          // Live row, entry missing on disk: let the indexer settle and have the save retried.
+          if (e instanceof SyncError && e.code === 'not_found') return { outcome: 'retry' } as const;
           throw e;
         }
         const { item, target } = cur;
         if (item.version !== opts.baseVersion && item.officeKey !== opts.key) return { outcome: 'conflict', item } as const;
         return { outcome: 'replaced', item: await this.commitReplace(tx, user, item, target, tmp, sha256, 'office', { officeKey: opts.key, by: opts.by, prepared }) } as const;
       }, TX_OPTS));
-      if (decided.outcome !== 'conflict') return decided;
-      const copy = await this.publishNew(user, decided.item.parentId, opts.conflictName(decided.item.name), tmp, sha256, 'rename');
-      return { outcome: 'conflict', item: copy };
+      if (decided.outcome === 'replaced' || decided.outcome === 'retry') return decided;
+      if (decided.outcome === 'conflict') {
+        const copy = await this.publishNew(user, decided.item.parentId, opts.conflictName(decided.item.name), tmp, sha256, 'rename');
+        return { outcome: 'conflict', item: copy };
+      }
+      const name = opts.conflictName(decided.row?.name ?? opts.fallbackName);
+      const parentId = decided.row?.parentId ?? null;
+      if (parentId !== null) {
+        try {
+          return { outcome: 'orphaned', item: await this.publishNew(user, parentId, name, tmp, sha256, 'rename') };
+        } catch (e) {
+          // The original folder is gone (trashed, deleted, missing on disk): use the user root.
+          if (!(e instanceof SyncError && (e.code === 'not_found' || e.code === 'invalid_request'))) throw e;
+        }
+      }
+      return { outcome: 'orphaned', item: await this.publishNew(user, null, name, tmp, sha256, 'rename') };
     } finally {
       await rm(tmp, { force: true });
     }

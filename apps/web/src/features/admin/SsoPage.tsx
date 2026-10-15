@@ -182,6 +182,9 @@ export function SsoForm({ wire, onSaved }: { wire: SsoSettingsWire; onSaved(): v
             errors={errors}
             onChange={(patch) => setOidc(patch)}
           />
+          {v.oidc.enabled && v.oidc.allowedGroups.length === 0 && (
+            <Callout tone="warn" icon={<TriangleAlert />}>{t('admin.sso.groups.emptyWarning')}</Callout>
+          )}
           <div>
             <Toggle
               id={id('link')}
@@ -214,7 +217,7 @@ export function SsoForm({ wire, onSaved }: { wire: SsoSettingsWire; onSaved(): v
               id={id('forwardAuth.trustedProxies')}
               value={v.forwardAuth.trustedProxies}
               onChange={(trustedProxies) => setFa({ trustedProxies })}
-              placeholder="172.18.0.0/16"
+              placeholder="172.30.0.10/32"
               splitOnSpace
               invalid={!!errors['forwardAuth.trustedProxies']}
               describedBy={errors['forwardAuth.trustedProxies'] ? `${id('forwardAuth.trustedProxies')}-error` : `${id('forwardAuth.trustedProxies')}-hint`}

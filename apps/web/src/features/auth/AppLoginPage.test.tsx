@@ -75,6 +75,23 @@ describe('AppLoginPage parameter validation', () => {
   });
 });
 
+describe('AppLoginPage rate limiting', () => {
+  it('shows a retry state for 429 on the client check, not "app not allowed"', async () => {
+    let limited = true;
+    const f = routeFetch({
+      ...anonymous,
+      'GET /api/auth/app/client': () => (limited ? json(429, { statusCode: 429, code: 'rate_limited', message: 'too many requests' }) : IOS.clone()),
+    });
+    renderAt(query());
+    expect(await screen.findByText(/Too many sign-in attempts right now/)).toBeInTheDocument();
+    expect(screen.queryByText(/isn't allowed to sign in/)).not.toBeInTheDocument();
+    limited = false;
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByLabelText('Password')).toBeInTheDocument();
+    expect(f.count('GET /api/auth/app/client')).toBe(2);
+  });
+});
+
 describe('AppLoginPage password sign-in', () => {
   it('names the app, authorizes with the PKCE parameters and redirects with code and state', async () => {
     const f = routeFetch({ ...anonymous, 'GET /api/auth/app/client': IOS, 'POST /api/auth/app/authorize': json(200, { code: 'co/de+1' }) });

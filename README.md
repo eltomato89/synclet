@@ -70,12 +70,13 @@ All settings go into `deploy/.env` (read by `docker compose --env-file deploy/.e
 | `SYNCLET_META` | (required) | Host folder for trash and other metadata. Must exist, be writable by `PUID:PGID` and live outside `SYNCLET_DATA`. |
 | `POSTGRES_PASSWORD` | (required) | Database password; URL-safe characters only (`openssl rand -hex 24`). |
 | `PUID` / `PGID` | `1000` / `1000` | User and group the server runs as; must own your files (`id -u` / `id -g`). |
-| `SYNCLET_PORT` | `8080` | Host port for HTTP. |
-| `SYNCLET_TLS_PORT` | `8443` | Host port for HTTPS. |
+| `SYNCLET_PORT` | `8080` | Host port for HTTP. `127.0.0.1:8080` publishes it on loopback only (recommended behind an outer proxy on the same host). |
+| `SYNCLET_TLS_PORT` | `8443` | Host port for HTTPS (`127.0.0.1:8443` = loopback only). |
 | `SYNCLET_SITE_ADDRESS` | `:80` | Caddy site address. Set to your domain (with ports 80/443) for automatic Let's Encrypt certificates. |
 | `SYNCLET_PUBLIC_URL` | (empty) | Public URL, e.g. `https://files.example.com`. Used to build absolute share-link URLs (without it, links are shown relative to the address you opened the web app with) and decides the default of `SYNCLET_SECURE_COOKIES`. |
 | `SYNCLET_SECURE_COOKIES` | on if `SYNCLET_PUBLIC_URL` starts with `https://` | Forces the `Secure` flag of the login cookie on (`on`) or off (`off`). |
-| `SYNCLET_TRUSTED_PROXIES` | (empty = trust none) | Proxies in front of Caddy whose `X-Forwarded-For` Caddy accepts, e.g. `private_ranges` or `192.168.1.10/32 10.0.0.0/8`. Set it when Synclet runs behind another reverse proxy; see [Behind another reverse proxy](#behind-another-reverse-proxy). Also the only peers whose forward-auth headers Caddy passes on ([Single sign-on](#forward-auth-authelia-authentik-)). |
+| `SYNCLET_TRUSTED_PROXIES` | (empty = trust none) | Proxies in front of Caddy whose `X-Forwarded-For` Caddy accepts (client IP for rate limits), e.g. `192.168.1.10/32`. Set it when Synclet runs behind another reverse proxy; see [Behind another reverse proxy](#behind-another-reverse-proxy). It never lets anyone send forward-auth headers. |
+| `SYNCLET_FORWARD_AUTH_PROXIES` | (empty = always strip) | Forward-auth only: the exact address of the authenticating proxy, e.g. `192.168.1.10/32`. Only this direct peer may send the identity headers (`Remote-*`); Caddy strips them from everyone else. **Never** `private_ranges` or a whole subnet; see [Forward-auth](#forward-auth-authelia-authentik-). |
 | `SYNCLET_TRUST_PROXY` | `off` (`true` in the shipped compose file, not configurable there) | Server setting: use `X-Forwarded-For` as the client IP (rate limiting). The shipped compose file enables it because only Caddy reaches the server and Caddy always sets the header to the client IP it determined. Only enable it elsewhere behind a proxy that does the same, otherwise clients can spoof their IP. |
 | `SYNCLET_TRASH_RETENTION_DAYS` | `30` | Days items stay in the trash before being removed for good (`0` = keep forever). The expiry date is fixed when an item is deleted: changing the value later does not affect entries already in the trash. |
 | `SYNCLET_SEARCH_LANGUAGE` | `simple` | Postgres text search configuration for search: `simple`, `german`, `english`, ... (invalid values fall back to `simple` with a warning). `simple` does no stemming. Used by server and worker. Changing it later does **not** re-index already extracted text: existing documents keep their old stemming until their content changes. |
@@ -83,13 +84,13 @@ All settings go into `deploy/.env` (read by `docker compose --env-file deploy/.e
 | `SYNCLET_PREVIEW_MAX_BYTES` | `2147483648` (2 GiB) | Files larger than this get no thumbnail, preview or text extraction. |
 | `SYNCLET_WATCH` | `on` | `off` disables the file watcher and relies on periodic scans (NFS/SMB). |
 | `SYNCLET_SCAN_INTERVAL` | `900` (`120` with `SYNCLET_WATCH=off`) | Seconds between full scans of all user folders. |
-| `SYNCLET_MAX_UPLOAD_BYTES` | `53687091200` (50 GiB) | Largest accepted upload. Also the request body limit of the bundled Caddy for `/api/*` (larger requests get `413` from the proxy); raise the limit of an outer reverse proxy accordingly. |
+| `SYNCLET_MAX_UPLOAD_BYTES` | `53687091200` (50 GiB) | Largest accepted upload, as a plain number of bytes (digits only; `50G` or `1e9` are refused by both the server and Caddy, which then do not start). Also the request body limit of the bundled Caddy for `/api/*` (larger requests get `413` from the proxy); raise the limit of an outer reverse proxy accordingly. |
 | `SYNCLET_MASS_DELETE_THRESHOLD` | `25` | Safety guard: if a user folder suddenly looks empty while more than this many top-level items are indexed, Synclet refuses to delete them from the index (and from every client) and logs an error. `0` turns the guard off. If you really emptied the folder, set it to `0`, restart the server, then set it back. An unmounted data volume is always refused. |
 | `SYNCLET_TOMBSTONE_WINDOW` | `3600` | Seconds within which an item that vanished and reappears elsewhere is still recognised as a move (keeps its ID). |
 | `SYNCLET_JOURNAL_RETENTION_DAYS` | `30` | Days of change history kept for sync clients. A client offline for longer does a full resync. |
 | `SYNCLET_VERSIONS` | `off` | `on` keeps previous contents of files overwritten through Synclet; see [Versions](#versions). |
 | `SYNCLET_VERSIONS_MAX_BYTES` | `0` (unlimited) | Per-user cap for stored version bytes; the oldest versions are evicted first. |
-| `SYNCLET_SSO_EMERGENCY` | (empty) | `1` ignores OIDC and forward-auth and allows password login for everyone; see [Locked out?](#locked-out-emergency-recovery). |
+| `SYNCLET_SSO_EMERGENCY` | (empty) | `1` (or `true`, `on`, `yes`) ignores OIDC and forward-auth and allows password login for everyone; see [Locked out?](#locked-out-emergency-recovery). |
 | `SYNCLET_SSO_ALLOW_HTTP_ISSUER` | (empty) | `1` accepts an `http://` OIDC issuer on a loopback/private host (lab setups only; otherwise `https://` is required). |
 | `SYNCLET_OFFICE_SITE_ADDRESS` | (empty) | Office override only: Caddy site address of the Document Server (domain, or `http://...` behind a TLS-terminating proxy). Required with `compose.office.yml`. |
 | `SYNCLET_OFFICE_PUBLIC_URL` | (empty) | Office override only: browser-facing `https://` URL of the office site; also added to the Synclet site's CSP. Required with `compose.office.yml`. |
@@ -102,7 +103,7 @@ Search needs the Postgres extensions `pg_trgm` and `unaccent`; the first migrati
 
 ### Behind another reverse proxy
 
-The rate limits for login, setup and public share links count requests per client IP. Caddy only uses the client IP from `X-Forwarded-For` when the request comes from a proxy listed in `SYNCLET_TRUSTED_PROXIES`; otherwise it uses the address of the connecting peer. If you run Synclet behind another reverse proxy (nginx, Traefik, a router) and leave `SYNCLET_TRUSTED_PROXIES` empty, every client appears with the proxy's IP and they **all share one rate-limit bucket**, so one misbehaving client can lock everybody out of logging in. Set `SYNCLET_TRUSTED_PROXIES` to the address of that proxy, or to `private_ranges` if it runs in your LAN or on the same Docker host. Caddy reads the header right to left and stops at the first untrusted address, so a client cannot spoof its IP through a proxy that appends to `X-Forwarded-For`. Only trust addresses that really are proxies: anyone connecting directly from a trusted range can claim any IP.
+The rate limits for login, setup and public share links count requests per client IP. Caddy only uses the client IP from `X-Forwarded-For` when the request comes from a proxy listed in `SYNCLET_TRUSTED_PROXIES`; otherwise it uses the address of the connecting peer. If you run Synclet behind another reverse proxy (nginx, Traefik, a router) and leave `SYNCLET_TRUSTED_PROXIES` empty, every client appears with the proxy's IP and they **all share one rate-limit bucket**, so one misbehaving client can lock everybody out of logging in. Set `SYNCLET_TRUSTED_PROXIES` to the address of that proxy (for example `192.168.1.10/32`, or its address on a Docker network shared with Caddy). Avoid broad values such as `private_ranges`: with Docker's userland proxy even outside clients can appear with a private gateway address. Caddy reads the header right to left and stops at the first untrusted address, so a client cannot spoof its IP through a proxy that appends to `X-Forwarded-For`. Only trust addresses that really are proxies: anyone connecting directly from a trusted range can claim any IP.
 
 ## Office (Euro-Office editing)
 
@@ -240,8 +241,23 @@ The proxy authenticates the visitor and forwards identity headers; the web app t
 
 Two layers decide who may assert an identity, and **both must be configured**:
 
-1. **Caddy** removes the identity headers from every `/api/*` request whose direct peer is not in `SYNCLET_TRUSTED_PROXIES` (set it to your outer proxy, e.g. `192.168.1.10/32` or `private_ranges`). Without that setting nothing is trusted and the headers are always stripped. **If you configure custom header names, add them to the `request_header @untrusted_auth_headers -<Name>` lines in `deploy/Caddyfile`** (they are not stripped otherwise) and rebuild the Caddy image (`up -d --build`).
-2. **The Synclet server** accepts the headers only if its direct TCP peer is inside the *trusted proxies* of the forward-auth settings. In the shipped setup that peer is the Caddy container, so enter the Docker network of the stack there (find it with `docker network inspect synclet_default`, typically a `172.x.0.0/16`). Never put the address of any untrusted network there; `X-Forwarded-For` is never used for this decision.
+1. **Caddy** removes the identity headers from every `/api/*` request whose direct peer is not in `SYNCLET_FORWARD_AUTH_PROXIES`. Set it to the **exact address of your authenticating proxy** only, e.g. `192.168.1.10/32` (or its fixed address on a Docker network shared with Caddy). **Never use `private_ranges` or a whole subnet:** every host in it (any device in your LAN, any container on the host, and with Docker's userland proxy even outside clients that appear as the gateway address) could then send `Remote-User: <admin>` and sign in as that user. Empty (the default) means nothing is trusted and the headers are always stripped. This variable is independent of `SYNCLET_TRUSTED_PROXIES`, which only governs `X-Forwarded-For`. **If you configure custom header names, add them to the `request_header @untrusted_auth_headers -<Name>` lines in `deploy/Caddyfile`** (they are not stripped otherwise) and rebuild the Caddy image (`up -d --build`).
+2. **The Synclet server** accepts the headers only if its direct TCP peer is inside the *trusted proxies* of the forward-auth settings. In the shipped setup that peer is the Caddy container. Enter **only Caddy's address** there, not the whole Docker network of the stack (that network also holds the worker and the Document Server, which fetches URLs on users' behalf). Give Caddy a fixed address in a `compose.override.yml`, for example:
+
+   ```yaml
+   networks:
+     default:
+       ipam:
+         config: [{ subnet: 172.30.0.0/24 }]
+   services:
+     caddy:
+       networks:
+         default:
+           ipv4_address: 172.30.0.10
+   ```
+
+   and enter `172.30.0.10/32` as the forward-auth trusted proxy. Never put the address of any untrusted network there; `X-Forwarded-For` is never used for this decision.
+3. **Make the proxy the only way in.** Clients must not be able to reach Caddy directly, bypassing the gate. Publish Caddy's ports on loopback only (`SYNCLET_PORT=127.0.0.1:8080`, `SYNCLET_TLS_PORT=127.0.0.1:8443`) when the outer proxy runs on the same host, reach it only over a Docker network shared with the outer proxy, or block the ports with a firewall.
 
 Outer proxy example with Caddy and Authelia:
 
@@ -267,7 +283,7 @@ For Authentik use its outpost instead: add `handle /outpost.goauthentik.io/* { r
 
 Why these paths bypass: `/s/<token>` is a route of the single-page app, so anonymous visitors of a public share link get the app shell (`index.html`, `/assets/*`, `/favicon.svg`) and then call `/api/public/*`; without the static files the share page does not load. Native apps and sync clients send Synclet tokens to `/api/sync/*` and sign in through `/api/auth/app/*`. **Tradeoff:** the bypass of `/api/auth/app/*` exposes the (rate-limited) password authorize endpoint outside the SSO gate. If you don't want password sign-in reachable that way, turn off password login for users in the SSO settings (admins keep it, by design); the apps then sign in through the browser with an existing SSO session. The `Remote-*` headers are only needed on the web login entry: what must stay behind the gate is `/`, `/login` and `/api/auth/forward`, not the API (the web app also calls `/api/sync/v1/*` with Synclet tokens, which authenticate themselves). The gate must **not** wrap the office subdomain: the Document Server loads in an iframe, uses WebSockets and fetches files from Synclet with its own tokens.
 
-nginx and Traefik work the same way with `auth_request` / the `forwardAuth` middleware; copy the four headers to the upstream request. Add the proxy to `SYNCLET_TRUSTED_PROXIES` and to the forward-auth trusted proxies as described, and keep the bypass list above.
+nginx and Traefik work the same way with `auth_request` / the `forwardAuth` middleware; copy the four headers to the upstream request. Put the proxy's exact address into `SYNCLET_FORWARD_AUTH_PROXIES` (and `SYNCLET_TRUSTED_PROXIES` for the client IP), enter Caddy's address in the forward-auth trusted proxies as described, and keep the bypass list above.
 
 ### Locked out? Emergency recovery
 

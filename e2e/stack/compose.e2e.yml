@@ -25,7 +25,7 @@ services:
         aliases: [oidc.localhost]
   # Stands in for an authenticating reverse proxy (Authelia, Authentik outpost …): it always sets
   # the Remote-* headers itself (overwriting whatever the client sent) and forwards to Caddy. Caddy
-  # trusts it via SYNCLET_TRUSTED_PROXIES (its address only), so only this path logs in by header.
+  # trusts it via SYNCLET_FORWARD_AUTH_PROXIES (its address only), so only this path logs in by header.
   authproxy:
     image: synclet-e2e/caddy:${E2E_TAG:?}
     pull_policy: never # built by the caddy service

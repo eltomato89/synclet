@@ -16,6 +16,18 @@ export function setRefreshCookie(reply: FastifyReply, token: string, secure: boo
   reply.setCookie(REFRESH_COOKIE, token, { path: '/api/auth', httpOnly: true, sameSite: 'strict', secure, maxAge: REFRESH_TTL_MS / 1000 });
 }
 
+/**
+ * A new login in this browser (password, setup, forward-auth, OIDC): ends the session of the
+ * refresh cookie the browser still sent (and of any token hashes carried along, e.g. through the
+ * OIDC flow cookie), then sets the new cookie. Otherwise the replaced session would stay active
+ * for 30 days with a token no client holds any more.
+ */
+export async function replaceRefreshCookie(auth: AuthService, req: FastifyRequest, reply: FastifyReply, token: string, previousHashes: string[] = []) {
+  await auth.logout(req.cookies[REFRESH_COOKIE]);
+  for (const h of previousHashes) await auth.revokeByHash(h);
+  setRefreshCookie(reply, token, auth.config.secureCookies);
+}
+
 const LoginBody = z.object({ login: z.string().min(1), password: z.string().min(1) });
 
 @Controller('auth')
@@ -39,7 +51,7 @@ export class AuthController {
     }
     const { access, refreshToken } = result;
     this.limits.login.reset(key);
-    setRefreshCookie(reply, refreshToken, this.auth.config.secureCookies);
+    await replaceRefreshCookie(this.auth, req, reply, refreshToken);
     return access;
   }
 

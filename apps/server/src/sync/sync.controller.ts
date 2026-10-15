@@ -19,6 +19,7 @@ import { previewKind } from '../derivatives/preview-kind';
 import { decodeText, readPrefix, TextEncodingName } from '../derivatives/text-extract';
 import { FilesService, itemEtag, OnConflict } from '../files/files.service';
 import { JournalService } from '../journal/journal.service';
+import { OfficeService } from '../office/office.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { etagList, first, HeaderMap, rawBody, SANDBOX_CSP, sendFile, unquote } from './http-content';
 import { mimeFor, SerializerService } from './serializer.service';
@@ -100,7 +101,9 @@ export class SyncController {
   /** Optional server features, for clients to show or hide UI (versions, office editing). */
   @Get('capabilities')
   capabilities(): ServerCapabilities {
-    return { versions: this.config.versions, office: { enabled: this.config.officeUrl !== null, url: this.config.officeUrl } };
+    // Same rule as the office routes (URL and shared secret), so clients never offer an editor that answers 503.
+    const office = OfficeService.enabled(this.config);
+    return { versions: this.config.versions, office: { enabled: office, url: office ? this.config.officeUrl : null } };
   }
 
   @Get('cursor')

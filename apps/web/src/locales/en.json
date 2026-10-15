@@ -600,6 +600,7 @@
     "redirectHint": "You'll continue on your organization's sign-in page and come back here afterwards.",
     "passwordDisabled": "Password sign-in is turned off for your account. Sign in with single sign-on instead.",
     "backToAppLogin": "Back to the app sign-in",
+    "usePassword": "Sign in with password",
     "error": {
       "oidc_disabled": "Single sign-on is turned off on this server. Sign in with your password, or ask your administrator.",
       "idp_unavailable": "The sign-in service can't be reached right now. Try again in a moment.",
@@ -626,7 +627,8 @@
     "problemTitle": "Can't sign in to the app",
     "invalidLink": "This sign-in link is incomplete or damaged. Start the sign-in again in the app.",
     "invalidClient": "This app isn't allowed to sign in to this server. Start the sign-in again in the app, or update the app.",
-    "unreachable": "The server isn't responding. Check the connection and try again."
+    "unreachable": "The server isn't responding. Check the connection and try again.",
+    "rateLimited": "Too many sign-in attempts right now. Wait a moment and try again."
   },
   "versions": {
     "title": "Versions",
@@ -781,7 +783,7 @@
       "revokeAll": "Sign out everywhere",
       "noSessions": "No active sessions.",
       "client": "Browser",
-      "signedIn": "Signed in",
+      "lastActive": "Last active",
       "expires": "Expires",
       "revoke": "Revoke",
       "revokeSessionFor": "Revoke session {{client}}",
@@ -974,7 +976,7 @@
         "enabled": "Sign in through the auth proxy",
         "enabledHint": "Users who arrive with the user header from a trusted proxy are signed in automatically.",
         "trustedProxies": "Trusted proxy addresses",
-        "trustedProxiesHint": "IP addresses or CIDR ranges of your proxy, e.g. 172.18.0.0/16. Headers from any other address are ignored.",
+        "trustedProxiesHint": "Only the address Synclet receives the headers from directly: in the shipped setup the fixed IP of the Caddy container, e.g. 172.30.0.10/32 (see README), not the whole Docker network. Headers from any other address are ignored.",
         "userHeader": "User header",
         "emailHeader": "Email header",
         "nameHeader": "Name header",
@@ -982,7 +984,8 @@
       },
       "groups": {
         "allowed": "Allowed groups",
-        "allowedHint": "Only members of these groups can sign in. Empty: everyone.",
+        "allowedHint": "Only members of these groups can sign in. Empty: everyone. Removing someone from a group only blocks new sign-ins; to end their access now, disable the user.",
+        "emptyWarning": "No allowed groups: anyone with an account at this identity provider can sign in and gets a Synclet account with its own folder. With a public provider (Google, Microsoft, GitLab.com, ...) that means anyone on the internet. Enter at least one allowed group unless that is what you want.",
         "admin": "Administrator groups",
         "adminHint": "Members become administrators; others become users at their next sign-in.",
         "placeholder": "Type a group, press Enter"

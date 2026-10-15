@@ -75,16 +75,25 @@ model Identity {
 
 /// Web refresh sessions (rotating, httpOnly cookie).
 model Session {
-  id        String    @id @default(uuid()) @db.Uuid
-  userId    String    @db.Uuid
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokenHash String    @unique
-  expiresAt DateTime
-  revokedAt DateTime?
-  userAgent String?
-  createdAt DateTime  @default(now())
+  id            String               @id @default(uuid()) @db.Uuid
+  userId        String               @db.Uuid
+  user          User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash     String               @unique
+  expiresAt     DateTime
+  revokedAt     DateTime?
+  /// Why the session ended. Refresh-token reuse detection applies only to `rotated` (and to
+  /// legacy rows revoked before this column existed, which have none).
+  revokedReason SessionRevokeReason?
+  userAgent     String?
+  createdAt     DateTime             @default(now())
 
   @@index([userId])
+}
+
+enum SessionRevokeReason {
+  rotated
+  admin
+  logout
 }
 
 model SyncDevice {

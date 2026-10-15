@@ -599,6 +599,7 @@
     "orPassword": "oder mit Passwort",
     "redirectHint": "Die Anmeldung geht auf der Seite deiner Organisation weiter, danach kommst du hierher zurück.",
     "passwordDisabled": "Die Anmeldung mit Passwort ist für dein Konto abgeschaltet. Melde dich per Single Sign-on an.",
+    "usePassword": "Mit Passwort anmelden",
     "backToAppLogin": "Zurück zur App-Anmeldung",
     "error": {
       "oidc_disabled": "Single Sign-on ist auf diesem Server abgeschaltet. Melde dich mit deinem Passwort an oder frag deine Administration.",
@@ -626,7 +627,8 @@
     "problemTitle": "Anmeldung für die App nicht möglich",
     "invalidLink": "Dieser Anmeldelink ist unvollständig oder beschädigt. Starte die Anmeldung erneut in der App.",
     "invalidClient": "Diese App darf sich bei diesem Server nicht anmelden. Starte die Anmeldung erneut in der App oder aktualisiere sie.",
-    "unreachable": "Der Server antwortet nicht. Prüf die Verbindung und versuch es erneut."
+    "unreachable": "Der Server antwortet nicht. Prüf die Verbindung und versuch es erneut.",
+    "rateLimited": "Gerade zu viele Anmeldeversuche. Warte einen Moment und versuch es erneut."
   },
   "versions": {
     "title": "Versionen",
@@ -781,7 +783,7 @@
       "revokeAll": "Überall abmelden",
       "noSessions": "Keine aktiven Sitzungen.",
       "client": "Browser",
-      "signedIn": "Angemeldet",
+      "lastActive": "Zuletzt aktiv",
       "expires": "Läuft ab",
       "revoke": "Widerrufen",
       "revokeSessionFor": "Sitzung {{client}} widerrufen",
@@ -974,7 +976,7 @@
         "enabled": "Über den Auth-Proxy anmelden",
         "enabledHint": "Wer mit dem Benutzer-Header von einem vertrauenswürdigen Proxy kommt, wird automatisch angemeldet.",
         "trustedProxies": "Vertrauenswürdige Proxy-Adressen",
-        "trustedProxiesHint": "IP-Adressen oder CIDR-Bereiche deines Proxys, z. B. 172.18.0.0/16. Header von allen anderen Adressen werden ignoriert.",
+        "trustedProxiesHint": "Nur die Adresse, von der Synclet die Header direkt erhält – in der mitgelieferten Installation die feste IP des Caddy-Containers, z. B. 172.30.0.10/32 (siehe README), nicht das ganze Docker-Netz. Header von allen anderen Adressen werden ignoriert.",
         "userHeader": "Header für den Benutzer",
         "emailHeader": "Header für die E-Mail",
         "nameHeader": "Header für den Namen",
@@ -982,7 +984,8 @@
       },
       "groups": {
         "allowed": "Erlaubte Gruppen",
-        "allowedHint": "Nur Mitglieder dieser Gruppen können sich anmelden. Leer: alle.",
+        "allowedHint": "Nur Mitglieder dieser Gruppen können sich anmelden. Leer: alle. Wer aus einer Gruppe entfernt wird, kann sich nur nicht mehr neu anmelden; um den Zugriff sofort zu beenden, deaktiviere den Benutzer.",
+        "emptyWarning": "Keine erlaubten Gruppen: Jede Person mit einem Konto bei diesem Identitätsanbieter kann sich anmelden und bekommt ein Synclet-Konto mit eigenem Ordner. Bei einem öffentlichen Anbieter (Google, Microsoft, GitLab.com, ...) ist das jeder im Internet. Trage mindestens eine erlaubte Gruppe ein, wenn du das nicht willst.",
         "admin": "Administratorgruppen",
         "adminHint": "Mitglieder werden Administratoren, alle anderen bei der nächsten Anmeldung Benutzer.",
         "placeholder": "Gruppe eingeben, Enter drücken"

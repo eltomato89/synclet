@@ -23,7 +23,7 @@ export async function resetAdminPassword(prisma: PrismaClient, username: string,
     const u = await tx.user.findFirst({ where: { username: { equals: username.trim(), mode: 'insensitive' } } });
     if (!u) throw new Error(`no user named "${username}"`);
     await setLocalPassword(tx, u, passwordHash);
-    await tx.session.updateMany({ where: { userId: u.id, revokedAt: null }, data: { revokedAt: new Date() } });
+    await tx.session.updateMany({ where: { userId: u.id, revokedAt: null }, data: { revokedAt: new Date(), revokedReason: 'admin' } });
     return tx.user.update({ where: { id: u.id }, data: { role: 'admin', disabledAt: null } });
   });
   return { username: user.username, password: pw, generated };

@@ -52,6 +52,30 @@ describe('auth', () => {
     expect((await ctx.app.inject({ method: 'POST', url: '/api/auth/refresh', cookies: { synclet_refresh: rt2 } })).statusCode).toBe(401);
   });
 
+  it('a new login ends the session of the refresh cookie the browser still sent', async () => {
+    const created = await setup();
+    const fromSetup = created.cookies.find((c) => c.name === 'synclet_refresh')!.value;
+    const other = (await ctx.app.inject({ method: 'POST', url: '/api/auth/login', payload: { login: 'jens', password: 'correct horse battery' } }))
+      .cookies.find((c) => c.name === 'synclet_refresh')!.value;
+    const res = await ctx.app.inject({ method: 'POST', url: '/api/auth/login', payload: { login: 'jens', password: 'correct horse battery' }, cookies: { synclet_refresh: fromSetup } });
+    expect(res.statusCode).toBe(200);
+    const refresh = (rt: string) => ctx.app.inject({ method: 'POST', url: '/api/auth/refresh', cookies: { synclet_refresh: rt } });
+    expect((await refresh(fromSetup)).statusCode).toBe(401);
+    // Not taken as token theft: another browser's session and the new one keep working.
+    expect((await refresh(other)).statusCode).toBe(200);
+    expect((await refresh(res.cookies.find((c) => c.name === 'synclet_refresh')!.value)).statusCode).toBe(200);
+  });
+
+  it('a logged-out token is rejected without ending the other sessions', async () => {
+    await setup();
+    const login = async () => (await ctx.app.inject({ method: 'POST', url: '/api/auth/login', payload: { login: 'jens', password: 'correct horse battery' } }))
+      .cookies.find((c) => c.name === 'synclet_refresh')!.value;
+    const [a, b] = [await login(), await login()];
+    await ctx.app.inject({ method: 'POST', url: '/api/auth/logout', cookies: { synclet_refresh: a } });
+    expect((await ctx.app.inject({ method: 'POST', url: '/api/auth/refresh', cookies: { synclet_refresh: a } })).statusCode).toBe(401);
+    expect((await ctx.app.inject({ method: 'POST', url: '/api/auth/refresh', cookies: { synclet_refresh: b } })).statusCode).toBe(200);
+  });
+
   it('rejects missing/invalid bearer tokens with code unauthorized', async () => {
     const res = await ctx.app.inject({ method: 'GET', url: '/api/auth/me', headers: { authorization: 'Bearer garbage' } });
     expect(res.statusCode).toBe(401);

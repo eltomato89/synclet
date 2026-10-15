@@ -63,7 +63,9 @@ export class ProvisioningService {
 
   async resolve(claims: SsoClaims, policy: SsoPolicy): Promise<User> {
     if (!claims.subject) throw new SyncError('unauthorized', 'missing subject');
-    // The allowed-groups gate applies on every login, so removing someone from the group revokes access.
+    // The allowed-groups gate applies on every login only: removing someone from the group blocks
+    // new sign-ins, but existing sessions, app logins and device tokens keep working. To cut access
+    // immediately an admin disables the user.
     if (policy.allowedGroups.length > 0 && !intersects(claims.groups, policy.allowedGroups)) {
       throw new SyncError('sso_not_allowed', 'not a member of an allowed group');
     }

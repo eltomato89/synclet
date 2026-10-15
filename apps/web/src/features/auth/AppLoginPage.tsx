@@ -46,6 +46,10 @@ function AppLogin({ params }: { params: AppLoginParams }) {
   const { status } = useAuth();
 
   if (client.isError) {
+    // Rate limited is temporary too: offer a retry, never "this app is not allowed".
+    if (client.error instanceof ApiError && client.error.code === 'rate_limited') {
+      return <AppLoginProblem message="appLogin.rateLimited" onRetry={() => void client.refetch()} />;
+    }
     return isTransientError(client.error)
       ? <AppLoginProblem message="appLogin.unreachable" onRetry={() => void client.refetch()} />
       : <AppLoginProblem message="appLogin.invalidClient" />;

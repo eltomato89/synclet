@@ -1,5 +1,5 @@
 import { JwtService } from '@nestjs/jwt';
-import { readFile, stat, writeFile, utimes } from 'node:fs/promises';
+import { readdir, readFile, rename, stat, writeFile, utimes } from 'node:fs/promises';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
@@ -323,13 +323,51 @@ describe('Office (Euro-Office) integration', () => {
       expect((await open(item.id)).key).toBe(`${item.id.slice(2)}-4`);
     });
 
-    it('discards saves for a trashed file', async () => {
-      const item = await upload('Offer.docx', 'original');
+    it('saves the edits of a file trashed while editing as a conflict copy in its folder', async () => {
+      const folder = (await api('POST', '/items', { payload: { parentId: 'root', type: 'folder', name: 'Docs' } })).json();
+      const item = await upload('Offer.docx', 'original', folder.id);
       const { key, callbackPath } = await open(item.id);
       expect((await api('DELETE', `/items/${item.id}`)).statusCode).toBe(204);
+      ds.state.body = Buffer.from('edits made while it was trashed');
       expect((await callback(callbackPath, saveData(key, 2))).json()).toEqual({ error: 0 });
-      expect(ds.state.hits).toEqual([]);
-      expect((await api('GET', '/items/root/children')).json().items).toEqual([]);
+      const items = (await api('GET', `/items/${folder.id}/children`)).json().items as { id: string; name: string }[];
+      expect(items).toHaveLength(1);
+      expect(items[0].id).not.toBe(item.id);
+      expect(items[0].name).toMatch(/^Offer \(Konflikt Office \d{4}-\d{2}-\d{2} \d{2}-\d{2}\)\.docx$/);
+      expect(await download(items[0].id)).toBe('edits made while it was trashed');
+      // The trashed original is untouched (still in the trash with its old content).
+      const trash = (await api('GET', '/api/trash')).json();
+      expect(JSON.stringify(trash)).toContain('Offer.docx');
+      expect((await api('GET', '/items/root/children')).json().items.map((i: { name: string }) => i.name)).toEqual(['Docs']);
+    });
+
+    it('puts the conflict copy into the user root when the original folder is gone as well', async () => {
+      const folder = (await api('POST', '/items', { payload: { parentId: 'root', type: 'folder', name: 'Docs' } })).json();
+      const item = await upload('Offer.docx', 'original', folder.id);
+      const { key, callbackPath } = await open(item.id);
+      expect((await api('DELETE', `/items/${folder.id}`)).statusCode).toBe(204);
+      ds.state.body = Buffer.from('rescued');
+      expect((await callback(callbackPath, saveData(key, 2))).json()).toEqual({ error: 0 });
+      const items = (await api('GET', '/items/root/children')).json().items as { id: string; name: string }[];
+      expect(items).toHaveLength(1);
+      expect(items[0].name).toMatch(/^Offer \(Konflikt Office .+\)\.docx$/);
+      expect(await download(items[0].id)).toBe('rescued');
+    });
+
+    it('asks the Document Server to retry while the file is briefly missing on disk', async () => {
+      const item = await upload('Offer.docx', 'original');
+      const { key, callbackPath } = await open(item.id);
+      const abs = path.join(ctx.config.dataRoot, 'jens', 'Offer.docx');
+      const moved = `${abs}.moved-away`;
+      await rename(abs, moved); // e.g. the middle of a host editor's delete + rename save
+      expect((await callback(callbackPath, saveData(key, 2))).json()).toEqual({ error: 1 });
+      expect((await readdir(path.join(ctx.config.dataRoot, 'jens'))).sort()).toEqual(['Offer.docx.moved-away']);
+      const row = await ctx.prisma.item.findUniqueOrThrow({ where: { id: item.id.slice(2) } });
+      expect(row).toMatchObject({ version: 1, deletedAt: null, officeKey: null });
+      // Back in place: the retried save goes through.
+      await rename(moved, abs);
+      expect((await callback(callbackPath, saveData(key, 2))).json()).toEqual({ error: 0 });
+      expect(await download(item.id)).toBe('edited');
     });
 
     it('keeps a path prefix of the internal Document Server URL', async () => {
