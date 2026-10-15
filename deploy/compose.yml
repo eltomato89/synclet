@@ -12,7 +12,7 @@ services:
       SYNCLET_MAX_UPLOAD_BYTES: ${SYNCLET_MAX_UPLOAD_BYTES:-}
     volumes:
       - ${SYNCLET_DATA:?set SYNCLET_DATA to your files folder}:/data
-      - ${SYNCLET_META:-./meta}:/meta
+      - ${SYNCLET_META:?set SYNCLET_META to a folder outside SYNCLET_DATA}:/meta
     depends_on:
       postgres: { condition: service_healthy }
     restart: unless-stopped
@@ -31,7 +31,7 @@ services:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: synclet
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       POSTGRES_DB: synclet
     volumes: [pgdata:/var/lib/postgresql/data]
     healthcheck:

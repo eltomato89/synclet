@@ -12,7 +12,7 @@ docker compose -f deploy/compose.yml --env-file deploy/.env up -d --build
 
 Open `http://localhost:8080` (or your `SYNCLET_PORT`) and complete the setup wizard. The username you choose is the folder name below `SYNCLET_DATA`; an existing folder with that name is adopted and its files appear immediately.
 
-`SYNCLET_META` must be writable by `PUID:PGID` and live outside `SYNCLET_DATA`.
+`SYNCLET_META` is required: the folder must exist, be writable by `PUID:PGID` and live outside `SYNCLET_DATA`. `POSTGRES_PASSWORD` is required too and must contain only URL-safe characters (`[A-Za-z0-9._~-]`); generate one with `openssl rand -hex 24`.
 
 ## What is written where
 
@@ -33,7 +33,7 @@ Open `http://localhost:8080` (or your `SYNCLET_PORT`) and complete the setup wiz
 
 ## Architecture
 
-Three containers: `postgres` (index and journal), `server` (NestJS/Fastify API, indexer, file access) and `caddy` (reverse proxy for `/api/*` plus the static web app). The spec lists the web app as a separate service; it is served from the Caddy image instead, which is leaner and equivalent. With `SYNCLET_SITE_ADDRESS=files.example.com` Caddy obtains TLS certificates automatically; keep the default `:80` behind an existing reverse proxy.
+Three containers: `postgres` (index and journal), `server` (NestJS/Fastify API, indexer, file access) and `caddy` (reverse proxy for `/api/*` plus the static web app). The spec lists the web app as a separate service; it is served from the Caddy image instead, which is leaner and equivalent. For automatic Let's Encrypt certificates set `SYNCLET_SITE_ADDRESS=<your domain>`, `SYNCLET_PORT=80` and `SYNCLET_TLS_PORT=443` (all three are required, plus public DNS and reachable ports 80/443). With the defaults (`:80`, ports 8080/8443) no certificates are issued; use that behind an existing reverse proxy.
 
 ## Development
 

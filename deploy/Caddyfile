@@ -3,7 +3,6 @@
 }
 
 {$SYNCLET_SITE_ADDRESS::80} {
-	encode zstd gzip
 	request_body {
 		max_size 0
 	}
@@ -19,6 +18,7 @@
 	}
 
 	handle {
+		encode zstd gzip
 		root * /srv/web
 		try_files {path} /index.html
 		file_server
