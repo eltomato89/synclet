@@ -1,7 +1,7 @@
-import type { AuthResponse, PublicUser, SetupStatus } from '@synclet/shared';
+import type { AuthResponse, LoginMethods, PublicUser, SetupStatus } from '@synclet/shared';
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useState } from 'react';
 import {
-  api, broadcastLogout, broadcastSession, getSession, isTransientError, onAuthChange, refreshSession, setAccessToken,
+  api, broadcastLogout, broadcastSession, forwardLogin, getSession, isTransientError, onAuthChange, refreshSession, setAccessToken,
 } from './api';
 import { clearUploadFingerprints } from '@/features/files/uploads';
 
@@ -23,17 +23,33 @@ type ProbeResult = 'needs-setup' | 'anonymous' | 'authenticated' | 'error';
 // The initial session probe runs once per page load. React StrictMode mounts effects twice in dev;
 // two refresh calls would rotate the refresh token twice and trip reuse detection on the server.
 let bootstrap: Promise<ProbeResult> | null = null;
+/** Forward-auth is tried at most once per page load (each success creates a server session). */
+let forwardTried = false;
+
 function probeSession(): Promise<ProbeResult> {
   bootstrap ??= (async (): Promise<ProbeResult> => {
     const s = await api<SetupStatus>('/setup/status');
     if (s.needsSetup) return 'needs-setup';
-    return (await refreshSession()) ? 'authenticated' : 'anonymous';
+    if (await refreshSession()) return 'authenticated';
+    return (await tryForwardAuth()) ? 'authenticated' : 'anonymous';
   })().catch((e: unknown): ProbeResult => (isTransientError(e) ? 'error' : 'anonymous'));
   return bootstrap;
 }
 
+/**
+ * Only when the refresh probe found no session: if the server trusts a reverse proxy's identity
+ * headers, sign in with them. Any failure just means "not signed in" (the login page follows).
+ */
+async function tryForwardAuth(): Promise<boolean> {
+  if (forwardTried) return false;
+  const methods = await api<LoginMethods>('/auth/methods').catch(() => null);
+  if (!methods?.forwardAuth) return false;
+  forwardTried = true;
+  return forwardLogin();
+}
+
 /** Test hook: forget the memoised probe. */
-export function resetSessionProbe() { bootstrap = null; }
+export function resetSessionProbe() { bootstrap = null; forwardTried = false; }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<PublicUser | null>(null);

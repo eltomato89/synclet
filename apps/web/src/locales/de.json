@@ -591,5 +591,38 @@
         "body": "Die Datei konnte nicht geöffnet werden, weil der Server nicht antwortet. Versuche es gleich noch einmal."
       }
     }
+  },
+  "sso": {
+    "orPassword": "oder mit Passwort",
+    "redirectHint": "Die Anmeldung geht auf der Seite deiner Organisation weiter, danach kommst du hierher zurück.",
+    "passwordDisabled": "Die Anmeldung mit Passwort ist für dein Konto abgeschaltet. Melde dich per Single Sign-on an.",
+    "backToAppLogin": "Zurück zur App-Anmeldung",
+    "error": {
+      "oidc_disabled": "Single Sign-on ist auf diesem Server abgeschaltet. Melde dich mit deinem Passwort an oder frag deine Administration.",
+      "idp_unavailable": "Der Anmeldedienst ist gerade nicht erreichbar. Versuch es gleich noch einmal.",
+      "invalid_state": "Die Anmeldung hat zu lange gedauert oder wurde in einem anderen Fenster gestartet. Starte sie erneut.",
+      "idp_error": "Der Anmeldedienst hat die Anmeldung abgebrochen oder abgelehnt. Versuch es noch einmal.",
+      "oidc_failed": "Die Antwort des Anmeldedienstes ließ sich nicht prüfen. Versuch es noch einmal. Wenn es weiter scheitert, lass die Single-Sign-on-Einstellungen von deiner Administration prüfen.",
+      "sso_not_allowed": "Dein Konto darf Synclet nicht nutzen. Bitte deine Administration um Zugang.",
+      "unauthorized": "Dein Konto ist deaktiviert oder ließ sich keinem Synclet-Konto zuordnen. Wende dich an deine Administration.",
+      "rate_limited": "Zu viele Anmeldeversuche. Warte eine Minute und versuch es dann erneut.",
+      "server_error": "Die Anmeldung ist an einem Serverfehler gescheitert. Versuch es noch einmal oder wende dich an deine Administration."
+    }
+  },
+  "appLogin": {
+    "title": "Anmelden bei Synclet für {{name}}",
+    "explain": "{{app}} erhält Zugriff auf deine Dateien auf {{host}}. Danach geht es automatisch zurück zur App.",
+    "continueAs": "Als {{name}} fortfahren",
+    "otherAccount": "Anderes Konto verwenden",
+    "backToCurrent": "Doch als {{name}} fortfahren",
+    "connecting": "Wird verbunden …",
+    "sessionExpired": "Deine Sitzung ist abgelaufen. Melde dich erneut an.",
+    "doneTitle": "Angemeldet",
+    "doneBody": "Es geht zurück zu {{app}}. Falls nichts passiert, öffne die App hier.",
+    "openApp": "App öffnen",
+    "problemTitle": "Anmeldung für die App nicht möglich",
+    "invalidLink": "Dieser Anmeldelink ist unvollständig oder beschädigt. Starte die Anmeldung erneut in der App.",
+    "invalidClient": "Diese App darf sich bei diesem Server nicht anmelden. Starte die Anmeldung erneut in der App oder aktualisiere sie.",
+    "unreachable": "Der Server antwortet nicht. Prüf die Verbindung und versuch es erneut."
   }
 }
