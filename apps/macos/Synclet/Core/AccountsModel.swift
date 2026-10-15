@@ -98,8 +98,8 @@ final class AccountsModel {
     /// Starts one ``ChangeMonitor`` per account (app launch; tests pass a factory). Accounts
     /// added later get theirs in ``reload()``.
     func startMonitoring(factory: ((StoredAccount) -> ChangeMonitor)? = nil) {
-        makeMonitor = factory ?? { [weak self, manager] account in
-            ChangeMonitor.live(account: account, manager: manager, container: manager.accounts.directory) {
+        makeMonitor = factory ?? { [weak self, manager, finder] account in
+            ChangeMonitor.live(account: account, manager: manager, container: manager.accounts.directory, finder: finder) {
                 self?.processAuthFailures()
             }
         }
