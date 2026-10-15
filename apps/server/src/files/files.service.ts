@@ -1,21 +1,20 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import type { Item } from '@prisma/client';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
-import { lstat, mkdir, rename, rm, rmdir, unlink, utimes } from 'node:fs/promises';
+import { lstat, mkdir, readdir, rm, rmdir, unlink, utimes } from 'node:fs/promises';
 import path from 'node:path';
 import { Transform, type Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { APP_CONFIG, AppConfig } from '../config';
-import { freeName, nameKey, tempName, validateName } from '../common/names';
-import { absPath, joinRel, realpathInside, userRoot } from '../common/paths';
+import { freeName, nameKey, tempName, TRASH_STAGING_PREFIX, trashStagingName, validateName } from '../common/names';
+import { absPath, joinRel, parentRel as parentOf, realpathInside, userRoot } from '../common/paths';
 import { SyncError } from '../common/sync-error';
 import type { IndexUser } from '../common/types';
-import { BusyPaths } from '../journal/busy-paths';
 import { ItemStore } from '../journal/item-store';
 import { JournalService, Tx } from '../journal/journal.service';
 import { PrismaService, TX_OPTS } from '../prisma/prisma.service';
-import { linkNoReplace, moveAcrossFs, moveNoReplace, statEntry } from './fs-ops';
+import { linkNoReplace, moveAcrossFs, moveNoReplace, replaceAtomic, statEntry } from './fs-ops';
 
 export type OnConflict = 'fail' | 'rename';
 
@@ -39,19 +38,57 @@ function guardBody(body: Readable) {
   body.on('error', () => {});
 }
 
+const STAGED_TRASH = /^\.synclet-trash-([0-9a-f]{32})$/;
+const uuidFromHex = (h: string) => `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+
 @Injectable()
-export class FilesService {
+export class FilesService implements OnApplicationBootstrap {
   private readonly log = new Logger(FilesService.name);
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly journal: JournalService,
     private readonly store: ItemStore,
-    private readonly busy: BusyPaths,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
+  async onApplicationBootstrap() {
+    if (!this.config.background) return;
+    await this.recoverStagedTrash().catch((e) => this.log.error(`trash recovery failed: ${(e as Error).message}`));
+  }
+
   private abs(user: IndexUser, rel: string) { return absPath(this.config.dataRoot, user.username, rel); }
+
+  private root(user: IndexUser) { return userRoot(this.config.dataRoot, user.username); }
+
+  /**
+   * Asserts that folder `rel` is a chain of real directories below the user root: no symlinked
+   * ancestor (e.g. `Docs -> ../bob` swapped in after indexing), nothing resolving outside the root.
+   * Called under the user lock right before every disk mutation, so nothing is touched otherwise.
+   */
+  private async assertRealDir(user: IndexUser, rel: string): Promise<void> {
+    const root = this.root(user);
+    let cur = root;
+    for (const seg of rel === '' ? [] : rel.split('/')) {
+      cur = path.join(cur, seg);
+      const st = await lstat(cur).catch(() => null);
+      if (!st?.isDirectory()) throw new SyncError('not_found', 'folder missing on disk or not a real folder');
+    }
+    try {
+      await realpathInside(cur, root);
+    } catch {
+      throw new SyncError('not_found', 'path escapes the user root');
+    }
+  }
+
+  /** Checks an indexed entry before mutating it: real parent chain, and still the indexed type. */
+  private async entryOnDisk(user: IndexUser, item: Item): Promise<'ok' | 'missing'> {
+    await this.assertRealDir(user, parentOf(item.path));
+    const st = await lstat(this.abs(user, item.path)).catch((e) => (errno(e) === 'ENOENT' ? null : Promise.reject(e)));
+    if (!st) return 'missing';
+    if (item.type === 'folder' ? !st.isDirectory() : !st.isFile()) throw new SyncError('not_found', 'entry on disk is not the indexed type');
+    return 'ok';
+  }
 
   private checkName(raw: string): string {
     const err = validateName(raw);
@@ -90,6 +127,7 @@ export class FilesService {
         await this.journal.lockUser(tx, user.id);
         const parentRel = await this.parentPath(tx, user, parentId);
         const { sibs, keys } = await this.takenKeys(tx, user, parentId);
+        await this.assertRealDir(user, parentRel);
         let name = desired;
         for (let attempt = 0; ; attempt++) {
           if (keys.has(nameKey(name))) {
@@ -123,7 +161,7 @@ export class FilesService {
 
   /** Streams the body into a temp file in the user root (same file system as the target). */
   private async receive(user: IndexUser, body: Readable, modifiedAt?: Date | null): Promise<{ tmp: string; size: bigint; sha256: string }> {
-    const tmp = path.join(userRoot(this.config.dataRoot, user.username), tempName(randomBytes(8).toString('hex')));
+    const tmp = path.join(this.root(user), tempName(randomBytes(8).toString('hex')));
     const hash = createHash('sha256');
     let size = 0;
     const max = this.config.maxUploadBytes;
@@ -158,6 +196,7 @@ export class FilesService {
         await this.journal.lockUser(tx, user.id);
         const parentRel = await this.parentPath(tx, user, parentId);
         const { sibs, keys } = await this.takenKeys(tx, user, parentId);
+        await this.assertRealDir(user, parentRel);
         let name = desired;
         for (let attempt = 0; ; attempt++) {
           if (keys.has(nameKey(name))) {
@@ -211,10 +250,12 @@ export class FilesService {
         const target = this.abs(user, item.path);
         // Deleted (or replaced by a folder) on the host but not indexed yet: never resurrect it
         // blindly; the indexer will journal the delete.
-        const isFile = await lstat(target).then((s) => s.isFile(), () => false);
-        if (!isFile) throw new SyncError('not_found', 'file missing on disk');
+        if ((await this.entryOnDisk(user, item)) === 'missing') throw new SyncError('not_found', 'file missing on disk');
         const disk = await statEntry(target);
-        if (disk.size !== item.size || disk.mtime.getTime() !== item.mtime.getTime()) {
+        // A new inode with equal size+mtime is an atomic save (temp + rename) on the host. Our own
+        // writes store the inode they produce, so this never fires for them.
+        const inoChanged = item.ino !== null && (disk.ino !== item.ino || disk.dev !== item.dev);
+        if (inoChanged || disk.size !== item.size || disk.mtime.getTime() !== item.mtime.getTime()) {
           // Edited on the host but not yet indexed: record that version, then report the conflict.
           const fresh = await tx.item.update({
             where: { id: item.id },
@@ -224,7 +265,7 @@ export class FilesService {
           return { conflict: fresh, reason: 'file changed on disk' } as const;
         }
         if (item.version !== opts.ifMatchVersion) return { conflict: item, reason: 'version mismatch' } as const;
-        await rename(tmp, target); // atomic replace
+        await replaceAtomic(tmp, target);
         const st = await statEntry(target);
         const updated = await tx.item.update({
           where: { id: item.id },
@@ -258,6 +299,8 @@ export class FilesService {
         }
         const { sibs, keys } = await this.takenKeys(tx, user, targetParent, item.id);
         if (keys.has(nameKey(name))) throw new SyncError('name_conflict', 'name already exists', sibs.find((s) => s.nameKey === nameKey(name)));
+        if ((await this.entryOnDisk(user, item)) === 'missing') throw new SyncError('not_found', 'entry missing on disk');
+        await this.assertRealDir(user, parentRel);
         const rel = joinRel(parentRel, name);
         const from = this.abs(user, item.path);
         const to = this.abs(user, rel);
@@ -281,46 +324,97 @@ export class FilesService {
     }
   }
 
+  /**
+   * Deletes an item into the trash. The entry is vacated atomically under the user lock by
+   * renaming it to an ignored staging name in the user root (`.synclet-trash-<id>`, same file
+   * system, so neither the indexer nor a concurrent API call can ever see it half-gone); the
+   * possibly slow copy to /meta happens after commit. A crash in between is finished by
+   * `recoverStagedTrash()` at the next start.
+   */
   async remove(user: IndexUser, itemId: string): Promise<void> {
     const trashId = randomUUID();
-    const storeDir = path.join(this.config.metaRoot, 'trash', trashId);
-    let item!: Item;
-    // The rows are tombstoned and committed before the (possibly slow, cross-device) move to
-    // /meta, so the indexer must not look at the path in between: it would otherwise pair the
-    // still-present entry with its fresh tombstone and resurrect it. The busy mark is taken
-    // under the user lock (before commit) and released in all cases, including a failed commit.
-    let release = () => {};
+    const staging = path.join(this.root(user), trashStagingName(trashId));
+    let staged: { from: string; storePath: string } | null = null;
     try {
       await this.prisma.$transaction(async (tx) => {
         await this.journal.lockUser(tx, user.id);
-        const found = await this.store.getLive(tx, user.id, itemId);
-        if (!found) throw new SyncError('not_found');
-        item = found;
-        release = this.busy.add(user.id, item.path);
+        const item = await this.store.getLive(tx, user.id, itemId);
+        if (!item) throw new SyncError('not_found');
+        // Already gone on the host (not indexed yet): the delete stands, there is nothing to trash.
+        if ((await this.entryOnDisk(user, item)) === 'ok') {
+          const from = this.abs(user, item.path);
+          await moveAcrossFs(from, staging); // rename; copy only if a nested mount is in between
+          staged = { from, storePath: path.join(this.config.metaRoot, 'trash', trashId, item.name) };
+        }
         const gone = await this.store.tombstoneSubtree(tx, item);
-        await tx.trashEntry.create({
-          data: {
-            id: trashId, ownerId: user.id, itemId: item.id, type: item.type, name: item.name, originalPath: item.path,
-            size: gone.reduce((s, i) => s + i.size, 0n), storePath: path.join(storeDir, item.name),
-            manifest: gone.map((i) => ({ id: i.id, type: i.type, path: i.path })),
-          },
-        });
+        if (staged) {
+          await tx.trashEntry.create({
+            data: {
+              id: trashId, ownerId: user.id, itemId: item.id, type: item.type, name: item.name, originalPath: item.path,
+              size: gone.reduce((s, i) => s + i.size, 0n), storePath: (staged as { storePath: string }).storePath,
+              manifest: gone.map((i) => ({ id: i.id, type: i.type, path: i.path })),
+            },
+          });
+        }
         await this.journal.record(tx, user.id, gone, 'delete');
         const sibs = await this.store.sameKeySiblings(tx, user.id, item.parentId, [item.nameKey], new Set([item.id]));
         await this.journal.record(tx, user.id, sibs, 'upsert');
       }, TX_OPTS);
-      await mkdir(storeDir, { recursive: true });
-      try {
-        await moveAcrossFs(this.abs(user, item.path), path.join(storeDir, item.name));
-      } catch (e) {
-        if (errno(e) !== 'ENOENT') throw e;
-        // Already gone on the host (not yet indexed): the delete stands, but there is nothing to restore.
-        await rm(storeDir, { recursive: true, force: true });
-        await this.prisma.trashEntry.delete({ where: { id: trashId } }).catch(() => {});
+    } catch (e) {
+      // Rolled back after vacating: put the entry back where the DB still expects it.
+      const st = staged as { from: string } | null;
+      if (st) {
+        const occupied = await lstat(st.from).then(() => true, () => false);
+        if (occupied) this.log.error(`cannot restore ${staging}: ${st.from} was re-created; leaving it staged`);
+        else await moveAcrossFs(staging, st.from).catch((err) => this.log.error(`cannot restore ${staging} -> ${st.from}: ${String(err)}`));
       }
-    } finally {
-      release();
+      throw e;
     }
+    const done = staged as { storePath: string } | null;
+    if (done) {
+      // Committed: the delete stands even if /meta is briefly unavailable; recovery retries at start.
+      await this.finishTrash(staging, done.storePath).catch((e) =>
+        this.log.error(`moving ${staging} to ${done.storePath} failed, left staged for recovery: ${(e as Error).message}`));
+    }
+  }
+
+  /** Moves a staged entry into its trash location; an existing storePath means a completed copy. */
+  private async finishTrash(staging: string, storePath: string): Promise<void> {
+    if (await lstat(storePath).then(() => true, () => false)) {
+      await rm(staging, { recursive: true, force: true });
+      return;
+    }
+    await mkdir(path.dirname(storePath), { recursive: true });
+    await moveAcrossFs(staging, storePath);
+  }
+
+  /**
+   * Finishes trash moves interrupted by a crash: every `.synclet-trash-<id>` in a user root whose
+   * TrashEntry exists is moved to its storePath. Anything without a TrashEntry (crash before
+   * commit) is logged and left alone. Returns the number of recovered entries.
+   */
+  async recoverStagedTrash(): Promise<number> {
+    let recovered = 0;
+    for (const u of await this.prisma.user.findMany({ select: { id: true, username: true } })) {
+      const root = userRoot(this.config.dataRoot, u.username);
+      const names = await readdir(root).catch(() => [] as string[]);
+      for (const name of names.filter((n) => n.startsWith(TRASH_STAGING_PREFIX))) {
+        const abs = path.join(root, name);
+        const m = STAGED_TRASH.exec(name);
+        const entry = m ? await this.prisma.trashEntry.findFirst({ where: { id: uuidFromHex(m[1]), ownerId: u.id } }) : null;
+        if (!entry) {
+          this.log.warn(`staged trash ${abs} has no trash entry; leaving it untouched`);
+          continue;
+        }
+        try {
+          await this.finishTrash(abs, entry.storePath);
+          recovered++;
+        } catch (e) {
+          this.log.error(`cannot recover staged trash ${abs}: ${(e as Error).message}`);
+        }
+      }
+    }
+    return recovered;
   }
 
   async openRead(user: IndexUser, itemId: string): Promise<{ item: Item; abs: string }> {
@@ -328,7 +422,7 @@ export class FilesService {
     if (!item) throw new SyncError('not_found');
     if (item.type !== 'file') throw new SyncError('invalid_request', 'not a file');
     try {
-      const abs = await realpathInside(this.abs(user, item.path), userRoot(this.config.dataRoot, user.username));
+      const abs = await realpathInside(this.abs(user, item.path), this.root(user));
       return { item, abs };
     } catch {
       throw new SyncError('not_found');

@@ -1,5 +1,5 @@
 import {
-  assignDisplayNames, freeName, isIgnored, isTempName, nameKey, splitExt, tempName, validateName, withSuffix,
+  assignDisplayNames, freeName, isIgnored, isTempName, nameKey, splitExt, tempName, trashStagingName, validateName, withSuffix,
 } from './names';
 
 const d = (s: number) => new Date(2026, 0, 1, 0, 0, s);
@@ -19,6 +19,7 @@ describe('names', () => {
     ['CON', 'reserved'], ['con.txt', 'reserved'], ['LPT1', 'reserved'], ['com9.log', 'reserved'],
     ['x'.repeat(256), 'too_long'], ['ü'.repeat(128), 'too_long'],
     ['.DS_Store', 'ignored'], ['Thumbs.db', 'ignored'], ['~$doc.docx', 'ignored'], ['.synclet-tmp-abc', 'ignored'],
+    ['.synclet-trash-0123abcd', 'ignored'],
   ])('validateName(%j) = %s', (name, err) => {
     expect(validateName(name)).toBe(err);
   });
@@ -34,6 +35,15 @@ describe('names', () => {
     }
     expect(isIgnored('notes.txt')).toBe(false);
     expect(isTempName(tempName('k3j4'))).toBe(true);
+  });
+
+  it('ignores trash staging names (and never treats them as temp files)', () => {
+    const staged = trashStagingName('3f2c1a9e-0b1d-4c2e-9f00-123456789abc');
+    expect(staged).toBe('.synclet-trash-3f2c1a9e0b1d4c2e9f00123456789abc');
+    expect(isIgnored(staged)).toBe(true);
+    expect(isIgnored(`${staged}-partial-ab12`)).toBe(true);
+    expect(validateName(staged)).toBe('ignored');
+    expect(isTempName(staged)).toBe(false);
   });
 
   it('splits extensions at the last dot, not at position 0', () => {

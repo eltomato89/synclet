@@ -1,10 +1,11 @@
-import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { createTestApp, createTestUser, itIfCaseSensitive, TestContext } from '../../test/context';
 import { IndexUser } from '../common/types';
 import { IndexerService } from '../indexer/indexer.service';
 import { JournalService } from '../journal/journal.service';
+import { trashStagingName } from '../common/names';
 import { FilesService } from './files.service';
 
 describe('FilesService', () => {
@@ -218,5 +219,84 @@ describe('FilesService', () => {
     await expect(files.openRead(user, d.id)).rejects.toMatchObject({ code: 'invalid_request' });
     await files.remove(user, f.id);
     await expect(files.openRead(user, f.id)).rejects.toMatchObject({ code: 'not_found' });
+  });
+  it('never writes through a symlinked ancestor swapped in after indexing (Docs -> ../bob)', async () => {
+    const docs = await files.createFolder(user, null, 'Docs');
+    const x = await files.upload(user, docs.id, 'x.txt', body('alice'), {});
+    const other = await files.upload(user, null, 'other.txt', body('o'), {});
+    const bob = path.join(ctx.config.dataRoot, 'bob');
+    await mkdir(bob);
+    await writeFile(path.join(bob, 'x.txt'), 'bob');
+    await rm(path.join(root, 'Docs'), { recursive: true });
+    await symlink('../bob', path.join(root, 'Docs'));
+
+    await expect(files.remove(user, x.id)).rejects.toMatchObject({ code: 'not_found' });
+    await expect(files.upload(user, docs.id, 'new.txt', body('n'), {})).rejects.toMatchObject({ code: 'not_found' });
+    await expect(files.createFolder(user, docs.id, 'sub')).rejects.toMatchObject({ code: 'not_found' });
+    await expect(files.update(user, x.id, { name: 'y.txt' })).rejects.toMatchObject({ code: 'not_found' });
+    await expect(files.update(user, other.id, { parentId: docs.id })).rejects.toMatchObject({ code: 'not_found' });
+    await expect(files.replaceContent(user, x.id, body('evil'), { ifMatchVersion: x.version })).rejects.toMatchObject({ code: 'not_found' });
+
+    expect(await visible(bob)).toEqual(['x.txt']);
+    expect(await readFile(path.join(bob, 'x.txt'), 'utf8')).toBe('bob');
+    expect(await visible()).toEqual(['Docs', 'other.txt']);
+    expect(await ctx.prisma.trashEntry.count()).toBe(0);
+    expect((await ctx.prisma.item.findUniqueOrThrow({ where: { id: x.id } })).deletedAt).toBeNull();
+  });
+
+  it('remove vacates the path inside the transaction: a concurrent ancestor rename cannot resurrect it', async () => {
+    const a = await files.createFolder(user, null, 'A');
+    const x = await files.upload(user, a.id, 'x.txt', body('x'), {});
+    await Promise.all([files.remove(user, x.id), files.update(user, a.id, { name: 'B' })]);
+    expect(await visible()).toEqual(['B']);
+    expect(await visible(path.join(root, 'B'))).toEqual([]);
+    const entry = await ctx.prisma.trashEntry.findFirstOrThrow();
+    expect(await readFile(entry.storePath, 'utf8')).toBe('x');
+    expect(await ctx.app.get(IndexerService).fullScan(user)).toMatchObject({ created: 0, moved: 0, deleted: 0 });
+    expect((await ctx.prisma.item.findUniqueOrThrow({ where: { id: x.id } })).deletedAt).not.toBeNull();
+  });
+
+  it('remove of an entry already deleted on the host tombstones it without a trash entry', async () => {
+    const f = await files.upload(user, null, 'a.txt', body('x'), {});
+    await rm(path.join(root, 'a.txt'));
+    await files.remove(user, f.id);
+    expect((await ctx.prisma.item.findUniqueOrThrow({ where: { id: f.id } })).deletedAt).not.toBeNull();
+    expect(await ctx.prisma.trashEntry.count()).toBe(0);
+  });
+
+  it('recoverStagedTrash finishes a trash move interrupted by a crash and leaves orphans alone', async () => {
+    const a = await files.createFolder(user, null, 'A');
+    await files.upload(user, a.id, 'x.txt', body('x'), {});
+    // Simulate a crash after commit: entry staged in the user root, TrashEntry written, not moved yet.
+    const trashId = '3f2c1a9e-0b1d-4c2e-9f00-123456789abc';
+    const staged = path.join(root, trashStagingName(trashId));
+    await rename(path.join(root, 'A'), staged);
+    const storePath = path.join(ctx.config.metaRoot, 'trash', trashId, 'A');
+    await ctx.prisma.trashEntry.create({
+      data: { id: trashId, ownerId: user.id, itemId: a.id, type: 'folder', name: 'A', originalPath: 'A', size: 1n, storePath, manifest: [] },
+    });
+    // A staged entry without TrashEntry (crash before commit) must survive untouched.
+    const orphan = path.join(root, trashStagingName('00000000-0000-4000-8000-000000000001'));
+    await writeFile(orphan, 'orphan');
+
+    expect(await files.recoverStagedTrash()).toBe(1);
+    expect(await readFile(path.join(storePath, 'x.txt'), 'utf8')).toBe('x');
+    expect(await readdir(root)).toEqual([path.basename(orphan)]);
+    expect(await visible()).toEqual([path.basename(orphan)]); // ignored by the indexer, see names.spec
+    expect(await ctx.app.get(IndexerService).fullScan(user)).toMatchObject({ created: 0 });
+  });
+
+  it('replaceContent detects an atomic save on the host with equal size and mtime (inode change)', async () => {
+    const f = await files.upload(user, null, 'a.txt', body('v1'), {});
+    await writeFile(path.join(root, 'other'), 'v2'); // same size
+    await utimes(path.join(root, 'other'), f.mtime, f.mtime);
+    await rename(path.join(root, 'other'), path.join(root, 'a.txt'));
+    await expect(files.replaceContent(user, f.id, body('client'), { ifMatchVersion: f.version })).rejects.toMatchObject({ code: 'conflict' });
+    expect(await readFile(path.join(root, 'a.txt'), 'utf8')).toBe('v2');
+    // Our own replace stores the new inode, so the next write with the fresh version succeeds.
+    const fresh = await ctx.prisma.item.findUniqueOrThrow({ where: { id: f.id } });
+    const v3 = await files.replaceContent(user, f.id, body('client'), { ifMatchVersion: fresh.version });
+    await files.replaceContent(user, f.id, body('again'), { ifMatchVersion: v3.version });
+    expect(await readFile(path.join(root, 'a.txt'), 'utf8')).toBe('again');
   });
 });
