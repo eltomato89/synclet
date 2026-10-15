@@ -1,9 +1,11 @@
 // Validates response bodies against the component schemas of openapi.yaml, so the published
 // description and the server cannot drift apart unnoticed.
 //
-// For validation only, every object schema with `properties` is closed
-// (`unevaluatedProperties: false`): a field the server sends but openapi.yaml does not document
-// fails the suite. The published document itself stays open (clients must ignore unknown fields).
+// Strict by default: for validation only, every object schema with `properties` is closed
+// (`unevaluatedProperties: false`), so a field the server sends but openapi.yaml does not document
+// fails the suite (drift detection within this repository). The published document itself stays
+// open – clients must ignore unknown fields and the server may add optional ones. To run the suite
+// against a newer server that legitimately adds fields, set SYNCLET_CONTRACT_LENIENT=1.
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
 import { readFileSync } from 'node:fs';
@@ -24,7 +26,9 @@ function close(node: unknown): void {
 
 const doc = parse(readFileSync(fileURLToPath(new URL('../openapi.yaml', import.meta.url)), 'utf8')) as { components: { schemas: Json } };
 const schemas = structuredClone(doc.components.schemas);
-close(schemas);
+/** True when SYNCLET_CONTRACT_LENIENT=1: additional response properties are allowed. */
+export const lenient = process.env.SYNCLET_CONTRACT_LENIENT === '1';
+if (!lenient) close(schemas);
 
 // CommonJS packages: depending on the loader the class is the default export or its `.default`.
 const cjs = <T>(m: T): T => ((m as { default?: T }).default ?? m);

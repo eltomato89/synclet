@@ -60,18 +60,27 @@ export default async function setup(project: TestProject) {
 
   const auth = await authenticate(anon);
   const primary = anon.withToken(auth.token);
-  // The suite works with its own device token, like a native client. A unique installationId keeps
-  // the registration from revoking any real device of this user.
-  const reg = expectStatus(await primary.post('/sync/v1/devices', {
-    name: `sync-contract ${randomSuffix()}`, platform: 'linux', appVersion: '0.0.0-contract', installationId: `contract-${randomBytes(16).toString('hex')}`,
-  }), 201, 'POST /sync/v1/devices').json<{ token: string; device: { id: string } }>();
-  const api = anon.withToken(reg.token);
-
+  let reg: { token: string; device: { id: string } } | null = null;
+  let folder: { id: string };
   const folderName = `contract-${randomSuffix()}`;
-  const folder = expectStatus(await api.mkdir('root', folderName), 201, 'create contract folder').json<{ id: string }>();
+  try {
+    // The suite works with its own device token, like a native client. A unique installationId
+    // keeps the registration from revoking any real device of this user.
+    reg = expectStatus(await primary.post('/sync/v1/devices', {
+      name: `sync-contract ${randomSuffix()}`, platform: 'linux', appVersion: '0.0.0-contract', installationId: `contract-${randomBytes(16).toString('hex')}`,
+    }), 201, 'POST /sync/v1/devices').json<{ token: string; device: { id: string } }>();
+    folder = expectStatus(await anon.withToken(reg.token).mkdir('root', folderName), 201, 'create contract folder').json<{ id: string }>();
+  } catch (e) {
+    // Setup failed half-way: no teardown will run, so undo what exists already.
+    if (reg) await anon.withToken(reg.token).del('/sync/v1/devices/current').catch(() => undefined);
+    if (auth.refresh) await revokeRefresh(anon, auth.refresh).catch(() => undefined);
+    throw e;
+  }
+  const device = reg;
+  const api = anon.withToken(device.token);
 
   const context: ContractContext = {
-    baseUrl, token: reg.token, deviceId: reg.device.id, webToken: auth.webToken, login: auth.login,
+    baseUrl, token: device.token, deviceId: device.device.id, webToken: auth.webToken, login: auth.login,
     folderId: folder.id, folderName,
     skipThumbnails: env('SYNCLET_SKIP_THUMBNAILS') === '1' ? 'SYNCLET_SKIP_THUMBNAILS=1 (no derivatives worker running)' : null,
     thumbnailTimeoutMs: Number(env('SYNCLET_THUMBNAIL_TIMEOUT_MS') ?? 60_000),

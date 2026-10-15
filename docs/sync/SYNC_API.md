@@ -26,7 +26,9 @@ DocumentsProvider, Linux). All clients build on this document; change it only by
 - **JSON** in UTF-8. Timestamps are ISO 8601 in UTC with milliseconds (`2026-10-15T07:08:09.123Z`).
   Large or opaque numbers (cursors) are **strings**. Sizes are JSON numbers (exact up to 2^53).
 - **Unknown fields:** clients **must** ignore response fields they do not know. Within v1 the server
-  may add optional fields, new error codes are only added together with a new feature.
+  may add optional fields, new error codes are only added together with a new feature. (The
+  conformance suite is strict by default and fails on fields `openapi.yaml` does not document, to
+  catch drift in this repository; `SYNCLET_CONTRACT_LENIENT=1` allows additional fields, §14.)
 - **Error format** (every Sync API error):
   `{ "statusCode": 412, "message": "…", "code": "conflict", "item"?: SyncItem }`.
   `code` is the stable machine-readable value; `message` is English diagnostics and may change.
@@ -296,7 +298,8 @@ honor the flags (future shared folders will use them).
 
 - `GET /sync/v1/items/:id` → `SyncItem`. `404` when unknown, trashed or foreign.
 - `GET /sync/v1/items/:id/children?pageToken=&limit=` → `{ items: SyncItem[], nextPageToken: string | null, cursor: string }`
-  - `limit`: default 500, clamped to 1..1000 (non-numeric → 500).
+  - `limit`: `floor(limit)`; missing, non-numeric or `0` (also `0.x`) → the default 500; then
+    clamped to 1..1000 (negative → 1, above 1000 → 1000).
   - Order: all folders, then all files; within each group by id. `pageToken` is an opaque keyset
     marker (not an offset): items created or deleted between pages never cause duplicates or
     skipped survivors. `nextPageToken` is `null` on the last page.
@@ -314,7 +317,7 @@ honor the flags (future shared folders will use them).
   { changes: ({ op: "upsert", item: SyncItem } | { op: "delete", id: string })[],
     cursor: string, hasMore: boolean }
   ```
-  `limit`: default 500, clamped to 1..1000.
+  `limit`: same rule as for `children` (missing, non-numeric or `0` → 500; then clamped to 1..1000).
 
 **Cursor.** Opaque string. Clients store it and send it back; they must not parse it, compare it
 by order or compute with it. A cursor is per user, not per device.
@@ -389,10 +392,12 @@ Phase 2/3; until then clients poll.
 
 - `download` (default): valid 60 s; `url = /api/sync/v1/items/<id>/content?download=1&dt=<token>`
   (attachment). For handing a download to a system downloader or browser.
-- `preview`: valid 6 h; `url = /api/sync/v1/items/<id>/content?dt=<token>` (inline). Also accepted
-  by `GET /items/<id>/thumbnail` and the version content route (§10) of the same item.
+- `preview`: valid 6 h; `url = /api/sync/v1/items/<id>/content?dt=<token>` (inline).
+- Either kind of token is accepted by `GET /items/<id>/content`, `GET /items/<id>/thumbnail` and
+  the version content route (§10) of the **same** item; the purpose only sets the lifetime and the
+  `url` form (the server does not check the purpose on these routes).
 - The token is bound to the item id; for any other item it answers `401 unauthorized`. It is only
-  accepted on those content/thumbnail routes. `url` is path-only: prefix it with the origin.
+  accepted on those content/thumbnail/version-content routes. `url` is path-only: prefix it with the origin.
 - A folder → `400 invalid_request`; an unknown `purpose` → `400`.
 
 ### 6.3 Replace
@@ -468,7 +473,8 @@ covered by this contract). Authentication: `Authorization: Bearer`
    offset retries the publish.
 
 - `DELETE <Location>` → `204` terminates an unfinished upload.
-- `423` while the upload is being published: retry `HEAD` shortly.
+- `PATCH` and `DELETE` answer `423` while the upload is being published (by a concurrent
+  completing request): wait and check with `HEAD` (which is not blocked).
 - Unfinished uploads expire after 24 h (`410`). Uploads of other users are indistinguishable from
   unknown ones (`404`). Upload ids are opaque.
 
@@ -528,7 +534,7 @@ Not needed for syncing; offered for clients with a trash UI. Same tokens as the 
 ### 9.1 Thumbnails
 
 `GET /sync/v1/items/:id/thumbnail?size=256|1024` (default 256; other values → `400 invalid_request`;
-folders → `400`) – accepts a preview download token (`?dt=`).
+folders → `400`) – accepts a download token of the same item (`?dt=`, either purpose, §6.2).
 
 - `200 image/webp` (always re-encoded, never the original bytes), `ETag: "<sha256>-<size>"`,
   `Cache-Control: private, max-age=31536000, immutable`; `If-None-Match` → `304`. A given URL's
@@ -555,8 +561,9 @@ highlight.js language for `kind = "code"`.
 ## 10. Versions (Phase 1c, optional)
 
 Only when `GET /capabilities` reports `versions: true` (server setting `SYNCLET_VERSIONS=on`, off by
-default). When off, every route below answers `404 { code: "not_found", message: "versions disabled" }`,
-and no versions are created.
+default). When off, every route below answers `404 { code: "not_found", message: "versions disabled" }`
+for a well-formed file id, and no versions are created. Id validation comes first: a malformed id or
+a folder id is `400 invalid_request` whether versions are on or off.
 
 - A version is created when the server replaces content: `PUT /content`, Office saves and version
   restores. Edits made directly on the server's disk create no versions. The server thins out old
@@ -650,6 +657,8 @@ SYNCLET_URL=http://localhost:8080 SYNCLET_USER=admin SYNCLET_PASSWORD=… pnpm t
 SYNCLET_URL=… SYNCLET_TOKEN=syd_… pnpm test:contract
 # against a fresh instance: creates the first administrator
 SYNCLET_URL=… SYNCLET_SETUP=1 [SYNCLET_USER=… SYNCLET_PASSWORD=…] pnpm test:contract
+# against a newer server that adds response fields: allow undocumented fields
+SYNCLET_CONTRACT_LENIENT=1 SYNCLET_URL=… SYNCLET_TOKEN=… pnpm test:contract
 # lint the OpenAPI description
 pnpm --filter @synclet/sync-contract lint:openapi
 ```

@@ -818,7 +818,7 @@ paths:
           description: '`Upload-Offset` does not match the server offset (plain-text tus body), or `name_conflict` at completion with `onConflict=fail` (JSON `Error`; the upload is dropped).'
         '410': { description: Expired. }
         '413': { $ref: '#/components/responses/TooLarge' }
-        '423': { description: The upload is being published right now; retry HEAD shortly. }
+        '423': { description: 'The upload is being published by another request right now; check with HEAD shortly.' }
     delete:
       tags: [uploads]
       operationId: tusTerminate
@@ -829,7 +829,7 @@ paths:
         '204': { description: Terminated. }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { description: Unknown or foreign upload. }
-        '423': { description: The upload is being published right now. }
+        '423': { description: 'The upload is being published by another request right now.' }
 
   /trash:
     get:
@@ -915,7 +915,7 @@ components:
       name: limit
       in: query
       required: false
-      description: Clamped to 1..1000 (default 500).
+      description: '`floor(limit)`; missing, non-numeric or 0 → 500; then clamped to 1..1000.'
       schema: { type: integer, minimum: 1, maximum: 1000, default: 500 }
     ModifiedAt:
       name: X-Synclet-Modified-At

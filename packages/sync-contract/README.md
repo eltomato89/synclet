@@ -6,8 +6,10 @@ The Synclet Sync API v1 as a machine-readable description and an executable conf
   contract is [`docs/sync/SYNC_API.md`](../../docs/sync/SYNC_API.md).
 - `src/client.ts` – a thin fetch client (waits on `429 Retry-After`).
 - `src/schema.ts` – validates response bodies against `components.schemas` of `openapi.yaml`.
-  For validation every documented object is closed, so a field the server sends but the
-  description does not document fails the suite.
+  **Strict by default:** for validation every documented object is closed, so a field the server
+  sends but the description does not document fails the suite (drift detection between server and
+  contract in this repository). The contract itself allows the server to add optional fields; to
+  run the suite against a newer server that does, set `SYNCLET_CONTRACT_LENIENT=1`.
 - `tests/*.test.ts` – the conformance suite (vitest), run against a live server.
 
 ## Running
@@ -19,7 +21,8 @@ SYNCLET_URL=http://localhost:8080 SYNCLET_USER=admin SYNCLET_PASSWORD=secret pnp
 # one file
 SYNCLET_URL=… SYNCLET_TOKEN=syd_… pnpm test:contract tests/content.test.ts
 
-# lint the OpenAPI description (Redocly, config in redocly.yaml)
+# lint the OpenAPI description (Redocly, config in redocly.yaml, per-operation exceptions with
+# their justification in .redocly.lint-ignore.yaml)
 pnpm --filter @synclet/sync-contract lint:openapi
 pnpm --filter @synclet/sync-contract typecheck
 ```
@@ -30,6 +33,7 @@ pnpm --filter @synclet/sync-contract typecheck
 | `SYNCLET_TOKEN` | A device token (`syd_…`) or a web access token (JWT, valid 15 min) |
 | `SYNCLET_USER`, `SYNCLET_PASSWORD` | Password login (also enables the password-based app login test) |
 | `SYNCLET_SETUP=1` | On a fresh instance: create the first administrator (`SYNCLET_USER`, default `contract`; `SYNCLET_PASSWORD`, default random). On an instance that is set up already, `SYNCLET_USER`/`SYNCLET_PASSWORD` are used to log in |
+| `SYNCLET_CONTRACT_LENIENT=1` | Allow response properties that `openapi.yaml` does not document (default: strict, they fail) |
 | `SYNCLET_SKIP_THUMBNAILS=1` | Skip the thumbnail test (no derivatives worker running) |
 | `SYNCLET_THUMBNAIL_TIMEOUT_MS` | How long to poll for a thumbnail (default 60000) |
 
@@ -58,6 +62,9 @@ a cursor ahead of the server), disabling users, password-login settings.
   `SYNCLET_SKIP_THUMBNAILS=1` to skip it instead.
 - **App login:** the password flow needs `SYNCLET_USER`/`SYNCLET_PASSWORD` (or `SYNCLET_SETUP=1`);
   the session flow needs a web access token (password login, setup, or a JWT as `SYNCLET_TOKEN`).
+
+Setup failures: if the global setup fails after it registered its device (e.g. the suite folder
+cannot be created), it revokes the device and logs out its session before reporting the error.
 
 ## Rate limits
 

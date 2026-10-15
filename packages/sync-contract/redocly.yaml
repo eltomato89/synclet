@@ -4,5 +4,5 @@ extends:
 rules:
   # The project license is not decided yet (README: TBD).
   info-license: off
-  # Setup status and tus OPTIONS have no client-error responses by design.
-  operation-4xx-response: off
+# Per-operation exceptions (e.g. operations without client-error responses by design) are listed
+# in .redocly.lint-ignore.yaml.
