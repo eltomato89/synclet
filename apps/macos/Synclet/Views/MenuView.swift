@@ -23,6 +23,7 @@ struct AppActions {
 struct MenuView: View {
     let accounts: AccountsModel
     let problems: ProblemsModel
+    var pinning: PinningModel?
     let actions: AppActions
 
     var body: some View {
@@ -36,6 +37,10 @@ struct MenuView: View {
             Section(entry.title) {
                 AccountStatusView(entry: entry, state: accounts.menuState(for: entry, problems: problems.entries, now: now),
                                   actions: actions, now: now)
+                if let pinning, let line = OfflineMenuLine.text(for: pinning.account(key: entry.id),
+                                                                 refreshing: pinning.isRefreshing(key: entry.id)) {
+                    Label(line, systemImage: "arrow.down.circle")
+                }
             }
         }
         ErrorListView(problems: problems.entries,
@@ -49,6 +54,19 @@ struct MenuView: View {
         Divider()
         Button("Quit Synclet") { actions.quit() }
             .keyboardShortcut("q")
+    }
+}
+
+/// The account's offline-storage line in the menu (spec §2.5): only when something is pinned.
+enum OfflineMenuLine {
+    static func text(for account: PinningModel.AccountState?, refreshing: Bool) -> String? {
+        guard let account, account.hasPins else { return nil }
+        if let bytes = account.offlineBytes {
+            let size = bytes.formatted(.byteCount(style: .file))
+            return String(localized: "Offline content ≈ \(size)")
+        }
+        if refreshing { return String(localized: "Offline content: calculating…") }
+        return String(localized: "Offline content: not measured yet")
     }
 }
 

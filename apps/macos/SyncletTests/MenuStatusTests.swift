@@ -280,3 +280,33 @@ final class ChangeFlag: @unchecked Sendable {
     func set() { lock.withLock { flag = true } }
     var value: Bool { lock.withLock { flag } }
 }
+
+extension MenuStatusTests {
+    // MARK: Offline line (spec §2.5)
+
+    private func pinnedAccount(pins: PinSet, measured: [String: Int64] = [:], folders: [PinningModel.Folder] = []) -> PinningModel.AccountState {
+        var space = PinningModel.SpaceState(space: .personal(), title: "Meine Dateien")
+        space.pins = pins
+        space.measured = measured
+        space.folders = folders
+        return PinningModel.AccountState(key: key, title: "jens@host", spaces: [space])
+    }
+
+    func testOfflineLineOnlyWhenSomethingIsPinned() {
+        XCTAssertNil(OfflineMenuLine.text(for: nil, refreshing: false))
+        XCTAssertNil(OfflineMenuLine.text(for: pinnedAccount(pins: PinSet()), refreshing: true))
+    }
+
+    func testOfflineLineShowsMeasuredBytes() throws {
+        let account = pinnedAccount(pins: PinSet(folders: ["d_fotos"]), measured: ["d_fotos": 5_000_000])
+        let text = try XCTUnwrap(OfflineMenuLine.text(for: account, refreshing: false))
+        XCTAssertTrue(text.contains(Int64(5_000_000).formatted(.byteCount(style: .file))), text)
+    }
+
+    func testOfflineLineWhileNotMeasured() {
+        let account = pinnedAccount(pins: PinSet(wholeSpace: true))
+        XCTAssertNotEqual(OfflineMenuLine.text(for: account, refreshing: true),
+                          OfflineMenuLine.text(for: account, refreshing: false))
+        XCTAssertNotNil(OfflineMenuLine.text(for: account, refreshing: false))
+    }
+}

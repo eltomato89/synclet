@@ -7,7 +7,8 @@ struct SyncletApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuView(accounts: appDelegate.accounts, problems: appDelegate.problems, actions: appDelegate.actions)
+            MenuView(accounts: appDelegate.accounts, problems: appDelegate.problems, pinning: appDelegate.pinning,
+                     actions: appDelegate.actions)
         } label: {
             MenuBarLabel(accounts: appDelegate.accounts, problems: appDelegate.problems)
         }
