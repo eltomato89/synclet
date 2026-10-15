@@ -21,4 +21,10 @@ describe('loadConfig', () => {
     const c = loadConfig({ SYNCLET_TRASH_RETENTION_DAYS: '0', SYNCLET_SEARCH_LANGUAGE: 'german', SYNCLET_WORKER_CONCURRENCY: '4', SYNCLET_PREVIEW_MAX_BYTES: '1024' });
     expect(c).toMatchObject({ trashRetentionDays: 0, searchLanguage: 'german', workerConcurrency: 4, previewMaxBytes: 1024 });
   });
+
+  it('trustProxy defaults to false and reads SYNCLET_TRUST_PROXY', () => {
+    expect(loadConfig({}).trustProxy).toBe(false);
+    expect(loadConfig({ SYNCLET_TRUST_PROXY: '' }).trustProxy).toBe(false);
+    expect(loadConfig({ SYNCLET_TRUST_PROXY: 'true' }).trustProxy).toBe(true);
+  });
 });

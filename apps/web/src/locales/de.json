@@ -158,6 +158,7 @@
       "too_large": "Die Datei ist größer, als der Server erlaubt.",
       "forbidden": "Dafür fehlt dir die Berechtigung.",
       "unauthorized": "Deine Sitzung ist abgelaufen. Melde dich erneut an.",
+      "server_error": "Der Server hat unerwartet geantwortet.",
       "network": "Keine Verbindung zum Server.",
       "unknown": "Das hat nicht geklappt. Versuch es noch einmal."
     },

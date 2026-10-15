@@ -22,12 +22,18 @@
 		root * /srv/web
 		try_files {path} /index.html
 		file_server
+		# CSP for the SPA only; /api/* content responses carry their own (sandbox) CSP.
+		header Content-Security-Policy "default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; frame-src 'self' blob:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'"
 		header /assets/* Cache-Control "public, max-age=31536000, immutable"
 	}
+
+	# HSTS only when served over HTTPS (a domain as SYNCLET_SITE_ADDRESS gets automatic HTTPS).
+	@https expression `{scheme} == "https"`
 
 	header {
 		X-Content-Type-Options nosniff
 		Referrer-Policy strict-origin-when-cross-origin
 		X-Frame-Options SAMEORIGIN
 	}
+	header @https Strict-Transport-Security "max-age=31536000"
 }
