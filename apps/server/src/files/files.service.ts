@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import type { Item } from '@prisma/client';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
@@ -53,8 +53,10 @@ async function sizeOf(abs: string): Promise<bigint> {
 const uuidFromHex = (h: string) => `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 
 @Injectable()
-export class FilesService {
+export class FilesService implements OnModuleDestroy {
   private readonly log = new Logger(FilesService.name);
+  /** Serialized background moves of committed deletes from their staging entry to /meta/trash. */
+  private trashQueue: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -334,8 +336,8 @@ export class FilesService {
    * Deletes an item into the trash. The entry is vacated atomically under the user lock by
    * renaming it to an ignored staging name in the user root (`.synclet-trash-<id>`, same file
    * system, so neither the indexer nor a concurrent API call can ever see it half-gone); the
-   * possibly slow copy to /meta happens after commit. A crash in between is finished by
-   * `recoverStagedTrash()` at the next start.
+   * possibly slow copy to /meta happens after commit, in the background (`pendingTrash()`).
+   * A crash in between is finished by `recoverStagedTrash()` at the next start.
    */
   async remove(user: IndexUser, itemId: string): Promise<void> {
     const trashId = randomUUID();
@@ -387,10 +389,23 @@ export class FilesService {
     }
     const done = staged as { storePath: string } | null;
     if (done) {
-      // Committed: the delete stands even if /meta is briefly unavailable; recovery retries at start.
-      await this.finishTrash(staging, done.storePath).then(() => this.dropIntent(trashId), (e) =>
+      // Committed: the response does not wait for the (cross-mount, possibly huge) copy to /meta.
+      // The staged entry stays ignored by the indexer and unreachable by name via the API until
+      // the move finishes; a crash meanwhile is completed by recoverStagedTrash() at the next start
+      // (the TrashEntry exists), and so is a failure here (e.g. /meta briefly unavailable).
+      const job = () => this.finishTrash(staging, done.storePath).then(() => this.dropIntent(trashId), (e) =>
         this.log.error(`moving ${staging} to ${done.storePath} failed, left staged for recovery: ${(e as Error).message}`));
+      this.trashQueue = this.trashQueue.then(job, job);
     }
+  }
+
+  /** Resolves once all background trash moves queued so far have finished (they never reject). */
+  pendingTrash(): Promise<void> {
+    return this.trashQueue;
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    await this.trashQueue;
   }
 
   private intentPath(trashId: string) { return path.join(this.config.metaRoot, 'staging', `${trashId}.json`); }
