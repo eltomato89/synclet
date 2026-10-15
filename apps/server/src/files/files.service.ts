@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import type { Item, VersionSource } from '@prisma/client';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { createWriteStream } from 'node:fs';
+import { createReadStream, createWriteStream } from 'node:fs';
 import { lstat, mkdir, open, readdir, readFile, rm, rmdir, unlink, utimes } from 'node:fs/promises';
 import path from 'node:path';
 import { Transform, type Readable } from 'node:stream';
@@ -214,6 +214,15 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
     const desired = this.checkName(rawName);
     await this.prisma.$transaction((tx) => this.parentPath(tx, user, parentId)); // fail fast before streaming
     const { tmp, sha256 } = await this.receive(user, body, opts.modifiedAt);
+    try {
+      return await this.publishNew(user, parentId, desired, tmp, sha256, opts.onConflict ?? 'fail');
+    } finally {
+      await rm(tmp, { force: true });
+    }
+  }
+
+  /** Creates a file from a received temp file (hard link, never replacing). The caller removes `tmp`. */
+  private async publishNew(user: IndexUser, parentId: string | null, desired: string, tmp: string, sha256: string, onConflict: OnConflict): Promise<Item> {
     let published: { abs: string; ino: bigint } | null = null;
     try {
       return await this.prisma.$transaction(async (tx) => {
@@ -224,7 +233,7 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
         let name = desired;
         for (let attempt = 0; ; attempt++) {
           if (keys.has(nameKey(name))) {
-            if (opts.onConflict !== 'rename') throw new SyncError('name_conflict', 'name already exists', sibs.find((s) => s.nameKey === nameKey(name)));
+            if (onConflict !== 'rename') throw new SyncError('name_conflict', 'name already exists', sibs.find((s) => s.nameKey === nameKey(name)));
             name = freeName(desired, keys, false);
           }
           try {
@@ -232,7 +241,7 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
             break;
           } catch (e) {
             if (!isEexist(e) || attempt > 100) throw mapMissing(e, 'parent folder');
-            if (opts.onConflict !== 'rename') throw new SyncError('name_conflict', 'exists on disk');
+            if (onConflict !== 'rename') throw new SyncError('name_conflict', 'exists on disk');
             keys.add(nameKey(name)); // unindexed entry on disk – try the next free name
           }
         }
@@ -253,9 +262,66 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
         if (now && now.ino === p.ino) await unlink(p.abs).catch(() => {});
       }
       throw e;
-    } finally {
-      await rm(tmp, { force: true });
     }
+  }
+
+  /** New file from a template (e.g. an empty office document); a taken name gets a free suffix. */
+  async createFromTemplate(user: IndexUser, parentId: string | null, rawName: string, templatePath: string): Promise<Item> {
+    return this.upload(user, parentId, rawName, createReadStream(templatePath), { onConflict: 'rename' });
+  }
+
+  /**
+   * Under the user lock: the live file row and its absolute path. A host edit that is not indexed
+   * yet is recorded as a new version first (`changedOnDisk`), so it is never overwritten blindly.
+   */
+  private async lockedFile(tx: Tx, user: IndexUser, itemId: string): Promise<{ item: Item; target: string; changedOnDisk: boolean }> {
+    const item = await this.store.getLive(tx, user.id, itemId);
+    if (!item || item.type !== 'file') throw new SyncError('not_found');
+    const target = this.abs(user, item.path);
+    // Deleted (or replaced by a folder) on the host but not indexed yet: never resurrect it
+    // blindly; the indexer will journal the delete.
+    if ((await this.entryOnDisk(user, item)) === 'missing') throw new SyncError('not_found', 'file missing on disk');
+    const disk = await statEntry(target);
+    // A new inode with equal size+mtime is an atomic save (temp + rename) on the host. Our own
+    // writes store the inode they produce, so this never fires for them.
+    const inoChanged = item.ino !== null && (disk.ino !== item.ino || disk.dev !== item.dev);
+    if (inoChanged || disk.size !== item.size || disk.mtime.getTime() !== item.mtime.getTime()) {
+      const fresh = await tx.item.update({
+        where: { id: item.id },
+        data: { size: disk.size, mtime: disk.mtime, ino: disk.ino, dev: disk.dev, contentHash: null, version: { increment: 1 }, officeKey: null },
+      });
+      await this.journal.record(tx, user.id, [fresh], 'upsert');
+      return { item: fresh, target, changedOnDisk: true };
+    }
+    return { item, target, changedOnDisk: false };
+  }
+
+  /**
+   * With versions on, a capture across file systems copies the current content inside the
+   * transaction: allow for it (about 25 MB/s on top of the default timeout).
+   */
+  private replaceTxOpts(currentSize: bigint) {
+    if (!this.versions.enabled) return TX_OPTS;
+    return { ...TX_OPTS, timeout: TX_OPTS.timeout + Math.ceil(Number(currentSize) / (25 * 1024 * 1024)) * 1000 };
+  }
+
+  /**
+   * Keeps the current content as a version (when versions are on; a failed capture throws and
+   * nothing is replaced), then swaps in `tmp` atomically (version + 1, journaled).
+   */
+  private async commitReplace(
+    tx: Tx, user: IndexUser, item: Item, target: string, tmp: string, sha256: string,
+    source: VersionSource, opts: { officeKey: string | null; by?: string },
+  ): Promise<Item> {
+    await this.versions.capture(tx, user, item, target, source, opts.by);
+    await replaceAtomic(tmp, target);
+    const st = await statEntry(target);
+    const updated = await tx.item.update({
+      where: { id: item.id },
+      data: { size: st.size, mtime: st.mtime, ino: st.ino, dev: st.dev, contentHash: sha256, version: { increment: 1 }, officeKey: opts.officeKey },
+    });
+    await this.journal.record(tx, user.id, [updated], 'upsert');
+    return updated;
   }
 
   async replaceContent(user: IndexUser, itemId: string, body: Readable, opts: { ifMatchVersion: number | null; modifiedAt?: Date | null }): Promise<Item> {
@@ -271,11 +337,7 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
     return this.replaceFrom(user, itemId, body, { ifMatchVersion: null, modifiedAt: null, source: 'restore', maxBytes: Number.POSITIVE_INFINITY });
   }
 
-  /**
-   * The atomic replace path: streams into a temp file in the user root, then under the user lock
-   * checks the file on disk against the row, captures the current content as a version (when
-   * versions are on; a failed capture aborts the replace) and renames the temp over the target.
-   */
+  /** PUT content and version restore: receive into a temp, then lockedFile + commitReplace under the user lock. */
   private async replaceFrom(
     user: IndexUser, itemId: string, body: Readable,
     opts: { ifMatchVersion: number | null; modifiedAt?: Date | null; source: VersionSource; maxBytes: number },
@@ -291,36 +353,11 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
       // external version is committed before the 412 goes out.
       const outcome = await this.prisma.$transaction(async (tx) => {
         await this.journal.lockUser(tx, user.id);
-        const item = await this.store.getLive(tx, user.id, itemId);
-        if (!item || item.type !== 'file') throw new SyncError('not_found');
-        const target = this.abs(user, item.path);
-        // Deleted (or replaced by a folder) on the host but not indexed yet: never resurrect it
-        // blindly; the indexer will journal the delete.
-        if ((await this.entryOnDisk(user, item)) === 'missing') throw new SyncError('not_found', 'file missing on disk');
-        const disk = await statEntry(target);
-        // A new inode with equal size+mtime is an atomic save (temp + rename) on the host. Our own
-        // writes store the inode they produce, so this never fires for them.
-        const inoChanged = item.ino !== null && (disk.ino !== item.ino || disk.dev !== item.dev);
-        if (inoChanged || disk.size !== item.size || disk.mtime.getTime() !== item.mtime.getTime()) {
-          // Edited on the host but not yet indexed: record that version, then report the conflict.
-          const fresh = await tx.item.update({
-            where: { id: item.id },
-            data: { size: disk.size, mtime: disk.mtime, ino: disk.ino, dev: disk.dev, contentHash: null, version: { increment: 1 } },
-          });
-          await this.journal.record(tx, user.id, [fresh], 'upsert');
-          return { conflict: fresh, reason: 'file changed on disk' } as const;
-        }
+        const { item, target, changedOnDisk } = await this.lockedFile(tx, user, itemId);
+        // Edited on the host but not yet indexed: that version is recorded, report the conflict.
+        if (changedOnDisk) return { conflict: item, reason: 'file changed on disk' } as const;
         if (opts.ifMatchVersion !== null && item.version !== opts.ifMatchVersion) return { conflict: item, reason: 'version mismatch' } as const;
-        // Throws when the current content cannot be kept: nothing is replaced then.
-        await this.versions.capture(tx, user, item, target, opts.source, user.id);
-        await replaceAtomic(tmp, target);
-        const st = await statEntry(target);
-        const updated = await tx.item.update({
-          where: { id: item.id },
-          data: { size: st.size, mtime: st.mtime, ino: st.ino, dev: st.dev, contentHash: sha256, version: { increment: 1 } },
-        });
-        await this.journal.record(tx, user.id, [updated], 'upsert');
-        return { ok: updated } as const;
+        return { ok: await this.commitReplace(tx, user, item, target, tmp, sha256, opts.source, { officeKey: null, by: user.id }) } as const;
       }, this.replaceTxOpts(pre.size));
       if ('conflict' in outcome) throw new SyncError('conflict', outcome.reason, outcome.conflict);
       return outcome.ok;
@@ -330,12 +367,40 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
   }
 
   /**
-   * With versions on, a capture across file systems copies the current content inside the
-   * transaction: allow for it (about 25 MB/s on top of the default timeout).
+   * Saves content coming back from the office Document Server for an editing session `key` that
+   * started on `baseVersion`. Replaces the file (version source `office`, `officeKey = key`) unless
+   * it was changed meanwhile by anything but this same session (sync client, host, another
+   * session): then the content goes into a sibling conflict copy and the original stays untouched.
+   * Repeated saves of one session (forcesave, then the final save) overwrite each other.
+   * A file that is gone (trashed, deleted on the host) discards the save.
    */
-  private replaceTxOpts(currentSize: bigint) {
-    if (!this.versions.enabled) return TX_OPTS;
-    return { ...TX_OPTS, timeout: TX_OPTS.timeout + Math.ceil(Number(currentSize) / (25 * 1024 * 1024)) * 1000 };
+  async saveOfficeContent(
+    user: IndexUser, itemId: string, body: Readable,
+    opts: { key: string; baseVersion: number; by?: string; conflictName: (name: string) => string },
+  ): Promise<{ outcome: 'replaced' | 'conflict'; item: Item } | { outcome: 'discarded' }> {
+    guardBody(body);
+    const { tmp, sha256 } = await this.receive(user, body);
+    try {
+      const current = await this.prisma.item.findFirst({ where: { id: itemId, ownerId: user.id }, select: { size: true } });
+      const decided = await this.prisma.$transaction(async (tx) => {
+        await this.journal.lockUser(tx, user.id);
+        let cur: Awaited<ReturnType<FilesService['lockedFile']>>;
+        try {
+          cur = await this.lockedFile(tx, user, itemId);
+        } catch (e) {
+          if (e instanceof SyncError && e.code === 'not_found') return { outcome: 'discarded' } as const;
+          throw e;
+        }
+        const { item, target } = cur;
+        if (item.version !== opts.baseVersion && item.officeKey !== opts.key) return { outcome: 'conflict', item } as const;
+        return { outcome: 'replaced', item: await this.commitReplace(tx, user, item, target, tmp, sha256, 'office', { officeKey: opts.key, by: opts.by }) } as const;
+      }, this.replaceTxOpts(current?.size ?? 0n));
+      if (decided.outcome !== 'conflict') return decided;
+      const copy = await this.publishNew(user, decided.item.parentId, opts.conflictName(decided.item.name), tmp, sha256, 'rename');
+      return { outcome: 'conflict', item: copy };
+    } finally {
+      await rm(tmp, { force: true });
+    }
   }
 
   async update(user: IndexUser, itemId: string, patch: { name?: string; parentId?: string | null }, opts: { ifMatchEtag?: string } = {}): Promise<Item> {

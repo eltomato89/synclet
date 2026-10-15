@@ -89,11 +89,13 @@ describe('Versions', () => {
       const f = await files.upload(user, null, 'doc.txt', body('original'), {});
       await files.replaceContent(user, f.id, body('edited'), { ifMatchVersion: 1 });
       const [v1] = await rows(f.id);
+      await ctx.prisma.item.update({ where: { id: f.id }, data: { officeKey: 'session-1' } });
       const cursor = await ctx.prisma.fileChange.aggregate({ _max: { seq: true } });
       const restored = await versions.restore(user, f.id, v1.id);
       expect(restored.id).toBe(f.id);
       expect(restored.version).toBe(3);
       expect(restored.contentHash).toBe(f.contentHash);
+      expect(restored.officeKey).toBeNull(); // an open office session must not overwrite the restore silently
       expect(await readFile(path.join(root, 'doc.txt'), 'utf8')).toBe('original');
       expect(await walk(root)).toEqual(['doc.txt']);
       const all = await rows(f.id);
