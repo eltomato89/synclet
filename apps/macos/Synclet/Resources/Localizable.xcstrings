@@ -91,6 +91,16 @@
         }
       }
     },
+    "Calculating…": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wird berechnet …"
+          }
+        }
+      }
+    },
     "Cancel": {
       "localizations": {
         "de": {
@@ -181,6 +191,16 @@
         }
       }
     },
+    "Entire space offline": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ganzer Bereich offline"
+          }
+        }
+      }
+    },
     "Error": {
       "localizations": {
         "de": {
@@ -221,6 +241,16 @@
         }
       }
     },
+    "No folders": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keine Ordner"
+          }
+        }
+      }
+    },
     "OK": {
       "localizations": {
         "de": {
@@ -257,6 +287,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "Im Finder öffnen"
+          }
+        }
+      }
+    },
+    "Pinned content": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Offline-Inhalte"
+          }
+        }
+      }
+    },
+    "Pinned folders stay downloaded on this Mac, including new files. Everything else is downloaded when you open it.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ausgewählte Ordner bleiben samt neuer Dateien auf diesem Mac geladen. Alles andere wird beim Öffnen geladen."
           }
         }
       }
@@ -471,6 +521,16 @@
         }
       }
     },
+    "The folders could not be loaded: %@": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Ordner konnten nicht geladen werden: %@"
+          }
+        }
+      }
+    },
     "The login item could not be changed: %@": {
       "localizations": {
         "de": {
@@ -491,6 +551,16 @@
         }
       }
     },
+    "The setting could not be saved: %@": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Einstellung konnte nicht gespeichert werden: %@"
+          }
+        }
+      }
+    },
     "The sign-in could not be verified. Please try again.": {
       "localizations": {
         "de": {
@@ -507,6 +577,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Die Anmeldung wurde abgelehnt (%@)."
+          }
+        }
+      }
+    },
+    "Try Again": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Erneut versuchen"
           }
         }
       }

@@ -7,4 +7,5 @@ enum Log {
     static let fileProvider = Logger(subsystem: subsystem, category: "fileprovider")
     static let account = Logger(subsystem: subsystem, category: "account")
     static let transfer = Logger(subsystem: subsystem, category: "transfer")
+    static let pinning = Logger(subsystem: subsystem, category: "pinning")
 }

@@ -7,6 +7,7 @@ import SyncletKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let accounts: AccountsModel
+    let pinning: PinningModel
     let problems: ProblemsModel
     let loginItem = LoginItemController()
 
@@ -24,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let store = AccountStore(appGroup: configuration.appGroup ?? "group.tech.jensk.synclet")
         let manager = AccountManager(credentials: CredentialStore(configuration: configuration), accounts: store)
         accounts = AccountsModel(manager: manager)
+        pinning = PinningModel(accounts: accounts)
         problems = ProblemsModel(container: store.directory)
         super.init()
         accounts.onFirstAccountAdded = { [loginItem] in loginItem.enableByDefaultIfUnconfigured() }
@@ -68,6 +70,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 Logger.app.error("restoring domains failed: \(String(describing: error), privacy: .public)")
             }
             accounts.reload()
+            // Offline pins: follow the accounts and catch up on pinned downloads.
+            pinning.reload()
+            pinning.start()
             // One event stream per account: the extension drains `/changes` on every wake-up.
             accounts.startMonitoring()
         }
@@ -79,6 +84,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if ProcessInfo.processInfo.arguments.contains("-SyncletShowSettings") {
             showSettings()
+        }
+        if ProcessInfo.processInfo.arguments.contains("-SyncletShowOffline") {
+            showSettings(tab: .offline)
         }
     }
 
@@ -162,10 +170,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return model
     }
 
-    func showSettings() {
+    func showSettings(tab: SettingsView.Tab = .accounts) {
         let window = settingsWindow ?? makeWindow(
             title: String(localized: "Synclet Settings"),
-            content: SettingsView(accounts: accounts, loginItem: loginItem, actions: actions))
+            content: SettingsView(accounts: accounts, pinning: pinning, loginItem: loginItem, actions: actions, selection: tab))
         settingsWindow = window
         present(window)
     }
