@@ -51,7 +51,11 @@ export class WatcherService implements OnApplicationBootstrap, OnModuleDestroy {
     try {
       const watcher = await import('@parcel/watcher');
       this.sub = await watcher.subscribe(this.config.dataRoot, (err, events) => {
-        if (err) { this.log.warn(`watcher error: ${err.message}`); return; }
+        if (err) {
+          if (this.mode === 'active') this.log.error(`watcher error, falling back to periodic scans: ${err.message}`);
+          this.mode = 'scan-only';
+          return;
+        }
         this.handleEvents(events);
       }, { ignore: ['**/.synclet-tmp-*'] });
       this.mode = 'active';
@@ -65,7 +69,7 @@ export class WatcherService implements OnApplicationBootstrap, OnModuleDestroy {
   handleEvents(events: RawEvent[]): void {
     for (const ev of events) {
       const rel = path.relative(this.config.dataRoot, ev.path).split(path.sep).join('/');
-      if (rel.startsWith('..') || rel === '') continue;
+      if (rel === '..' || rel.startsWith('../') || rel === '') continue;
       const [username, ...rest] = rel.split('/');
       if (!this.users.has(username) || rest.length === 0) continue;
       if (rest.some((seg) => isIgnored(seg))) continue;

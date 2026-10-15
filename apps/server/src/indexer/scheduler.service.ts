@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
-import { readdir, rm } from 'node:fs/promises';
+import { lstat, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { APP_CONFIG, AppConfig } from '../config';
 import { isTempName } from '../common/names';
@@ -8,6 +8,7 @@ import { ItemStore } from '../journal/item-store';
 import { JournalService } from '../journal/journal.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { IndexerService } from './indexer.service';
+import { WatcherService } from './watcher.service';
 
 const DAY = 24 * 3600 * 1000;
 
@@ -23,6 +24,7 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     private readonly indexer: IndexerService,
     private readonly journal: JournalService,
     private readonly store: ItemStore,
+    private readonly watcher: WatcherService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -43,10 +45,19 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
   /** At startup no upload is in flight, so every temp file is a leftover of a crash. */
   async startupCleanup(): Promise<number> {
     let removed = 0;
-    for (const u of await this.users()) {
+    for (const u of await this.users().catch(() => [])) {
       const root = userRoot(this.config.dataRoot, u.username);
       const names = await readdir(root).catch(() => [] as string[]);
-      for (const n of names.filter(isTempName)) { await rm(path.join(root, n), { force: true }); removed++; }
+      for (const n of names.filter(isTempName)) {
+        try {
+          const abs = path.join(root, n);
+          if (!(await lstat(abs)).isFile()) continue; // never touch directories or symlinks
+          await rm(abs, { force: true });
+          removed++;
+        } catch (e) {
+          this.log.warn(`startup cleanup: cannot remove ${n} in ${u.username}: ${(e as Error).message}`);
+        }
+      }
     }
     return removed;
   }
@@ -55,6 +66,7 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     if (this.scanning) return;
     this.scanning = true;
     try {
+      await this.watcher.refreshUsers().catch((e) => this.log.warn(`user refresh failed: ${(e as Error).message}`));
       let allScanned = true;
       for (const u of await this.users()) {
         const stats = await this.indexer.fullScan(u).catch((e) => { this.log.error(`scan ${u.username}: ${(e as Error).message}`); return null; });
