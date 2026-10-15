@@ -1,0 +1,40 @@
+# Optional Euro-Office Document Server (AGPL-3.0, OnlyOffice fork) on its own subdomain, fronted by
+# Caddy. Needs ~4 GB RAM. Use together with compose.yml:
+#   docker compose -f deploy/compose.yml -f deploy/compose.office.yml --env-file deploy/.env up -d
+services:
+  office:
+    image: ghcr.io/euro-office/documentserver:${OFFICE_TAG:-latest}
+    environment:
+      JWT_ENABLED: "true"
+      JWT_SECRET: ${OFFICE_JWT_SECRET:?set OFFICE_JWT_SECRET (openssl rand -hex 32)}
+      # Files are fetched from http://server:3000 (a private address).
+      ALLOW_PRIVATE_IP_ADDRESS: "true"
+    expose: ["80"] # not published on the host; only Caddy reaches it
+    # Named volumes: Docker seeds them from the image; empty bind mounts break the service start.
+    volumes:
+      - office-data:/var/www/euro-office/Data
+      - office-lib:/var/lib/euro-office/documentserver
+      - office-logs:/var/log/euro-office/documentserver
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost/healthcheck | grep -q true"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 120s
+    restart: unless-stopped
+  server:
+    environment:
+      OFFICE_URL: ${SYNCLET_OFFICE_PUBLIC_URL:?set SYNCLET_OFFICE_PUBLIC_URL (browser-facing https URL of the office site)}
+      OFFICE_JWT_SECRET: ${OFFICE_JWT_SECRET:?set OFFICE_JWT_SECRET (openssl rand -hex 32)}
+      OFFICE_API_URL: http://server:3000/api
+      OFFICE_INTERNAL_URL: http://office
+  caddy:
+    environment:
+      SYNCLET_OFFICE_SITE_ADDRESS: ${SYNCLET_OFFICE_SITE_ADDRESS:?set SYNCLET_OFFICE_SITE_ADDRESS}
+    volumes:
+      - ./Caddyfile.office:/etc/caddy/conf.d/office.caddy:ro
+    depends_on: [office]
+volumes:
+  office-data:
+  office-lib:
+  office-logs:
