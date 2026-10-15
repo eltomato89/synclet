@@ -1,13 +1,14 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { FilesModule } from '../files/files.module';
+import { TrashModule } from '../trash/trash.module';
 import { IndexerService } from './indexer.service';
 import { SchedulerService } from './scheduler.service';
 import { StatusController } from './status.controller';
 import { WatcherService } from './watcher.service';
 
 @Module({
-  imports: [AuthModule, FilesModule],
+  imports: [AuthModule, FilesModule, TrashModule],
   controllers: [StatusController],
   providers: [IndexerService, WatcherService, SchedulerService],
   exports: [IndexerService],
