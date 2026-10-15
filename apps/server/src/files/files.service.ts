@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
-import type { Item } from '@prisma/client';
+import type { Item, VersionSource } from '@prisma/client';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
 import { lstat, mkdir, open, readdir, readFile, rm, rmdir, unlink, utimes } from 'node:fs/promises';
@@ -14,6 +14,7 @@ import type { IndexUser } from '../common/types';
 import { ItemStore } from '../journal/item-store';
 import { JournalService, Tx } from '../journal/journal.service';
 import { PrismaService, TX_OPTS } from '../prisma/prisma.service';
+import { VersionContentReplacer, VersionsService } from '../versions/versions.service';
 import { linkNoReplace, moveAcrossFs, moveNoReplace, replaceAtomic, statEntry } from './fs-ops';
 
 export type OnConflict = 'fail' | 'rename';
@@ -66,7 +67,7 @@ function manifestEntry(i: Item): TrashManifestEntry {
 const uuidFromHex = (h: string) => `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 
 @Injectable()
-export class FilesService implements OnModuleDestroy {
+export class FilesService implements OnModuleDestroy, VersionContentReplacer {
   private readonly log = new Logger(FilesService.name);
   /** Serialized background moves of committed deletes from their staging entry to /meta/trash. */
   private trashQueue: Promise<void> = Promise.resolve();
@@ -76,7 +77,10 @@ export class FilesService implements OnModuleDestroy {
     private readonly journal: JournalService,
     private readonly store: ItemStore,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
-  ) {}
+    private readonly versions: VersionsService,
+  ) {
+    versions.attachReplacer(this);
+  }
 
   private abs(user: IndexUser, rel: string) { return absPath(this.config.dataRoot, user.username, rel); }
 
@@ -181,11 +185,10 @@ export class FilesService implements OnModuleDestroy {
   }
 
   /** Streams the body into a temp file in the user root (same file system as the target). */
-  private async receive(user: IndexUser, body: Readable, modifiedAt?: Date | null): Promise<{ tmp: string; size: bigint; sha256: string }> {
+  private async receive(user: IndexUser, body: Readable, modifiedAt?: Date | null, max = this.config.maxUploadBytes): Promise<{ tmp: string; size: bigint; sha256: string }> {
     const tmp = path.join(this.root(user), tempName(randomBytes(8).toString('hex')));
     const hash = createHash('sha256');
     let size = 0;
-    const max = this.config.maxUploadBytes;
     const meter = new Transform({
       transform(chunk: Buffer, _enc, cb) {
         size += chunk.length;
@@ -256,12 +259,33 @@ export class FilesService implements OnModuleDestroy {
   }
 
   async replaceContent(user: IndexUser, itemId: string, body: Readable, opts: { ifMatchVersion: number | null; modifiedAt?: Date | null }): Promise<Item> {
+    return this.replaceFrom(user, itemId, body, { ...opts, source: 'api', maxBytes: this.config.maxUploadBytes });
+  }
+
+  /**
+   * Version restore (VersionsService.restore): replaces the content with the version's bytes via
+   * the same path as a PUT with `If-Match: *`; the current content is captured first (`restore`).
+   * Not limited by the upload size (the bytes were this file's content before). mtime = now.
+   */
+  async restoreFromVersion(user: IndexUser, itemId: string, body: Readable): Promise<Item> {
+    return this.replaceFrom(user, itemId, body, { ifMatchVersion: null, modifiedAt: null, source: 'restore', maxBytes: Number.POSITIVE_INFINITY });
+  }
+
+  /**
+   * The atomic replace path: streams into a temp file in the user root, then under the user lock
+   * checks the file on disk against the row, captures the current content as a version (when
+   * versions are on; a failed capture aborts the replace) and renames the temp over the target.
+   */
+  private async replaceFrom(
+    user: IndexUser, itemId: string, body: Readable,
+    opts: { ifMatchVersion: number | null; modifiedAt?: Date | null; source: VersionSource; maxBytes: number },
+  ): Promise<Item> {
     guardBody(body);
     const pre = await this.prisma.item.findFirst({ where: { id: itemId, ownerId: user.id, deletedAt: null } });
     if (!pre || pre.type !== 'file') throw new SyncError('not_found');
     // ifMatchVersion null = `If-Match: *` (any current version).
     if (opts.ifMatchVersion !== null && pre.version !== opts.ifMatchVersion) throw new SyncError('conflict', 'version mismatch', pre);
-    const { tmp, sha256 } = await this.receive(user, body, opts.modifiedAt);
+    const { tmp, sha256 } = await this.receive(user, body, opts.modifiedAt, opts.maxBytes);
     try {
       // The transaction returns the conflict instead of throwing, so the recorded
       // external version is committed before the 412 goes out.
@@ -287,6 +311,8 @@ export class FilesService implements OnModuleDestroy {
           return { conflict: fresh, reason: 'file changed on disk' } as const;
         }
         if (opts.ifMatchVersion !== null && item.version !== opts.ifMatchVersion) return { conflict: item, reason: 'version mismatch' } as const;
+        // Throws when the current content cannot be kept: nothing is replaced then.
+        await this.versions.capture(tx, user, item, target, opts.source, user.id);
         await replaceAtomic(tmp, target);
         const st = await statEntry(target);
         const updated = await tx.item.update({
@@ -295,12 +321,21 @@ export class FilesService implements OnModuleDestroy {
         });
         await this.journal.record(tx, user.id, [updated], 'upsert');
         return { ok: updated } as const;
-      }, TX_OPTS);
+      }, this.replaceTxOpts(pre.size));
       if ('conflict' in outcome) throw new SyncError('conflict', outcome.reason, outcome.conflict);
       return outcome.ok;
     } finally {
       await rm(tmp, { force: true });
     }
+  }
+
+  /**
+   * With versions on, a capture across file systems copies the current content inside the
+   * transaction: allow for it (about 25 MB/s on top of the default timeout).
+   */
+  private replaceTxOpts(currentSize: bigint) {
+    if (!this.versions.enabled) return TX_OPTS;
+    return { ...TX_OPTS, timeout: TX_OPTS.timeout + Math.ceil(Number(currentSize) / (25 * 1024 * 1024)) * 1000 };
   }
 
   async update(user: IndexUser, itemId: string, patch: { name?: string; parentId?: string | null }, opts: { ifMatchEtag?: string } = {}): Promise<Item> {

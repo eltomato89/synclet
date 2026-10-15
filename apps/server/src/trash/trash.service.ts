@@ -17,6 +17,7 @@ import { JournalService, Tx } from '../journal/journal.service';
 import { PrismaService, TX_OPTS } from '../prisma/prisma.service';
 import { SerializerService } from '../sync/serializer.service';
 import { toSyncId, UUID } from '../sync/sync-ids';
+import { VersionsService } from '../versions/versions.service';
 
 const errno = (e: unknown) => (e as NodeJS.ErrnoException)?.code;
 const exists = (p: string) => lstat(p).then(() => true, () => false);
@@ -51,6 +52,7 @@ export class TrashService {
     private readonly store: ItemStore,
     private readonly files: FilesService,
     private readonly serializer: SerializerService,
+    private readonly versions: VersionsService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -378,12 +380,31 @@ export class TrashService {
     }, TX_OPTS);
   }
 
-  /** Removes the stored content of deleted rows (after the background move to /meta has settled). */
+  /**
+   * Removes the stored content of deleted rows (after the background move to /meta has settled)
+   * and the file versions of every item in their manifests.
+   */
   private async purge(entries: TrashEntry[]): Promise<void> {
     if (entries.length === 0) return;
     // A move still queued would otherwise re-create the store path after we removed it.
     await this.files.pendingTrash();
-    for (const e of entries) await this.removeStore(e);
+    for (const e of entries) {
+      await this.removeStore(e);
+      await this.removeVersions(e).catch((err) => this.log.error(`cannot remove versions of trash entry ${e.id}: ${(err as Error).message}`));
+    }
+  }
+
+  /**
+   * Versions follow the item id and stay while the item is in the trash; they go with the entry.
+   * Ids that are live again (never expected: a restore deletes the entry) keep their versions.
+   */
+  private async removeVersions(entry: TrashEntry): Promise<void> {
+    const ids = [...new Set([entry.itemId, ...manifestOf(entry).map((m) => m.id)])].filter((id) => UUID.test(id));
+    for (let i = 0; i < ids.length; i += ID_CHUNK) {
+      const chunk = ids.slice(i, i + ID_CHUNK);
+      const live = new Set((await this.prisma.item.findMany({ where: { id: { in: chunk }, deletedAt: null }, select: { id: true } })).map((r) => r.id));
+      await this.versions.deleteForItems(entry.ownerId, chunk.filter((id) => !live.has(id)));
+    }
   }
 
   /**
