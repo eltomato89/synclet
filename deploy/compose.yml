@@ -47,6 +47,7 @@ services:
     image: synclet/caddy:dev
     environment:
       SYNCLET_SITE_ADDRESS: ${SYNCLET_SITE_ADDRESS:-:80}
+      SYNCLET_TRUSTED_PROXIES: ${SYNCLET_TRUSTED_PROXIES:-}
     ports:
       - "${SYNCLET_PORT:-8080}:80"
       - "${SYNCLET_TLS_PORT:-8443}:443"

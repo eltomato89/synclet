@@ -71,7 +71,8 @@ All settings go into `deploy/.env` (read by `docker compose --env-file deploy/.e
 | `SYNCLET_SITE_ADDRESS` | `:80` | Caddy site address. Set to your domain (with ports 80/443) for automatic Let's Encrypt certificates. |
 | `SYNCLET_PUBLIC_URL` | (empty) | Public URL, e.g. `https://files.example.com`. Currently only decides the default of `SYNCLET_SECURE_COOKIES`. |
 | `SYNCLET_SECURE_COOKIES` | on if `SYNCLET_PUBLIC_URL` starts with `https://` | Forces the `Secure` flag of the login cookie on (`on`) or off (`off`). |
-| `SYNCLET_TRUST_PROXY` | `off` (`true` in the shipped compose file) | Use `X-Forwarded-For` as the client IP (login rate limiting). Only enable behind a reverse proxy that sets X-Forwarded-For, otherwise clients can spoof their IP. |
+| `SYNCLET_TRUSTED_PROXIES` | (empty = trust none) | Proxies in front of Caddy whose `X-Forwarded-For` Caddy accepts, e.g. `private_ranges` or `192.168.1.10/32 10.0.0.0/8`. Set it when Synclet runs behind another reverse proxy; see [Behind another reverse proxy](#behind-another-reverse-proxy). |
+| `SYNCLET_TRUST_PROXY` | `off` (`true` in the shipped compose file, not configurable there) | Server setting: use `X-Forwarded-For` as the client IP (rate limiting). The shipped compose file enables it because only Caddy reaches the server and Caddy always sets the header to the client IP it determined. Only enable it elsewhere behind a proxy that does the same, otherwise clients can spoof their IP. |
 | `SYNCLET_TRASH_RETENTION_DAYS` | `30` | Days items stay in the trash before being removed for good (`0` = keep forever). |
 | `SYNCLET_SEARCH_LANGUAGE` | `simple` | Postgres text search configuration for search: `simple`, `german`, `english`, ... (invalid values fall back to `simple` with a warning). `simple` does no stemming. Used by server and worker. Changing it later does **not** re-index already extracted text: existing documents keep their old stemming until their content changes. |
 | `SYNCLET_WORKER_CONCURRENCY` | `2` | Number of preview jobs the worker runs in parallel. |
@@ -82,6 +83,10 @@ All settings go into `deploy/.env` (read by `docker compose --env-file deploy/.e
 | `SYNCLET_MASS_DELETE_THRESHOLD` | `25` | Safety guard: if a user folder suddenly looks empty while more than this many top-level items are indexed, Synclet refuses to delete them from the index (and from every client) and logs an error. `0` turns the guard off. If you really emptied the folder, set it to `0`, restart the server, then set it back. An unmounted data volume is always refused. |
 | `SYNCLET_TOMBSTONE_WINDOW` | `3600` | Seconds within which an item that vanished and reappears elsewhere is still recognised as a move (keeps its ID). |
 | `SYNCLET_JOURNAL_RETENTION_DAYS` | `30` | Days of change history kept for sync clients. A client offline for longer does a full resync. |
+
+### Behind another reverse proxy
+
+The rate limits for login, setup and public share links count requests per client IP. Caddy only uses the client IP from `X-Forwarded-For` when the request comes from a proxy listed in `SYNCLET_TRUSTED_PROXIES`; otherwise it uses the address of the connecting peer. If you run Synclet behind another reverse proxy (nginx, Traefik, a router) and leave `SYNCLET_TRUSTED_PROXIES` empty, every client appears with the proxy's IP and they **all share one rate-limit bucket**, so one misbehaving client can lock everybody out of logging in. Set `SYNCLET_TRUSTED_PROXIES` to the address of that proxy, or to `private_ranges` if it runs in your LAN or on the same Docker host. Caddy reads the header right to left and stops at the first untrusted address, so a client cannot spoof its IP through a proxy that appends to `X-Forwarded-For`. Only trust addresses that really are proxies: anyone connecting directly from a trusted range can claim any IP.
 
 ## Known limitations
 
