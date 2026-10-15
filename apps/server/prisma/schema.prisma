@@ -1,0 +1,160 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  admin
+  user
+}
+
+enum ItemType {
+  folder
+  file
+}
+
+enum ChangeOp {
+  upsert
+  delete
+}
+
+/// Singleton row (id = 1) created on first start.
+model ServerConfig {
+  id        Int      @id @default(1)
+  serverId  String   @db.Uuid
+  jwtSecret String
+  createdAt DateTime @default(now())
+}
+
+model User {
+  id          String       @id @default(uuid()) @db.Uuid
+  /// Folder name below the data root.
+  username    String       @unique
+  email       String?      @unique
+  displayName String
+  role        Role         @default(user)
+  disabledAt  DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  identities  Identity[]
+  sessions    Session[]
+  devices     SyncDevice[]
+  items       Item[]
+  scope       SyncScope?
+}
+
+/// Login identities: provider 'local' (subject = username lower-case) or 'oidc:<issuer>' later.
+model Identity {
+  id           String   @id @default(uuid()) @db.Uuid
+  userId       String   @db.Uuid
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider     String
+  subject      String
+  passwordHash String?
+  createdAt    DateTime @default(now())
+
+  @@unique([provider, subject])
+}
+
+/// Web refresh sessions (rotating, httpOnly cookie).
+model Session {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  userAgent String?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model SyncDevice {
+  id             String    @id @default(uuid()) @db.Uuid
+  userId         String    @db.Uuid
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name           String
+  platform       String
+  appVersion     String
+  installationId String?
+  tokenHash      String    @unique
+  createdAt      DateTime  @default(now())
+  lastSeenAt     DateTime?
+  revokedAt      DateTime?
+
+  @@index([userId])
+}
+
+/// Mirror of one file/folder on disk. Paths are relative to the user root, '/'-separated.
+model Item {
+  id          String    @id @default(uuid()) @db.Uuid
+  ownerId     String    @db.Uuid
+  owner       User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  /// null = direct child of the user root ("root").
+  parentId    String?   @db.Uuid
+  type        ItemType
+  /// Exact on-disk name.
+  name        String
+  /// NFC + lower-case, for collision checks.
+  nameKey     String
+  path        String
+  size        BigInt    @default(0)
+  mtime       DateTime
+  ino         BigInt?
+  dev         BigInt?
+  contentHash String?
+  version     Int       @default(1)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  /// Tombstone; kept for tombstoneWindowSec so external moves can be paired.
+  deletedAt   DateTime?
+
+  @@index([ownerId, parentId])
+  @@index([ownerId, dev, ino])
+  @@index([ownerId, path])
+}
+
+/// Per-user journal head. seq is incremented inside the mutating transaction
+/// (row lock => sequence numbers become visible in commit order, no gaps for readers).
+model SyncScope {
+  userId String @id @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  seq    BigInt @default(0)
+  /// Watermark: entries with seq <= minSeq were trimmed; older cursors get 410.
+  minSeq BigInt @default(0)
+}
+
+model FileChange {
+  scopeId  String   @db.Uuid
+  seq      BigInt
+  itemId   String   @db.Uuid
+  itemType ItemType
+  op       ChangeOp
+  at       DateTime @default(now())
+
+  @@id([scopeId, seq])
+  @@index([scopeId, itemId])
+  @@index([at])
+}
+
+model TrashEntry {
+  id           String   @id @default(uuid()) @db.Uuid
+  ownerId      String   @db.Uuid
+  itemId       String   @db.Uuid
+  type         ItemType
+  name         String
+  originalPath String
+  size         BigInt
+  /// Absolute path below metaRoot/trash.
+  storePath    String
+  /// [{ id, type, path }] of the subtree, for restore with original IDs (Phase 1b).
+  manifest     Json
+  deletedAt    DateTime @default(now())
+
+  @@index([ownerId, deletedAt])
+}
