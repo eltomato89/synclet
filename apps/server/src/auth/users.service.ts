@@ -1,5 +1,5 @@
 import { HttpException, Inject, Injectable } from '@nestjs/common';
-import type { User } from '@prisma/client';
+import type { Prisma, User } from '@prisma/client';
 import type { PublicUser } from '@synclet/shared';
 import * as argon2 from 'argon2';
 import { access, constants, lstat, mkdir, readdir } from 'node:fs/promises';
@@ -19,6 +19,8 @@ export interface CreateUserInput {
   /** Require the folder to exist already (a real directory, not a symlink) and take it over as the user's root. */
   adoptExistingFolder?: boolean;
 }
+
+export interface AdminLock { id: string; hasPassword: boolean }
 
 const FORBIDDEN_USERNAME_CHARS = /[@\u200E\u200F\u202A-\u202E\u2066-\u2069\u200B-\u200D\u2060\uFEFF]/;
 
@@ -41,8 +43,24 @@ export class UsersService {
   async create(input: CreateUserInput): Promise<User> {
     this.validateUsername(input.username);
     if (input.adoptExistingFolder) await this.assertAdoptable(input.username);
-    await this.ensureUserRoot(input.username); // before the DB write: a failure must not leave a user without a folder
     const passwordHash = await argon2.hash(input.password, { type: argon2.argon2id });
+    return this.insert(input, { provider: 'local', subject: input.username.toLowerCase(), passwordHash });
+  }
+
+  /**
+   * Creates a user that logs in through an external identity (SSO provisioning): user row, sync
+   * scope, folder and the given identity, but no local password identity.
+   */
+  async createExternal(input: Omit<CreateUserInput, 'password'>, identity: { provider: string; subject: string }): Promise<User> {
+    this.validateUsername(input.username);
+    return this.insert(input, { provider: identity.provider, subject: identity.subject, passwordHash: null });
+  }
+
+  private async insert(
+    input: Omit<CreateUserInput, 'password'>,
+    identity: { provider: string; subject: string; passwordHash: string | null },
+  ): Promise<User> {
+    await this.ensureUserRoot(input.username); // before the DB write: a failure must not leave a user without a folder
     const user = await this.prisma.$transaction(async (tx) => {
       const exists = await tx.user.findFirst({
         where: { OR: [{ username: { equals: input.username, mode: 'insensitive' } }, ...(input.email ? [{ email: input.email.toLowerCase() }] : [])] },
@@ -51,7 +69,7 @@ export class UsersService {
       const created = await tx.user.create({
         data: { username: input.username, displayName: input.displayName, email: input.email?.toLowerCase() ?? null, role: input.role },
       });
-      await tx.identity.create({ data: { userId: created.id, provider: 'local', subject: input.username.toLowerCase(), passwordHash } });
+      await tx.identity.create({ data: { userId: created.id, ...identity } });
       await tx.syncScope.create({ data: { userId: created.id } });
       return created;
     });
@@ -102,7 +120,44 @@ export class UsersService {
     }
   }
 
+  /**
+   * Locks every enabled admin row (`FOR UPDATE`, in id order) and returns them with whether each
+   * can log in with a local password. Every demotion/disable/delete of an admin goes through this,
+   * so concurrent changes (admin API, SSO role sync) serialize on the same rows.
+   */
+  async lockAdmins(tx: Prisma.TransactionClient): Promise<AdminLock[]> {
+    return tx.$queryRaw<AdminLock[]>`
+      SELECT u.id::text AS id,
+             EXISTS (SELECT 1 FROM "Identity" i WHERE i."userId" = u.id AND i.provider = 'local' AND i."passwordHash" IS NOT NULL) AS "hasPassword"
+      FROM "User" u WHERE u.role = 'admin' AND u."disabledAt" IS NULL ORDER BY u.id FOR UPDATE OF u`;
+  }
+
+  /**
+   * Last-admin rule: after `userId` stops being an enabled admin, at least one enabled admin with a
+   * local password must remain (the emergency path, SYNCLET_SSO_EMERGENCY=1, only restores password
+   * login). Locks the admins (see `lockAdmins`); false = the change must be refused. A user that is
+   * not an enabled admin (per the locked rows) can always be changed.
+   */
+  async canRemoveAdmin(tx: Prisma.TransactionClient, userId: string): Promise<boolean> {
+    const admins = await this.lockAdmins(tx);
+    if (!admins.some((a) => a.id === userId)) return true;
+    return admins.some((a) => a.id !== userId && a.hasPassword);
+  }
+
+  /** Sets the local password, creating the local identity when the user has none (e.g. SSO-provisioned). */
+  setLocalPassword(tx: Prisma.TransactionClient, user: Pick<User, 'id' | 'username'>, passwordHash: string): Promise<void> {
+    return setLocalPassword(tx, user, passwordHash);
+  }
+
   toPublic(u: User): PublicUser {
     return { id: u.id, username: u.username, displayName: u.displayName, email: u.email, role: u.role };
+  }
+}
+
+/** See `UsersService.setLocalPassword` (also used by the reset-admin-password CLI, outside Nest). */
+export async function setLocalPassword(tx: Prisma.TransactionClient, user: Pick<User, 'id' | 'username'>, passwordHash: string): Promise<void> {
+  const updated = await tx.identity.updateMany({ where: { userId: user.id, provider: 'local' }, data: { passwordHash } });
+  if (updated.count === 0) {
+    await tx.identity.create({ data: { userId: user.id, provider: 'local', subject: user.username.toLowerCase(), passwordHash } });
   }
 }

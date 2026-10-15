@@ -11,6 +11,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { SkeletonRows, StatusMessage } from '@/features/files/EmptyState';
 import { errorKey } from '@/features/files/errors';
 import type { ItemActions } from '@/features/files/FileActions';
+import { openOfficeTab } from '@/features/office/office';
+import { useCapabilities } from '@/features/office/queries';
 import { FileList } from '@/features/files/FileList';
 import { type SortDir, type SortKey, sortItems, useFileMutations } from '@/features/files/queries';
 import { revealUrl } from '@/features/files/reveal';
@@ -86,8 +88,10 @@ export function RecentPage() {
   const download = (item: SyncItem) => {
     mutations.download(item).catch((err: unknown) => notify.error(err instanceof ApiError ? t(errorKey(err)) : t('files.toast.downloadFailed')));
   };
+  const office = useCapabilities().office.enabled;
   const actions: ItemActions = {
     open: download,
+    openInOffice: office ? (item) => openOfficeTab(item.id) : undefined,
     rename: (item) => { if (item.capabilities.rename) openDialog({ kind: 'rename', item }); },
     move: (item) => { if (item.capabilities.move) openDialog({ kind: 'move', item }); },
     remove: (item) => { if (item.capabilities.delete) openDialog({ kind: 'delete', item }); },

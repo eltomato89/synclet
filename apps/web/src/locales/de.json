@@ -512,5 +512,84 @@
     "emptyBody": "Was du hochlädst oder änderst, erscheint hier – über alle Ordner hinweg, das Neueste zuerst.",
     "emptyAction": "Zu meinen Dateien",
     "limitNote": "Die {{count}} zuletzt geänderten Dateien"
+  },
+  "office": {
+    "open": "In Office öffnen",
+    "new": {
+      "more": "Weitere …",
+      "label": "Name",
+      "description": "Die Datei wird in „{{folder}}“ angelegt.",
+      "descriptionOpens": "Die Datei wird in „{{folder}}“ angelegt und in einem neuen Tab geöffnet.",
+      "submit": "Erstellen",
+      "submitOpen": "Erstellen und öffnen",
+      "submitting": "Wird erstellt …",
+      "docx": {
+        "menu": "Dokument",
+        "title": "Neues Dokument",
+        "defaultName": "Unbenanntes Dokument"
+      },
+      "xlsx": {
+        "menu": "Tabelle",
+        "title": "Neue Tabelle",
+        "defaultName": "Unbenannte Tabelle"
+      },
+      "pptx": {
+        "menu": "Präsentation",
+        "title": "Neue Präsentation",
+        "defaultName": "Unbenannte Präsentation"
+      },
+      "odt": {
+        "menu": "OpenDocument-Text",
+        "title": "Neues OpenDocument",
+        "defaultName": "Unbenanntes Dokument"
+      },
+      "ods": {
+        "menu": "OpenDocument-Tabelle",
+        "title": "Neue OpenDocument-Tabelle",
+        "defaultName": "Unbenannte Tabelle"
+      },
+      "odp": {
+        "menu": "OpenDocument-Präsentation",
+        "title": "Neue OpenDocument-Präsentation",
+        "defaultName": "Unbenannte Präsentation"
+      },
+      "txt": {
+        "menu": "Textdatei",
+        "title": "Neue Textdatei",
+        "defaultName": "Unbenannt"
+      },
+      "csv": {
+        "menu": "CSV-Tabelle",
+        "title": "Neue CSV-Tabelle",
+        "defaultName": "Unbenannt"
+      }
+    },
+    "editor": {
+      "opening": "Wird in Office geöffnet …",
+      "closeTab": "Tab schließen",
+      "backToFiles": "Zu meinen Dateien"
+    },
+    "errors": {
+      "disabled": {
+        "title": "Office ist nicht eingerichtet",
+        "body": "Auf diesem Server ist keine Bearbeitung im Browser eingerichtet. Wer Synclet verwaltet, kann einen Euro-Office-Server verbinden."
+      },
+      "unsupported": {
+        "title": "Dieser Dateityp lässt sich nicht in Office öffnen",
+        "body": "Office öffnet Text-, Tabellen- und Präsentationsdateien. Lade die Datei herunter, um sie in einer passenden App zu öffnen."
+      },
+      "notFound": {
+        "title": "Diese Datei gibt es nicht mehr",
+        "body": "Sie wurde vielleicht gelöscht, verschoben oder ist ein Ordner."
+      },
+      "editorUnreachable": {
+        "title": "Der Office-Server antwortet nicht",
+        "body": "Synclet ist erreichbar, der Editor aber nicht. Prüfe die Verbindung und versuche es erneut."
+      },
+      "serverUnreachable": {
+        "title": "Synclet ist nicht erreichbar",
+        "body": "Die Datei konnte nicht geöffnet werden, weil der Server nicht antwortet. Versuche es gleich noch einmal."
+      }
+    }
   }
 }

@@ -32,8 +32,9 @@ describe('loadConfig', () => {
     const c = loadConfig({});
     expect(c).toMatchObject({
       versions: false, versionsMaxBytes: 0, officeUrl: null, officeJwtSecret: null,
-      officeApiUrl: 'http://server:3000/api', officeInternalUrl: 'http://office', ssoEmergency: false,
+      officeApiUrl: 'http://server:3000/api', officeInternalUrl: 'http://office', ssoEmergency: false, ssoAllowHttpIssuer: false,
     });
+    expect(loadConfig({ SYNCLET_SSO_ALLOW_HTTP_ISSUER: '1' }).ssoAllowHttpIssuer).toBe(true);
   });
 
   it('reads phase 1c variables; empty means default', () => {

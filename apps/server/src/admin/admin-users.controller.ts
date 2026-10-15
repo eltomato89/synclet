@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, UseGuards } from '@nestjs/common';
 import type { AdminUserWire, UnassignedFolder } from '@synclet/shared';
-import type { User } from '@prisma/client';
+import type { Prisma, User } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { z } from 'zod';
 import { AuthGuard } from '../auth/auth.guard';
@@ -63,11 +63,9 @@ export class AdminUsersController {
     return (await this.wires({ id: user.id }))[0];
   }
 
-  /** Locks the enabled admins (serializes concurrent demotions) and fails if `user` is the only one. */
-  private async assertNotLastAdmin(tx: Pick<PrismaService, '$queryRaw'>, user: User): Promise<void> {
-    if (user.role !== 'admin' || user.disabledAt) return;
-    const admins = await tx.$queryRaw<{ id: string }[]>`SELECT id::text FROM "User" WHERE role = 'admin' AND "disabledAt" IS NULL FOR UPDATE`;
-    if (!admins.some((a) => a.id !== user.id)) throw lastAdmin();
+  /** Fails if `user` stopping to be an enabled admin would leave no enabled admin with a local password. */
+  private async assertNotLastAdmin(tx: Prisma.TransactionClient, user: User): Promise<void> {
+    if (!(await this.users.canRemoveAdmin(tx, user.id))) throw lastAdmin();
   }
 
   @Patch('users/:id')
@@ -79,7 +77,7 @@ export class AdminUsersController {
       if (!user) throw new SyncError('not_found');
       const disabling = body.disabled === true && !user.disabledAt;
       if (disabling && id === me.id) throw new SyncError('conflict', 'cannot disable yourself', undefined, 409);
-      if (disabling || (body.role === 'user' && user.role === 'admin')) await this.assertNotLastAdmin(tx, user);
+      if (disabling || body.role === 'user') await this.assertNotLastAdmin(tx, user);
       if (body.email) {
         const email = body.email.toLowerCase();
         if (await tx.user.findFirst({ where: { email, NOT: { id } } })) throw new SyncError('name_conflict', 'email already in use');
@@ -93,7 +91,7 @@ export class AdminUsersController {
           ...(body.disabled !== undefined ? { disabledAt: body.disabled ? (user.disabledAt ?? new Date()) : null } : {}),
         },
       });
-      if (passwordHash) await tx.identity.updateMany({ where: { userId: id, provider: 'local' }, data: { passwordHash } });
+      if (passwordHash) await this.users.setLocalPassword(tx, user, passwordHash);
       if (disabling || passwordHash) await tx.session.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date() } });
     }, TX_OPTS);
     return (await this.wires({ id }))[0];

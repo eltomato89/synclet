@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { createTestApp, TestContext } from '../../test/context';
 import { resolveAppClient } from './app-clients';
 import { pkceChallenge } from './app-login.service';
+import { SsoSettingsService } from '../sso/sso-settings.service';
 
 const VERIFIER = 'v'.repeat(50);
 const REDIRECT = 'synclet://oauth';
@@ -149,6 +150,7 @@ describe('app login (PKCE)', () => {
   it('password login disabled for users: 403 for non-admin, admin ok, emergency restores', async () => {
     await mkUser('anna');
     await ctx.prisma.authSettings.upsert({ where: { id: 1 }, create: { id: 1, passwordLoginForUsers: false }, update: { passwordLoginForUsers: false } });
+    ctx.app.get(SsoSettingsService).invalidate(); // settings cache (normally invalidated by PUT /admin/sso)
     const denied = await authorize({ login: 'anna' });
     expect(denied.statusCode).toBe(403);
     expect(denied.json().code).toBe('password_login_disabled');
@@ -157,6 +159,7 @@ describe('app login (PKCE)', () => {
     ctx = await createTestApp({ ssoEmergency: true });
     await ctx.app.inject({ method: 'POST', url: '/api/setup', payload: { username: 'jens', displayName: 'Jens', password: PW } });
     await ctx.prisma.authSettings.upsert({ where: { id: 1 }, create: { id: 1, passwordLoginForUsers: false }, update: { passwordLoginForUsers: false } });
+    ctx.app.get(SsoSettingsService).invalidate(); // settings cache (normally invalidated by PUT /admin/sso)
     const admin2 = (await ctx.app.inject({ method: 'POST', url: '/api/auth/login', payload: { login: 'jens', password: PW } })).json().accessToken;
     await ctx.app.inject({ method: 'POST', url: '/api/admin/users', headers: { authorization: `Bearer ${admin2}` }, payload: { username: 'anna', displayName: 'anna', password: PW } });
     expect((await authorize({ login: 'anna' })).statusCode).toBe(200);
@@ -194,6 +197,7 @@ describe('app login (PKCE)', () => {
     await mkUser('anna');
     const annaToken = (await ctx.app.inject({ method: 'POST', url: '/api/auth/login', payload: { login: 'anna', password: PW } })).json().accessToken;
     await ctx.prisma.authSettings.upsert({ where: { id: 1 }, create: { id: 1, passwordLoginForUsers: false }, update: { passwordLoginForUsers: false } });
+    ctx.app.get(SsoSettingsService).invalidate(); // settings cache (normally invalidated by PUT /admin/sso)
     const s = await post('authorize/session', { clientId: 'ios', redirectUri: REDIRECT, codeChallenge: pkceChallenge(VERIFIER), codeChallengeMethod: 'S256' }, { authorization: `Bearer ${annaToken}` });
     expect(s.statusCode).toBe(200);
   });

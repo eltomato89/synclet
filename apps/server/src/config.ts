@@ -36,6 +36,11 @@ export interface AppConfig {
   officeInternalUrl: string;
   /** Ignore OIDC/forward-auth and allow password login for everyone. */
   ssoEmergency: boolean;
+  /**
+   * Accept an `http://` OIDC issuer whose host is loopback/private (test and lab setups only).
+   * Without it, issuers must use https.
+   */
+  ssoAllowHttpIssuer: boolean;
   /** Process role; set by the entrypoint, not by the environment. */
   role: 'server' | 'worker';
 }
@@ -71,6 +76,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     officeApiUrl: env.OFFICE_API_URL || 'http://server:3000/api',
     officeInternalUrl: env.OFFICE_INTERNAL_URL || 'http://office',
     ssoEmergency: env.SYNCLET_SSO_EMERGENCY === '1',
+    ssoAllowHttpIssuer: env.SYNCLET_SSO_ALLOW_HTTP_ISSUER === '1',
     role: 'server',
   };
 }
