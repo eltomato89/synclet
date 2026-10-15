@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate, Outlet, type RouteObject, useLocation } 
 import { AppShell } from '@/components/app-shell/AppShell';
 import { ConnectionError } from '@/components/ConnectionError';
 import { FullPageSpinner } from '@/components/FullPageSpinner';
+import { AppLoginPage } from '@/features/auth/AppLoginPage';
 import { PublicSharePage } from '@/features/public/PublicSharePage';
 import { RecentPage } from '@/features/recent/RecentPage';
 import { SharedPage } from '@/features/shares/SharedPage';
@@ -40,6 +41,8 @@ export const routes: RouteObject[] = [
     children: [
       { path: '/setup', element: <SetupPage /> },
       { path: '/login', element: <LoginPage /> },
+      // Native app sign-in: uses the session if there is one, but never requires it.
+      { path: '/app-login', element: <AppLoginPage /> },
       { path: '/', element: <Navigate to="/files" replace /> },
       {
         element: <RequireAuth />,

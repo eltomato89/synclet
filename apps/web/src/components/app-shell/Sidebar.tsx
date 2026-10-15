@@ -14,7 +14,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { formatBytes } from '@/lib/format';
-import { cn } from '@/lib/utils';
+import { cn, initials } from '@/lib/utils';
 import { ThemeToggle } from './ThemeToggle';
 
 interface NavEntry { to: string; label: string; icon: LucideIcon }
@@ -91,12 +91,6 @@ function StorageMeter() {
       )}
     </div>
   );
-}
-
-function initials(name: string) {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  const letters = parts.length > 1 ? parts[0][0] + parts[parts.length - 1][0] : (parts[0] ?? '?').slice(0, 2);
-  return letters.toUpperCase();
 }
 
 function UserMenu() {
