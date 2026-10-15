@@ -4,7 +4,7 @@ import { createTestApp, createTestUser, itIfCaseSensitive, TestContext } from '.
 import { IndexUser } from '../common/types';
 import { BusyPaths } from '../journal/busy-paths';
 import { JournalService } from '../journal/journal.service';
-import { folderMoveHasEvidence, IndexerService } from './indexer.service';
+import { ChildRef, folderMoveHasEvidence, IndexerService } from './indexer.service';
 
 describe('IndexerService', () => {
   let ctx: TestContext; let indexer: IndexerService; let journal: JournalService; let user: IndexUser; let root: string;
@@ -286,13 +286,19 @@ describe('IndexerService', () => {
   });
 
   it('folder inode-reuse guard requires shared children or two empty folders', () => {
-    const r = (dev: number, ino: number) => ({ dev: BigInt(dev), ino: BigInt(ino) });
+    const T = new Date('2026-01-01T00:00:00Z');
+    const r = (dev: number, ino: number, o: Partial<ChildRef> = {}): ChildRef => ({ dev: BigInt(dev), ino: BigInt(ino), type: 'file', size: 1n, mtime: T, ...o });
     expect(folderMoveHasEvidence([], [])).toBe(true);
     expect(folderMoveHasEvidence([], [r(1, 5)])).toBe(false);
     expect(folderMoveHasEvidence([r(1, 5)], [])).toBe(false);
     expect(folderMoveHasEvidence([r(1, 5), r(1, 6)], [r(1, 7), r(1, 6)])).toBe(true);
     expect(folderMoveHasEvidence([r(1, 5)], [r(2, 5)])).toBe(false); // same ino, other device
-    expect(folderMoveHasEvidence([{ dev: null, ino: null }], [r(1, 5)])).toBe(false);
+    expect(folderMoveHasEvidence([{ ...r(1, 5), dev: null, ino: null }], [r(1, 5)])).toBe(false);
+    // A reused child inode is no evidence either: the child must pass the file guard (size + mtime) itself.
+    expect(folderMoveHasEvidence([r(1, 5)], [r(1, 5, { size: 2n })])).toBe(false);
+    expect(folderMoveHasEvidence([r(1, 5)], [r(1, 5, { mtime: new Date(T.getTime() + 1) })])).toBe(false);
+    expect(folderMoveHasEvidence([r(1, 5)], [r(1, 5, { type: 'folder', size: 0n })])).toBe(false);
+    expect(folderMoveHasEvidence([r(1, 5, { type: 'folder', size: 0n })], [r(1, 5, { type: 'folder', size: 0n, mtime: new Date() })])).toBe(true);
   });
 
   it('does not pair a folder whose inode matches but whose content is entirely different', async () => {
@@ -301,8 +307,9 @@ describe('IndexerService', () => {
     await indexer.fullScan(user);
     const oldId = (await byPath('X')).id;
     // Same directory inode, no shared child: indistinguishable from `rm -rf X; mkdir Y` with inode reuse.
+    // Linux reuses the freed inode of child.txt for other.txt, so the child inode matches as well.
     await rm(path.join(root, 'X/child.txt'));
-    await writeFile(path.join(root, 'X/other.txt'), 'o');
+    await writeFile(path.join(root, 'X/other.txt'), 'other content');
     await rename(path.join(root, 'X'), path.join(root, 'Y'));
     await indexer.fullScan(user);
     expect((await byPath('Y')).id).not.toBe(oldId);
