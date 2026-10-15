@@ -182,7 +182,8 @@
       "dismiss": "Remove from list"
     },
     "preview": "Preview",
-    "shortcutPreview": "Space"
+    "shortcutPreview": "Space",
+    "versions": "Versions …"
   },
   "preview": {
     "close": "Close preview",
@@ -591,5 +592,26 @@
         "body": "The file couldn't be opened because the server isn't responding. Try again in a moment."
       }
     }
+  },
+  "versions": {
+    "title": "Versions",
+    "description": "Earlier versions of “{{name}}”",
+    "number": "Version {{n}}",
+    "source": {
+      "office": "Office",
+      "restore": "Restored",
+      "api": "Synced"
+    },
+    "preview": "Preview version {{n}}",
+    "download": "Download version {{n}}",
+    "restore": "Restore version {{n}}",
+    "emptyTitle": "No earlier versions",
+    "emptyBody": "When this file is replaced, the previous content is kept here.",
+    "loadFailed": "The versions couldn't be loaded.",
+    "confirmTitle": "Restore version {{n}}?",
+    "confirmBody": "The current version is saved as a version first, so nothing is lost.",
+    "restoreAction": "Restore",
+    "restoring": "Restoring …",
+    "restored": "Version {{n}} restored"
   }
 }

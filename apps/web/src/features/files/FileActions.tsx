@@ -1,5 +1,5 @@
 import type { SyncItem } from '@synclet/shared';
-import { Download, Eye, FilePen, FolderInput, FolderOpen, FolderPlus, MoreHorizontal, PencilLine, Share2, Trash2, Upload } from 'lucide-react';
+import { Download, Eye, FilePen, FolderInput, FolderOpen, FolderPlus, History, MoreHorizontal, PencilLine, Share2, Trash2, Upload } from 'lucide-react';
 import type { ComponentType, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
@@ -22,6 +22,13 @@ export interface ItemActions {
   share(item: SyncItem): void;
   /** Opens an office file in the editor; set only when office editing is available. */
   openInOffice?(item: SyncItem): void;
+  /** Opens the versions panel; set only when the server has versions enabled. */
+  versions?(item: SyncItem): void;
+}
+
+/** Whether the menus offer "Versions" for this item. */
+export function canShowVersions(item: Pick<SyncItem, 'type'>, actions: Pick<ItemActions, 'versions'>): boolean {
+  return !!actions.versions && item.type === 'file';
 }
 
 /** Whether the menus offer "Open in Office" for this item. */
@@ -55,6 +62,11 @@ function ItemMenuItems({ item, actions, parts: { Item, Separator, Shortcut } }: 
       {actions.preview && item.type === 'file' && (
         <Item onSelect={() => actions.preview?.(item)}>
           <Eye />{t('files.preview')}<Shortcut>{t('files.shortcutPreview')}</Shortcut>
+        </Item>
+      )}
+      {canShowVersions(item, actions) && (
+        <Item onSelect={() => actions.versions?.(item)}>
+          <History />{t('files.versions')}
         </Item>
       )}
       <Item onSelect={() => actions.share(item)} disabled={item.kind === 'root'}>

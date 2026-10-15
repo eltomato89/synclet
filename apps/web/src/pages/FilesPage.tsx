@@ -39,6 +39,7 @@ const MoveDialog = lazy(() => import('@/features/files/MoveDialog').then((m) => 
 const DeleteDialog = lazy(() => import('@/features/files/DeleteDialog').then((m) => ({ default: m.DeleteDialog })));
 const QuickLook = lazy(() => import('@/features/preview/QuickLook').then((m) => ({ default: m.QuickLook })));
 const NewOfficeDialog = lazy(() => import('@/features/office/NewOfficeDialog').then((m) => ({ default: m.NewOfficeDialog })));
+const VersionsPanel = lazy(() => import('@/features/versions/VersionsPanel').then((m) => ({ default: m.VersionsPanel })));
 const ShareDialog = lazy(() => import('@/features/shares/ShareDialog').then((m) => ({ default: m.ShareDialog })));
 
 const FOLDER_ID = /^(root|d_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
@@ -68,7 +69,7 @@ const notify = {
   error: (msg: string) => toast.error(msg, { position: 'bottom-center' }),
 };
 
-type DialogState = { kind: 'newFolder' } | { kind: 'newOffice'; format: OfficeNewFormat } | { kind: 'rename' | 'move' | 'delete' | 'share'; item: SyncItem };
+type DialogState = { kind: 'newFolder' } | { kind: 'newOffice'; format: OfficeNewFormat } | { kind: 'rename' | 'move' | 'delete' | 'share' | 'versions'; item: SyncItem };
 
 export function FilesPage() {
   const { folderId = ROOT_ID } = useParams();
@@ -122,7 +123,8 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   const ancestors = useAncestors(folderId);
   const mutations = useFileMutations();
   const createOffice = useCreateOfficeFile();
-  const officeEnabled = useCapabilities().office.enabled;
+  const capabilities = useCapabilities();
+  const officeEnabled = capabilities.office.enabled;
 
   const [view, setViewState] = useState<View>(() => readPref(VIEW_KEY, 'list', (v) => v === 'list' || v === 'grid'));
   const [sort, setSort] = useState<Sort>(() => readPref(SORT_KEY, { key: 'name', dir: 'asc' }, isSort));
@@ -213,6 +215,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
     remove: (item) => { setSelectedId(item.id); if (item.capabilities.delete) openDialog({ kind: 'delete', item }); },
     share: (item) => { setSelectedId(item.id); if (item.kind !== 'root') openDialog({ kind: 'share', item }); },
     openInOffice: officeEnabled ? (item) => openOfficeTab(item.id) : undefined,
+    versions: capabilities.versions ? (item) => { setSelectedId(item.id); if (item.type === 'file') openDialog({ kind: 'versions', item }); } : undefined,
   };
   const selectedItem = items.find((i) => i.id === selectedId) ?? null;
   const startUpload = () => fileInput.current?.click();
@@ -415,6 +418,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
             onDownload={download}
             onShare={actions.share}
             onOpenInOffice={actions.openInOffice}
+            onVersions={actions.versions}
           />
         )}
         {d?.kind === 'newFolder' && (
@@ -502,6 +506,14 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
               setSelectedId(next);
               notify.success(t('files.toast.deleted', { name: d.item.name }));
             }}
+          />
+        )}
+        {d?.kind === 'versions' && (
+          <VersionsPanel
+            key={d.n}
+            item={d.item}
+            open={d.open}
+            onOpenChange={onDialogOpenChange}
           />
         )}
         {d?.kind === 'share' && (
