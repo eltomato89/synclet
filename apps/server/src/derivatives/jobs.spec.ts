@@ -73,6 +73,21 @@ describe('derivative worker (DB)', () => {
       expect((await ctx.prisma.item.findUniqueOrThrow({ where: { id: c.id } })).contentHash).toBe(sha256('gamma'));
     });
 
+    it('the skip list evicts its oldest entry when full', async () => {
+      hash.maxSkipped = 2;
+      const rows: Item[] = [];
+      for (const n of ['1.txt', '2.txt', '3.txt']) rows.push(await addFile(n, n));
+      for (const r of rows) await ctx.prisma.item.update({ where: { id: r.id }, data: { size: 999n } }); // disk differs → skipped
+      expect(await hash.hashMissing()).toBe(0);
+      const skipped = () => [...(hash as unknown as { skipped: Map<string, number> }).skipped.keys()];
+      expect(skipped().length).toBe(2);
+      const [evicted] = rows.filter((r) => !skipped().includes(r.id));
+      // The evicted file is tried again (and re-enters the list, evicting the next oldest).
+      expect(await hash.hashMissing()).toBe(0);
+      expect(skipped()).toContain(evicted.id);
+      expect(skipped().length).toBe(2);
+    });
+
     it('skips a file that changed while it was hashed', async () => {
       const a = await addFile('a.txt', 'alpha');
       hash.afterHash = async (row) => {
@@ -147,6 +162,15 @@ describe('derivative worker (DB)', () => {
       expect(claimed[0].attempts).toBe(2);
     });
 
+    it('stale running jobs with exhausted attempts are marked failed instead of staying running', async () => {
+      const ago = (min: number) => new Date(Date.now() - min * 60_000);
+      await ctx.prisma.derivativeJob.create({ data: { sha: fakeSha('a'), kind: 'thumb', status: 'running', attempts: 3, lockedAt: ago(11) } });
+      await ctx.prisma.derivativeJob.create({ data: { sha: fakeSha('b'), kind: 'thumb', status: 'running', attempts: 3, lockedAt: ago(1) } });
+      expect(await jobs.claim('thumb', 10)).toEqual([]);
+      expect(await job(fakeSha('a'))).toMatchObject({ status: 'failed', lockedAt: null, lastError: expect.stringMatching(/attempts exhausted/) });
+      expect(await job(fakeSha('b'))).toMatchObject({ status: 'running' }); // still within its lock
+    });
+
     it('retryOrFail returns to pending until attempts are used up; release does not count', async () => {
       await ctx.prisma.derivativeJob.create({ data: { sha: fakeSha('a'), kind: 'thumb' } });
       for (let i = 1; i <= 3; i++) {
@@ -209,10 +233,61 @@ describe('derivative worker (DB)', () => {
       expect(await readdir(path.join(store.root, '.tmp'))).toEqual([]);
     }, 60_000);
 
-    it('a job whose content is gone is dropped (re-created if the content reappears)', async () => {
+    it('a job whose content is gone is dropped and is no work', async () => {
       await ctx.prisma.derivativeJob.create({ data: { sha: fakeSha('a'), kind: 'thumb' } });
-      await runner.tick();
+      expect(await runner.tick()).toBe(false);
       expect(await job(fakeSha('a'))).toBeNull();
+    });
+
+    it('a job whose file is unreadable right now is deferred 15 min, not re-run in a hot loop', async () => {
+      const png = await addFile('pic.png', { fixture: 'sample.png' }, { hash: true });
+      await writeFile(path.join(ctx.config.dataRoot, 'alice', 'pic.png'), 'edited on the host, not indexed yet');
+      expect(await runner.tick()).toBe(true); // the job was enqueued (claimed and deferred in the same pass)
+      expect(await runner.tick()).toBe(false); // nothing claimable: no work
+      const j = await job(png.contentHash!);
+      expect(j).toMatchObject({ status: 'pending', attempts: 0, lastError: 'no readable source file' });
+      expect(j!.lockedAt!.getTime()).toBeGreaterThan(Date.now() + 14 * 60_000);
+      expect(await jobs.claim('thumb', 5)).toEqual([]); // not before lockedAt
+      // Due again after the delay.
+      await ctx.prisma.derivativeJob.update({ where: { sha_kind: { sha: png.contentHash!, kind: 'thumb' } }, data: { lockedAt: new Date(Date.now() - 1000) } });
+      expect((await jobs.claim('thumb', 5)).map((x) => x.sha)).toEqual([png.contentHash]);
+    });
+
+    it('run() sleeps between passes when the only job has no usable source', async () => {
+      await addFile('pic.png', { fixture: 'sample.png' }, { hash: true });
+      await writeFile(path.join(ctx.config.dataRoot, 'alice', 'pic.png'), 'changed');
+      const tick = jest.spyOn(runner, 'tick');
+      const running = runner.run();
+      await new Promise((r) => setTimeout(r, 500));
+      runner.stop();
+      await running;
+      // Pass 1 enqueues (work), pass 2 finds nothing claimable → the loop sleeps 2 s.
+      expect(tick).toHaveBeenCalledTimes(2);
+      await expect(tick.mock.results[1].value).resolves.toBe(false);
+    });
+
+    it('enqueueMissing runs only after hashing, on a content signal, or every 5 minutes', async () => {
+      let clock = 1_000_000;
+      runner.now = () => clock;
+      const enqueue = jest.spyOn(jobs, 'enqueueMissing');
+      await runner.tick();
+      expect(enqueue).toHaveBeenCalledTimes(1); // first pass
+      await runner.tick();
+      clock += 4 * 60_000;
+      await runner.tick();
+      expect(enqueue).toHaveBeenCalledTimes(1); // idle: no scan
+      clock += 60_000;
+      await runner.tick();
+      expect(enqueue).toHaveBeenCalledTimes(2); // 5 min elapsed
+      await ctx.prisma.syncScope.update({ where: { userId: user.id }, data: { seq: { increment: 1 } } }); // server journaled a change
+      await runner.tick();
+      expect(enqueue).toHaveBeenCalledTimes(3);
+      await runner.tick();
+      expect(enqueue).toHaveBeenCalledTimes(3);
+      await addFile('new.png', { fixture: 'sample.png' }); // unhashed: the backfill hashes it
+      await runner.tick();
+      expect(enqueue).toHaveBeenCalledTimes(4);
+      expect(await ctx.prisma.derivativeJob.count({ where: { status: 'done' } })).toBe(1);
     });
 
     it('stop() makes run() return; unstarted claims are released', async () => {

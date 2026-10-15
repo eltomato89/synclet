@@ -10,8 +10,8 @@ import { PrismaService } from '../prisma/prisma.service';
 /** Bytes hashed per call at most (a single larger file is still hashed in full). */
 const BYTES_PER_LOOP = 1024 ** 3;
 /** Files that could not be read are skipped for this long before they are tried again. */
-const RETRY_AFTER_MS = 3600_000;
-const MAX_SKIPPED = 10_000;
+const RETRY_AFTER_MS = 15 * 60_000;
+export const MAX_SKIPPED = 10_000;
 
 /**
  * Computes `contentHash` for files the indexer recorded without one (host edits, external
@@ -23,6 +23,7 @@ export class HashBackfill {
   private readonly log = new Logger(HashBackfill.name);
   /** id → time of the last failed attempt (unreadable / changed files). */
   private readonly skipped = new Map<string, number>();
+  maxSkipped = MAX_SKIPPED;
   /** Test seam: runs after a file was hashed, before the row is updated. */
   afterHash?: (item: Item) => Promise<void>;
 
@@ -51,10 +52,20 @@ export class HashBackfill {
         return false;
       });
       if (ok) hashed++;
-      else if (this.skipped.size < MAX_SKIPPED) this.skipped.set(row.id, Date.now());
+      else this.skip(row.id);
     }
     return hashed;
   }
+
+  /** Records a failed attempt; when full, the oldest entry is evicted (Map keeps insertion order). */
+  private skip(id: string) {
+    this.skipped.delete(id);
+    if (this.skipped.size >= this.maxSkipped) this.skipped.delete(this.skipped.keys().next().value!);
+    this.skipped.set(id, Date.now());
+  }
+
+  /** Number of files currently skipped (tests). */
+  get skippedCount(): number { return this.skipped.size; }
 
   private async hashOne(row: Item, username: string): Promise<boolean> {
     const abs = await realpathInside(absPath(this.config.dataRoot, username, row.path), userRoot(this.config.dataRoot, username));
