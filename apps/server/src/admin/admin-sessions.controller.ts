@@ -29,7 +29,7 @@ export class AdminSessionsController {
   async revokeSession(@Param('id') id: string, @Param('sessionId') sessionId: string): Promise<void> {
     await this.user(id);
     if (!UUID.test(sessionId)) throw new SyncError('not_found');
-    const res = await this.prisma.session.updateMany({ where: { id: sessionId, userId: id, revokedAt: null }, data: { revokedAt: new Date() } });
+    const res = await this.prisma.session.updateMany({ where: { id: sessionId, userId: id, revokedAt: null }, data: { revokedAt: new Date(), revokedReason: 'admin' } });
     if (res.count === 0) throw new SyncError('not_found');
   }
 
@@ -37,7 +37,7 @@ export class AdminSessionsController {
   @HttpCode(204)
   async revokeAll(@Param('id') id: string): Promise<void> {
     await this.user(id);
-    await this.prisma.session.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date() } });
+    await this.prisma.session.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date(), revokedReason: 'admin' } });
   }
 
   @Get('devices')

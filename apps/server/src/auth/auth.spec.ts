@@ -52,6 +52,16 @@ describe('auth', () => {
     expect((await ctx.app.inject({ method: 'POST', url: '/api/auth/refresh', cookies: { synclet_refresh: rt2 } })).statusCode).toBe(401);
   });
 
+  it('a logged-out token is rejected without ending the other sessions', async () => {
+    await setup();
+    const login = async () => (await ctx.app.inject({ method: 'POST', url: '/api/auth/login', payload: { login: 'jens', password: 'correct horse battery' } }))
+      .cookies.find((c) => c.name === 'synclet_refresh')!.value;
+    const [a, b] = [await login(), await login()];
+    await ctx.app.inject({ method: 'POST', url: '/api/auth/logout', cookies: { synclet_refresh: a } });
+    expect((await ctx.app.inject({ method: 'POST', url: '/api/auth/refresh', cookies: { synclet_refresh: a } })).statusCode).toBe(401);
+    expect((await ctx.app.inject({ method: 'POST', url: '/api/auth/refresh', cookies: { synclet_refresh: b } })).statusCode).toBe(200);
+  });
+
   it('rejects missing/invalid bearer tokens with code unauthorized', async () => {
     const res = await ctx.app.inject({ method: 'GET', url: '/api/auth/me', headers: { authorization: 'Bearer garbage' } });
     expect(res.statusCode).toBe(401);

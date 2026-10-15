@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createTestApp, TestContext } from '../../test/context';
+import { hashToken } from '../auth/crypto';
 import { DevicesService } from '../auth/devices.service';
 import { SharesService } from '../shares/shares.service';
 import { dirSize } from './admin-status.service';
@@ -165,6 +166,25 @@ describe('admin backend', () => {
     expect((await call('DELETE', `/admin/users/${user.id}/devices/${device.id}`)).statusCode).toBe(204);
     expect((await call('GET', '/auth/me', dtoken)).json().code).toBe('device_revoked');
     expect((await call('GET', `/admin/users/${user.id}/devices`)).json()).toEqual([]);
+  });
+
+  it('revoking one session does not trigger reuse detection: the user stays signed in elsewhere', async () => {
+    const { user } = await mkUser('anna');
+    const login = async () => (await ctx.app.inject({ method: 'POST', url: '/api/auth/login', payload: { login: 'anna', password: 'another long password' } }))
+      .cookies.find((c) => c.name === 'synclet_refresh')!.value;
+    const [a, b] = [await login(), await login()];
+    const rowA = await ctx.prisma.session.findUniqueOrThrow({ where: { tokenHash: hashToken(a) } });
+    expect((await call('DELETE', `/admin/users/${user.id}/sessions/${rowA.id}`)).statusCode).toBe(204);
+    expect(await ctx.prisma.session.findUniqueOrThrow({ where: { id: rowA.id } })).toMatchObject({ revokedReason: 'admin' });
+    const refresh = (rt: string) => ctx.app.inject({ method: 'POST', url: '/api/auth/refresh', cookies: { synclet_refresh: rt } });
+    expect((await refresh(a)).statusCode).toBe(401);
+    // The other browser keeps working (before the fix all sessions were killed as "reuse").
+    const rb = await refresh(b);
+    expect(rb.statusCode).toBe(200);
+    expect((await refresh(rb.cookies.find((c) => c.name === 'synclet_refresh')!.value)).statusCode).toBe(200);
+    // A rotated token is still treated as theft.
+    expect((await refresh(b)).statusCode).toBe(401);
+    expect(await ctx.prisma.session.count({ where: { userId: user.id, revokedAt: null } })).toBe(0);
   });
 
   describe('shares', () => {

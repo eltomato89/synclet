@@ -92,7 +92,7 @@ export class AdminUsersController {
         },
       });
       if (passwordHash) await this.users.setLocalPassword(tx, user, passwordHash);
-      if (disabling || passwordHash) await tx.session.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date() } });
+      if (disabling || passwordHash) await tx.session.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: new Date(), revokedReason: 'admin' } });
     }, TX_OPTS);
     return (await this.wires({ id }))[0];
   }
@@ -109,7 +109,7 @@ export class AdminUsersController {
       await this.assertNotLastAdmin(tx, user);
       const now = new Date();
       await tx.user.update({ where: { id }, data: { disabledAt: user.disabledAt ?? now } });
-      await tx.session.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: now } });
+      await tx.session.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: now, revokedReason: 'admin' } });
       await tx.syncDevice.updateMany({ where: { userId: id, revokedAt: null }, data: { revokedAt: now } });
       await tx.shareLink.updateMany({ where: { ownerId: id, revokedAt: null }, data: { revokedAt: now } });
     }, TX_OPTS);
