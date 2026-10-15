@@ -64,11 +64,12 @@
 	# HSTS only when served over HTTPS (a domain as SYNCLET_SITE_ADDRESS gets automatic HTTPS).
 	@https expression `{scheme} == "https"`
 
-	header {
-		X-Content-Type-Options nosniff
-		Referrer-Policy strict-origin-when-cross-origin
-		X-Frame-Options SAMEORIGIN
-	}
+	# Defaults only ("?": set when the response has none), so the server's own stricter values on
+	# content responses (Referrer-Policy: no-referrer) are kept and no header is sent twice. One
+	# directive each: a "?" condition applies to all fields of its header block.
+	header ?X-Content-Type-Options nosniff
+	header ?Referrer-Policy strict-origin-when-cross-origin
+	header ?X-Frame-Options SAMEORIGIN
 	header @https Strict-Transport-Security "max-age=31536000"
 }
 
