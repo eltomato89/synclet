@@ -56,6 +56,8 @@ final class LoginModel {
     @ObservationIgnored private let session: URLSession
     @ObservationIgnored private let browser: WebAuthenticating
     @ObservationIgnored private let loginHint: String?
+    /// The running sign-in (``start()``); cancelled when the window closes.
+    @ObservationIgnored private var task: Task<Void, Never>?
 
     init(accounts: AccountsModel, prefill: StoredAccount? = nil, session: URLSession = .shared,
          browser: WebAuthenticating? = nil) {
@@ -74,6 +76,19 @@ final class LoginModel {
     static func input(for url: URL) -> String {
         let host = ServerURL.displayHost(url)
         return url.scheme == "https" ? host : "\(url.scheme ?? "http")://\(host)"
+    }
+
+    /// Starts ``signIn()`` as a task that ``cancel()`` can stop (buttons of the login window).
+    func start() {
+        guard !isBusy else { return }
+        task = Task { await signIn() }
+    }
+
+    /// Window closed or "Cancel": stops the browser login. A login finished in the browser
+    /// after this point is not added.
+    func cancel() {
+        task?.cancel()
+        task = nil
     }
 
     /// Runs the whole flow; errors end up in ``errorMessage``.
@@ -97,10 +112,13 @@ final class LoginModel {
                 throw LoginError.denied(reason)
             }
             let tokens = try await auth.exchangeCode(server: server, code: code, verifier: pkce.verifier)
+            try Task.checkCancellation()
             let stored = try await accounts.add(server: server, tokens: tokens)
             step = .done(title: "\(stored.username)@\(ServerURL.displayHost(stored.serverURL))")
         } catch BrowserLoginError.cancelled {
             // Window closed by the user: no message.
+        } catch is CancellationError {
+            // Login window closed meanwhile.
         } catch {
             Logger.app.error("sign-in failed: \(String(describing: error), privacy: .public)")
             errorMessage = Self.describe(error)
@@ -150,6 +168,8 @@ final class LoginModel {
         do {
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else { throw LoginError.notSynclet(host: host) }
+            // A redirect to another origin is not a Synclet server *at this address*.
+            guard let final = http.url, Self.sameOrigin(final, url) else { throw LoginError.notSynclet(host: host) }
             return (http.statusCode, data)
         } catch let error as LoginError {
             throw error
@@ -157,6 +177,13 @@ final class LoginModel {
             throw LoginError.unreachable(host: host)
         }
     }
+
+    static func sameOrigin(_ a: URL, _ b: URL) -> Bool {
+        a.scheme?.lowercased() == b.scheme?.lowercased() && a.host()?.lowercased() == b.host()?.lowercased()
+            && (a.port ?? Self.defaultPort(a)) == (b.port ?? Self.defaultPort(b))
+    }
+
+    private static func defaultPort(_ url: URL) -> Int { url.scheme?.lowercased() == "https" ? 443 : 80 }
 
     static func describe(_ error: Error) -> String {
         if let error = error as? LocalizedError, let text = error.errorDescription { return text }

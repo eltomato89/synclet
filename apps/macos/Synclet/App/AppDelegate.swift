@@ -50,7 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !Self.isRunningTests else { return }
         observeExtensionSignals()
-        Task {
+        let restore = Task {
             // Domains the system lost (e.g. after an update) are added again.
             do {
                 try await accounts.manager.restoreMissingDomains()
@@ -60,7 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             accounts.reload()
         }
         #if DEBUG
-        if runDebugArguments() { return }
+        if runDebugArguments(after: restore) { return }
         #endif
         if accounts.isEmpty || ProcessInfo.processInfo.arguments.contains("-SyncletShowLogin") {
             showLogin(prefill: nil)
@@ -76,16 +76,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// - `-SyncletSignOutAll` logs each account's pending-change count, signs every account
     ///   out without asking (domain, token and state removed) and quits.
     /// Returns `true` when an argument was handled.
-    private func runDebugArguments() -> Bool {
+    /// `-SyncletSignOutAll` waits for the launch domain restore, which could otherwise re-add a
+    /// domain right after it was removed.
+    private func runDebugArguments(after restore: Task<Void, Never>) -> Bool {
         let arguments = ProcessInfo.processInfo.arguments
         if let index = arguments.firstIndex(of: "-SyncletAutoSignIn"), index + 1 < arguments.count {
             let model = showLogin(prefill: nil)
             model.serverInput = arguments[index + 1]
-            Task { await model.signIn() }
+            model.start()
             return true
         }
         if arguments.contains("-SyncletSignOutAll") {
             Task {
+                await restore.value
                 for entry in accounts.entries {
                     let pending = await accounts.pendingChanges(key: entry.id)
                     Logger.app.notice("debug sign-out \(entry.title, privacy: .public): pending \(String(describing: pending), privacy: .public)")

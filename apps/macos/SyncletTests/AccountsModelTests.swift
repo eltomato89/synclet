@@ -65,13 +65,14 @@ final class AccountsModelTests: XCTestCase {
         XCTAssertEqual(harness.accounts.entries.first?.status, .needsLogin)
         XCTAssertTrue(harness.accounts.hasProblem)
 
-        // Signing in again clears the marker, reuses the domain and signals the working set.
+        // Signing in again clears the marker, reuses the domain and lifts the `.notAuthenticated`
+        // throttling (signalErrorResolved + working set) – once per add.
         try await harness.accounts.add(server: origin, tokens: harness.tokens(server))
         XCTAssertEqual(harness.accounts.entries.first?.status, .ok)
         XCTAssertNil(AuthFailureSignal.pending(container: harness.accounts.container, key16: stored.key16))
         XCTAssertEqual(harness.domains.addCalls.count, 1)
         XCTAssertEqual(harness.domains.removeCalls, [])
-        XCTAssertEqual(harness.finder.signalled, [stored.key16, stored.key16])
+        XCTAssertEqual(harness.finder.resolvedAuthentication, [stored.key16, stored.key16])
     }
 
     func testMissingTokenNeedsLogin() async throws {

@@ -20,6 +20,8 @@ struct LoginView: View {
         }
         .padding(24)
         .frame(width: 420)
+        // Closing the window (Cancel, close button, or a new login window) stops the browser login.
+        .onDisappear { model.cancel() }
     }
 
     private var header: some View {
@@ -42,7 +44,7 @@ struct LoginView: View {
             TextField("Server", text: $model.serverInput, prompt: Text(verbatim: "files.example.com"))
                 .textContentType(.URL)
                 .disabled(model.isBusy)
-                .onSubmit { Task { await model.signIn() } }
+                .onSubmit { model.start() }
                 .accessibilityIdentifier("login.server")
             Text("You sign in in the browser window that opens next.")
                 .font(.caption)
@@ -58,7 +60,7 @@ struct LoginView: View {
                 Button("Cancel", role: .cancel, action: close)
                     .keyboardShortcut(.cancelAction)
                 Button {
-                    Task { await model.signIn() }
+                    model.start()
                 } label: {
                     if model.isBusy {
                         ProgressView().controlSize(.small)

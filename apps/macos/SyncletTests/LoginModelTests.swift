@@ -127,6 +127,64 @@ final class LoginModelTests: XCTestCase {
         XCTAssertEqual(harness.domains.addCalls.map(\.identifier), [AccountStore.key16(for: "srv1:u1")])
     }
 
+    func testCapabilities401WithoutSyncAPIBodyIsRejected() async {
+        // A proxy's HTML login wall in front of /api: 401, but no Sync API error body.
+        MockURLProtocol.reset { request in
+            request.path == "/api/health" ? .json(200, #"{"ok":true}"#) : .html(401)
+        }
+        let browser = FakeBrowser(redirect: FakeBrowser.echo)
+        let model = makeModel("files.example.test", browser: browser)
+        await model.signIn()
+        XCTAssertEqual(model.errorMessage, LoginError.notSynclet(host: "files.example.test").errorDescription)
+        XCTAssertTrue(browser.openedURLs.isEmpty)
+    }
+
+    func testDeniedRedirectShowsTheReasonAndExchangesNothing() async {
+        Harness.serve(["files.example.test": FakeSynclet(serverId: "srv1")])
+        let browser = FakeBrowser { url in
+            URL(string: "synclet://oauth?error=access_denied&state=\(FakeBrowser.query(url)["state"] ?? "")")!
+        }
+        let model = makeModel("files.example.test", browser: browser)
+        await model.signIn()
+        XCTAssertEqual(model.errorMessage, LoginError.denied("access_denied").errorDescription)
+        XCTAssertFalse(MockURLProtocol.requests.contains { $0.path == "/api/auth/app/token" })
+        XCTAssertTrue(harness.accounts.isEmpty)
+    }
+
+    func testBrowserFailureShowsItsMessage() async {
+        Harness.serve(["files.example.test": FakeSynclet(serverId: "srv1")])
+        let model = makeModel("files.example.test", browser: FakeBrowser { _ in throw BrowserLoginError.failed("kaputt") })
+        await model.signIn()
+        XCTAssertEqual(model.errorMessage, "kaputt")
+    }
+
+    func testCancelledLoginAddsNoAccountEvenIfTheBrowserCompletes() async {
+        Harness.serve(["files.example.test": FakeSynclet(serverId: "srv1")])
+        var model: LoginModel!
+        // The window is closed while the browser page is open; the user still finishes it.
+        let browser = FakeBrowser { url in
+            model.cancel()
+            return try FakeBrowser.echo(url)
+        }
+        model = makeModel("files.example.test", browser: browser)
+        model.start()
+        for _ in 0..<200 where model.isBusy || browser.openedURLs.isEmpty {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(browser.openedURLs.count, 1)
+        XCTAssertFalse(model.isBusy)
+        XCTAssertNil(model.errorMessage)
+        XCTAssertTrue(harness.accounts.isEmpty)
+        XCTAssertFalse(MockURLProtocol.requests.contains { $0.path == "/api/sync/v1/devices" })
+    }
+
+    func testSameOrigin() {
+        let base = URL(string: "https://files.example.test")!
+        XCTAssertTrue(LoginModel.sameOrigin(URL(string: "https://files.example.test:443/api/health")!, base))
+        XCTAssertFalse(LoginModel.sameOrigin(URL(string: "https://evil.example.test/api/health")!, base))
+        XCTAssertFalse(LoginModel.sameOrigin(URL(string: "http://files.example.test/api/health")!, base))
+    }
+
     func testPrefillForSigningInAgain() {
         let account = StoredAccount(key: "srv1:u1", serverURL: URL(string: "http://localhost:18140")!, userId: "u1",
                                     username: "jens", displayName: "Jens", spaces: [.personal()])

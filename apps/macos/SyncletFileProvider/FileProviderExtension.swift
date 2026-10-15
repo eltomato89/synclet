@@ -12,18 +12,15 @@ import SyncletKit
 final class FileProviderExtension: SyncletReplicatedExtension, @unchecked Sendable {
     private var key16: String { domain.identifier.rawValue }
 
-    /// Root of the app group container (parent of `accounts/`).
-    private lazy var container: URL? = Self.sharedConfiguration.appGroup.map { AccountStore(appGroup: $0).directory }
+    /// Root of the app group container (parent of `accounts/`). Computed, not `lazy`: `inspect`
+    /// runs on arbitrary queues, and lazy initialization is not thread-safe. Only used on
+    /// auth failures, so the cost does not matter.
+    private var container: URL? { Self.sharedConfiguration.appGroup.map { AccountStore(appGroup: $0).directory } }
 
     /// Reports `.notAuthenticated` to the app; other errors are ignored.
     fileprivate func inspect(_ error: Error?) {
-        guard let error, Self.isAuthenticationFailure(error), let container else { return }
+        guard let error, AuthFailureSignal.isAuthenticationFailure(error), let container else { return }
         AuthFailureSignal.report(container: container, key16: key16)
-    }
-
-    static func isAuthenticationFailure(_ error: Error) -> Bool {
-        let ns = error as NSError
-        return ns.domain == NSFileProviderErrorDomain && ns.code == NSFileProviderError.notAuthenticated.rawValue
     }
 
     override func item(for identifier: NSFileProviderItemIdentifier, request: NSFileProviderRequest,
@@ -80,77 +77,6 @@ final class FileProviderExtension: SyncletReplicatedExtension, @unchecked Sendab
         super.deleteItem(identifier: identifier, baseVersion: version, options: options, request: request) { [self] error in
             inspect(error)
             completionHandler(error)
-        }
-    }
-}
-
-/// Passes an enumeration through and reports its errors (the working set is polled
-/// regularly – a revoked device shows up there first).
-final class SignallingEnumerator: NSObject, NSFileProviderEnumerator {
-    private let inner: NSFileProviderEnumerator
-    private let onError: (Error) -> Void
-
-    init(inner: NSFileProviderEnumerator, onError: @escaping (Error) -> Void) {
-        self.inner = inner
-        self.onError = onError
-    }
-
-    func invalidate() { inner.invalidate() }
-
-    func enumerateItems(for observer: NSFileProviderEnumerationObserver, startingAt page: NSFileProviderPage) {
-        inner.enumerateItems(for: ItemObserver(inner: observer, onError: onError), startingAt: page)
-    }
-
-    func enumerateChanges(for observer: NSFileProviderChangeObserver, from syncAnchor: NSFileProviderSyncAnchor) {
-        inner.enumerateChanges?(for: ChangeObserver(inner: observer, onError: onError), from: syncAnchor)
-    }
-
-    func currentSyncAnchor(completionHandler: @escaping @Sendable (NSFileProviderSyncAnchor?) -> Void) {
-        guard let current = inner.currentSyncAnchor else {
-            completionHandler(nil)
-            return
-        }
-        current(completionHandler)
-    }
-
-    private final class ItemObserver: NSObject, NSFileProviderEnumerationObserver {
-        let inner: NSFileProviderEnumerationObserver
-        let onError: (Error) -> Void
-
-        init(inner: NSFileProviderEnumerationObserver, onError: @escaping (Error) -> Void) {
-            self.inner = inner
-            self.onError = onError
-        }
-
-        var suggestedPageSize: Int { inner.suggestedPageSize ?? FileProviderEnumerator.defaultPageSize }
-        func didEnumerate(_ updatedItems: [NSFileProviderItemProtocol]) { inner.didEnumerate(updatedItems) }
-        func finishEnumerating(upTo nextPage: NSFileProviderPage?) { inner.finishEnumerating(upTo: nextPage) }
-        func finishEnumeratingWithError(_ error: Error) {
-            onError(error)
-            inner.finishEnumeratingWithError(error)
-        }
-    }
-
-    private final class ChangeObserver: NSObject, NSFileProviderChangeObserver {
-        let inner: NSFileProviderChangeObserver
-        let onError: (Error) -> Void
-
-        init(inner: NSFileProviderChangeObserver, onError: @escaping (Error) -> Void) {
-            self.inner = inner
-            self.onError = onError
-        }
-
-        var suggestedBatchSize: Int { inner.suggestedBatchSize ?? FileProviderEnumerator.defaultPageSize }
-        func didUpdate(_ updatedItems: [NSFileProviderItemProtocol]) { inner.didUpdate(updatedItems) }
-        func didDeleteItems(withIdentifiers deletedItemIdentifiers: [NSFileProviderItemIdentifier]) {
-            inner.didDeleteItems(withIdentifiers: deletedItemIdentifiers)
-        }
-        func finishEnumeratingChanges(upTo anchor: NSFileProviderSyncAnchor, moreComing: Bool) {
-            inner.finishEnumeratingChanges(upTo: anchor, moreComing: moreComing)
-        }
-        func finishEnumeratingWithError(_ error: Error) {
-            onError(error)
-            inner.finishEnumeratingWithError(error)
         }
     }
 }

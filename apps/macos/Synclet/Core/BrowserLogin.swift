@@ -9,9 +9,16 @@ protocol WebAuthenticating {
     func authenticate(url: URL, callbackScheme: String) async throws -> URL
 }
 
-enum BrowserLoginError: Error, Equatable {
+enum BrowserLoginError: Error, Equatable, LocalizedError {
     case cancelled
     case failed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .cancelled: return nil
+        case .failed(let message): return message
+        }
+    }
 }
 
 /// Browser login (OAuth 2.0 authorization code + PKCE, RFC 8252) with
@@ -23,29 +30,38 @@ final class BrowserLogin: NSObject, WebAuthenticating, ASWebAuthenticationPresen
     /// The running session (kept alive until it completes).
     private var session: ASWebAuthenticationSession?
 
+    /// Cancelling the calling task cancels the session (closes the browser sheet).
     func authenticate(url: URL, callbackScheme: String) async throws -> URL {
         session?.cancel()
-        return try await withCheckedThrowingContinuation { continuation in
-            let session = ASWebAuthenticationSession(url: url, callback: .customScheme(callbackScheme)) { [weak self] callback, error in
-                MainActor.assumeIsolated {
-                    self?.session = nil
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let session = ASWebAuthenticationSession(url: url, callback: .customScheme(callbackScheme)) { callback, error in
+                    // Delivery thread is not documented: build a Sendable result, then hop to the main actor.
+                    let result: Result<URL, BrowserLoginError>
                     if let callback {
-                        continuation.resume(returning: callback)
+                        result = .success(callback)
                     } else if let error = error as? ASWebAuthenticationSessionError, error.code == .canceledLogin {
-                        continuation.resume(throwing: BrowserLoginError.cancelled)
+                        result = .failure(.cancelled)
                     } else {
-                        continuation.resume(throwing: BrowserLoginError.failed(error?.localizedDescription ?? "unknown"))
+                        result = .failure(.failed(error?.localizedDescription
+                            ?? String(localized: "The login window could not be opened.")))
+                    }
+                    Task { @MainActor [weak self] in
+                        self?.session = nil
+                        continuation.resume(with: result)
                     }
                 }
+                session.presentationContextProvider = self
+                // Share the browser's cookies: an existing web or SSO session signs in without a password.
+                session.prefersEphemeralWebBrowserSession = false
+                self.session = session
+                if !session.start() {
+                    self.session = nil
+                    continuation.resume(throwing: BrowserLoginError.failed(String(localized: "The login window could not be opened.")))
+                }
             }
-            session.presentationContextProvider = self
-            // Share the browser's cookies: an existing web or SSO session signs in without a password.
-            session.prefersEphemeralWebBrowserSession = false
-            self.session = session
-            if !session.start() {
-                self.session = nil
-                continuation.resume(throwing: BrowserLoginError.failed(String(localized: "The login window could not be opened.")))
-            }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.session?.cancel() }
         }
     }
 

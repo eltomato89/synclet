@@ -91,8 +91,9 @@ final class AccountsModel {
         AuthFailureSignal.clear(container: container, key16: stored.key16)
         reload()
         if wasEmpty { onFirstAccountAdded() }
-        // Let the extension retry what failed while the token was rejected.
-        await finder.signalWorkingSet(domain: manager.domain(for: stored.key))
+        // Let the system retry what failed while the token was rejected (always: a rejected
+        // token may not have been reported yet when the user signs in again).
+        await finder.resolveAuthentication(domain: manager.domain(for: stored.key))
         return stored
     }
 

@@ -1,3 +1,4 @@
+import FileProvider
 import Foundation
 
 /// "Sign-in rejected" signal from the File Provider extension to the menu bar app
@@ -15,6 +16,12 @@ enum AuthFailureSignal {
     static let markerName = "auth-failed"
     /// The extension reports the same failure for every item; one signal per minute is enough.
     static let throttle: TimeInterval = 60
+
+    /// The error the extension reports: `NSFileProviderError(.notAuthenticated)`.
+    static func isAuthenticationFailure(_ error: Error) -> Bool {
+        let ns = error as NSError
+        return ns.domain == NSFileProviderErrorDomain && ns.code == NSFileProviderError.notAuthenticated.rawValue
+    }
 
     /// `<container>/accounts/<key16>/auth-failed`.
     static func markerURL(container: URL, key16: String) -> URL {

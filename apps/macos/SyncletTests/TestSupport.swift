@@ -173,7 +173,8 @@ final class FakeDomains: FileProviderDomainControlling, @unchecked Sendable {
 
 final class FakeFinder: FinderIntegrating, @unchecked Sendable {
     var pending: Int?
-    private(set) var signalled: [String] = []
+    /// Domains whose `.notAuthenticated` throttling was lifted (plus working set signalled).
+    private(set) var resolvedAuthentication: [String] = []
 
     func userVisibleURL(domain: NSFileProviderDomain) async throws -> URL {
         URL(filePath: "/tmp/CloudStorage/\(domain.identifier.rawValue)")
@@ -181,8 +182,8 @@ final class FakeFinder: FinderIntegrating, @unchecked Sendable {
 
     func pendingItemCount(domain: NSFileProviderDomain) async -> Int? { pending }
 
-    func signalWorkingSet(domain: NSFileProviderDomain) async {
-        signalled.append(domain.identifier.rawValue)
+    func resolveAuthentication(domain: NSFileProviderDomain) async {
+        resolvedAuthentication.append(domain.identifier.rawValue)
     }
 }
 

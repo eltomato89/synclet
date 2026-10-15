@@ -72,8 +72,9 @@ protocol FinderIntegrating: Sendable {
     /// Number of items with local changes the extension has not uploaded yet;
     /// `nil` when it cannot be determined.
     func pendingItemCount(domain: NSFileProviderDomain) async -> Int?
-    /// Lets the extension re-read the working set (e.g. after signing in again).
-    func signalWorkingSet(domain: NSFileProviderDomain) async
+    /// After signing in again: lifts the system's throttling of items that failed with
+    /// `.notAuthenticated` (`signalErrorResolved`) and lets the extension re-read the working set.
+    func resolveAuthentication(domain: NSFileProviderDomain) async
 }
 
 /// Production: `NSFileProviderManager`.
@@ -83,8 +84,14 @@ struct SystemFinderIntegration: FinderIntegrating {
         return try await manager.getUserVisibleURL(for: .rootContainer)
     }
 
-    func signalWorkingSet(domain: NSFileProviderDomain) async {
-        try? await NSFileProviderManager(for: domain)?.signalEnumerator(for: .workingSet)
+    func resolveAuthentication(domain: NSFileProviderDomain) async {
+        guard let manager = NSFileProviderManager(for: domain) else { return }
+        do {
+            try await manager.signalErrorResolved(NSFileProviderError(.notAuthenticated))
+        } catch {
+            Logger.app.error("signalErrorResolved failed: \(String(describing: error), privacy: .public)")
+        }
+        try? await manager.signalEnumerator(for: .workingSet)
     }
 
     func pendingItemCount(domain: NSFileProviderDomain) async -> Int? {
@@ -96,9 +103,12 @@ struct SystemFinderIntegration: FinderIntegrating {
 /// Counts the items of a pending set enumerator (all pages); `nil` on error or timeout.
 private final class PendingCounter: NSObject, NSFileProviderEnumerationObserver, @unchecked Sendable {
     private let enumerator: NSFileProviderEnumerator
-    private var total = 0
-    private var continuation: CheckedContinuation<Int?, Never>?
     private let lock = NSLock()
+    // Guarded by `lock`.
+    private var total = 0
+    private var finished = false
+    private var continuation: CheckedContinuation<Int?, Never>?
+    private var timeoutTask: Task<Void, Never>?
 
     private init(enumerator: NSFileProviderEnumerator) {
         self.enumerator = enumerator
@@ -107,10 +117,13 @@ private final class PendingCounter: NSObject, NSFileProviderEnumerationObserver,
     static func count(_ enumerator: NSFileProviderEnumerator, timeout: Duration) async -> Int? {
         let counter = PendingCounter(enumerator: enumerator)
         let result = await withCheckedContinuation { continuation in
-            counter.lock.withLock { counter.continuation = continuation }
-            Task {
+            let timeoutTask = Task {
                 try? await Task.sleep(for: timeout)
-                counter.finish(nil)
+                if !Task.isCancelled { counter.finish(nil) }
+            }
+            counter.lock.withLock {
+                counter.continuation = continuation
+                counter.timeoutTask = timeoutTask
             }
             enumerator.enumerateItems(for: counter, startingAt: NSFileProviderPage.initialPageSortedByName as NSFileProviderPage)
         }
@@ -118,12 +131,18 @@ private final class PendingCounter: NSObject, NSFileProviderEnumerationObserver,
         return result
     }
 
-    /// Resumes once (enumeration end or timeout, whichever comes first).
+    /// Resumes once (enumeration end or timeout, whichever comes first); later calls are ignored.
     private func finish(_ value: Int?) {
-        let continuation = lock.withLock { () -> CheckedContinuation<Int?, Never>? in
-            defer { self.continuation = nil }
-            return self.continuation
+        let (continuation, timeoutTask) = lock.withLock { () -> (CheckedContinuation<Int?, Never>?, Task<Void, Never>?) in
+            guard !finished else { return (nil, nil) }
+            finished = true
+            defer {
+                self.continuation = nil
+                self.timeoutTask = nil
+            }
+            return (self.continuation, self.timeoutTask)
         }
+        timeoutTask?.cancel()
         continuation?.resume(returning: value)
     }
 
@@ -132,10 +151,12 @@ private final class PendingCounter: NSObject, NSFileProviderEnumerationObserver,
     }
 
     func finishEnumerating(upTo nextPage: NSFileProviderPage?) {
+        let (done, count) = lock.withLock { (finished, total) }
+        guard !done else { return }   // timed out: the enumerator is (being) invalidated, stop paging
         if let nextPage {
             enumerator.enumerateItems(for: self, startingAt: nextPage)
         } else {
-            finish(lock.withLock { total })
+            finish(count)
         }
     }
 
