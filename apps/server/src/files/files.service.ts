@@ -242,11 +242,12 @@ export class FilesService implements OnModuleDestroy {
     }
   }
 
-  async replaceContent(user: IndexUser, itemId: string, body: Readable, opts: { ifMatchVersion: number; modifiedAt?: Date | null }): Promise<Item> {
+  async replaceContent(user: IndexUser, itemId: string, body: Readable, opts: { ifMatchVersion: number | null; modifiedAt?: Date | null }): Promise<Item> {
     guardBody(body);
     const pre = await this.prisma.item.findFirst({ where: { id: itemId, ownerId: user.id, deletedAt: null } });
     if (!pre || pre.type !== 'file') throw new SyncError('not_found');
-    if (pre.version !== opts.ifMatchVersion) throw new SyncError('conflict', 'version mismatch', pre);
+    // ifMatchVersion null = `If-Match: *` (any current version).
+    if (opts.ifMatchVersion !== null && pre.version !== opts.ifMatchVersion) throw new SyncError('conflict', 'version mismatch', pre);
     const { tmp, sha256 } = await this.receive(user, body, opts.modifiedAt);
     try {
       // The transaction returns the conflict instead of throwing, so the recorded
@@ -272,7 +273,7 @@ export class FilesService implements OnModuleDestroy {
           await this.journal.record(tx, user.id, [fresh], 'upsert');
           return { conflict: fresh, reason: 'file changed on disk' } as const;
         }
-        if (item.version !== opts.ifMatchVersion) return { conflict: item, reason: 'version mismatch' } as const;
+        if (opts.ifMatchVersion !== null && item.version !== opts.ifMatchVersion) return { conflict: item, reason: 'version mismatch' } as const;
         await replaceAtomic(tmp, target);
         const st = await statEntry(target);
         const updated = await tx.item.update({

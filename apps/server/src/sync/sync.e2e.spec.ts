@@ -1,6 +1,7 @@
-import { writeFile } from 'node:fs/promises';
+import { symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createTestApp, itIfCaseSensitive, TestContext } from '../../test/context';
+import { FilesService } from '../files/files.service';
 import { ItemStore } from '../journal/item-store';
 import { IndexerService } from '../indexer/indexer.service';
 
@@ -270,5 +271,63 @@ describe('Sync API v1', () => {
     const acc = (await api('GET', '/account')).json();
     expect(acc).toMatchObject({ slug: 'jens', displayName: 'Jens', usedBytes: 5, maxUploadBytes: ctx.config.maxUploadBytes, organizationName: 'Synclet' });
     expect(acc.cursor).toBe((await api('GET', '/cursor')).json().cursor);
+  });
+  it('PUT content with If-Match: * replaces any current version, but never an unindexed host edit', async () => {
+    const f = (await api('POST', '/items/upload?parentId=root&name=star.txt', { body: 'one' })).json();
+    expect((await api('PUT', `/items/${f.id}/content`, { body: 'two', headers: { 'if-match': '"v1"' } })).json()).toMatchObject({ version: 2 });
+    const any = await api('PUT', `/items/${f.id}/content`, { body: 'three', headers: { 'if-match': '*' } });
+    expect(any.statusCode).toBe(200);
+    expect(any.json()).toMatchObject({ version: 3, size: 5 });
+    await writeFile(path.join(ctx.config.dataRoot, 'jens', 'star.txt'), 'edited on host');
+    const host = await api('PUT', `/items/${f.id}/content`, { body: 'four', headers: { 'if-match': '*' } });
+    expect(host.statusCode).toBe(412);
+    expect(host.json().item).toMatchObject({ version: 4, size: 14 });
+  });
+
+  it('unsupported Content-Type on raw upload routes is a Sync-format 400; elsewhere 415 stays', async () => {
+    const up = await api('POST', '/items/upload?parentId=root&name=t.txt', { payload: 'hello', headers: { 'content-type': 'image/png' } });
+    expect(up.statusCode).toBe(400);
+    expect(up.json()).toMatchObject({ statusCode: 400, code: 'invalid_request' });
+    const f = (await api('POST', '/items/upload?parentId=root&name=t.txt', { body: 'x' })).json();
+    const put = await api('PUT', `/items/${f.id}/content`, { payload: 'hello', headers: { 'content-type': 'image/png', 'if-match': '"v1"' } });
+    expect(put.statusCode).toBe(400);
+    expect(put.json().code).toBe('invalid_request');
+    expect((await api('GET', `/items/${f.id}/content`)).body).toBe('x');
+    const other = await ctx.app.inject({ method: 'POST', url: '/api/auth/login', headers: { 'content-type': 'image/png' }, payload: 'x' });
+    expect(other.statusCode).toBe(415);
+    const otherSync = await api('POST', '/items', { payload: 'x', headers: { 'content-type': 'image/png' } });
+    expect(otherSync.statusCode).toBe(415);
+  });
+
+  it('content honours If-Range: a stale validator or an unindexed host edit sends the full file', async () => {
+    const f = (await api('POST', '/items/upload?parentId=root&name=r.txt', { body: 'hello world' })).json();
+    const resumed = await api('GET', `/items/${f.id}/content`, { headers: { range: 'bytes=6-', 'if-range': '"v1"' } });
+    expect(resumed.statusCode).toBe(206);
+    expect(resumed.body).toBe('world');
+    const lm = resumed.headers['last-modified'] as string;
+    expect((await api('GET', `/items/${f.id}/content`, { headers: { range: 'bytes=6-', 'if-range': lm } })).statusCode).toBe(206);
+    const stale = await api('GET', `/items/${f.id}/content`, { headers: { range: 'bytes=6-', 'if-range': '"v0"' } });
+    expect(stale.statusCode).toBe(200);
+    expect(stale.body).toBe('hello world');
+    expect((await api('GET', `/items/${f.id}/content`, { headers: { range: 'bytes=6-', 'if-range': 'W/"v1"' } })).statusCode).toBe(200);
+    // Edited on the host, not indexed yet: the row still says v1, but the bytes changed.
+    await writeFile(path.join(ctx.config.dataRoot, 'jens', 'r.txt'), 'HELLO WORLD!');
+    const changed = await api('GET', `/items/${f.id}/content`, { headers: { range: 'bytes=6-', 'if-range': '"v1"' } });
+    expect(changed.statusCode).toBe(200);
+    expect(changed.body).toBe('HELLO WORLD!');
+  });
+
+  it('content never follows a symlink swapped in after the path check (O_NOFOLLOW)', async () => {
+    const f = (await api('POST', '/items/upload?parentId=root&name=s.txt', { body: 'mine' })).json();
+    const outside = path.join(ctx.config.metaRoot, 'secret.txt');
+    await writeFile(outside, 'secret');
+    const link = path.join(ctx.config.dataRoot, 'jens', 'link.txt');
+    await symlink(outside, link);
+    const files = ctx.app.get(FilesService);
+    const orig = files.openRead.bind(files);
+    jest.spyOn(files, 'openRead').mockImplementation(async (u, id) => ({ ...(await orig(u, id)), abs: link }));
+    const res = await api('GET', `/items/${f.id}/content`);
+    expect(res.statusCode).toBe(404);
+    expect(res.body).not.toContain('secret');
   });
 });
