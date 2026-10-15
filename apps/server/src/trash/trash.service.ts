@@ -1,8 +1,8 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import type { Item, ItemType, TrashEntry } from '@prisma/client';
+import { Prisma, type Item, type ItemType, type TrashEntry } from '@prisma/client';
 import type { RestoreResult, TrashEntryWire } from '@synclet/shared';
-import { randomBytes } from 'node:crypto';
-import { lstat, mkdir, rm, rmdir } from 'node:fs/promises';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { lstat, mkdir, readdir, rm, rmdir } from 'node:fs/promises';
 import path from 'node:path';
 import { APP_CONFIG, AppConfig } from '../config';
 import { freeName, nameKey, tempName } from '../common/names';
@@ -28,7 +28,12 @@ interface StagedCopy { dirRel: string; tmp: string; payload: string }
 
 type CommitOutcome = { done: { item: Item; restoredTo: string; renamed: boolean } } | { needCopy: string };
 
-interface DiskNode { name: string; type: ItemType; size: bigint; mtime: Date; ino: bigint; dev: bigint }
+interface DiskNode { sub: string; parentSub: string | null; name: string; type: ItemType; size: bigint; mtime: Date; ino: bigint; dev: bigint }
+
+interface PlannedRow { node: DiskNode; id: string; mode: 'revive' | 'create'; parentId: string | null; contentHash: string | null }
+
+const ID_CHUNK = 10_000;
+const WRITE_CHUNK = 1_000;
 
 function manifestOf(entry: TrashEntry): TrashManifestEntry[] {
   return Array.isArray(entry.manifest) ? (entry.manifest as unknown as TrashManifestEntry[]) : [];
@@ -102,7 +107,7 @@ export class TrashService {
       let copy: StagedCopy | null = null;
       try {
         for (let attempt = 0; ; attempt++) {
-          const outcome = await this.commit(user, entry.id, copy);
+          const outcome = await this.commit(user, entry.id, copy, await this.scan(copy ? copy.payload : entry.storePath));
           if ('done' in outcome) {
             if (copy) await rmdir(copy.tmp).catch((e) => this.log.warn(`cannot remove ${copy?.tmp}: ${String(e)}`));
             copy = null;
@@ -169,7 +174,64 @@ export class TrashService {
     return { parentId: null, dirRel: '' };
   }
 
-  private async commit(user: IndexUser, entryId: string, copy: StagedCopy | null): Promise<CommitOutcome> {
+  /**
+   * Lists the trashed content (outside the lock; nobody else touches a busy entry's content):
+   * regular files and folders, pre-order, keyed by the path relative to the trashed item.
+   * The stats stay valid after publishing: rename and link keep inode, size and mtime.
+   */
+  private async scan(src: string): Promise<DiskNode[]> {
+    const top = await lstat(src, { bigint: true }).catch((e) => Promise.reject(errno(e) === 'ENOENT' ? unavailable() : e));
+    if (!top.isFile() && !top.isDirectory()) throw unavailable();
+    const st = await statEntry(src);
+    const nodes: DiskNode[] = [{ sub: '', parentSub: null, name: path.basename(src), type: top.isDirectory() ? 'folder' : 'file', ...st }];
+    for (let i = 0; i < nodes.length; i++) {
+      const n = nodes[i];
+      if (n.type !== 'folder') continue;
+      for (const c of await readDisk(n.sub === '' ? src : path.join(src, ...n.sub.split('/')), (msg) => this.log.warn(msg))) {
+        nodes.push({ ...c, sub: n.sub === '' ? c.name : `${n.sub}/${c.name}`, parentSub: n.sub });
+      }
+    }
+    return nodes;
+  }
+
+  /**
+   * Decides the row for every scanned entry: the manifest id is revived if its row is tombstoned
+   * (same owner and type), created again if the row is gone, and replaced by a new id if it is
+   * live (or otherwise unusable). Entries not in the manifest get new ids. One query.
+   */
+  private async plan(tx: Tx, user: IndexUser, entry: TrashEntry, nodes: DiskNode[]): Promise<PlannedRow[]> {
+    const manifest = new Map<string, TrashManifestEntry>();
+    for (const m of manifestOf(entry)) {
+      const sub = m.path === entry.originalPath ? '' : m.path.startsWith(entry.originalPath + '/') ? m.path.slice(entry.originalPath.length + 1) : null;
+      if (sub !== null) manifest.set(sub, m);
+    }
+    const wantedIds = nodes.map((n) => manifest.get(n.sub)).filter((m): m is TrashManifestEntry => !!m && UUID.test(m.id)).map((m) => m.id);
+    const existing = new Map<string, Item>();
+    for (let i = 0; i < wantedIds.length; i += ID_CHUNK) {
+      for (const r of await tx.item.findMany({ where: { id: { in: wantedIds.slice(i, i + ID_CHUNK) } } })) existing.set(r.id, r);
+    }
+    const idOf = new Map<string, string>();
+    const used = new Set<string>();
+    return nodes.map((d) => {
+      const m = manifest.get(d.sub);
+      const wanted = m && m.type === d.type && UUID.test(m.id) && !used.has(m.id) ? m : undefined;
+      const row = wanted ? existing.get(wanted.id) : undefined;
+      const revivable = !!row && row.ownerId === user.id && row.deletedAt !== null && row.type === d.type;
+      const mode: PlannedRow['mode'] = revivable ? 'revive' : 'create';
+      const id = revivable || (wanted && !row) ? wanted!.id : randomUUID();
+      used.add(id);
+      idOf.set(d.sub, id);
+      let contentHash: string | null = null;
+      if (d.type === 'file') {
+        const sameAsManifest = wanted?.size !== undefined && wanted.mtime !== undefined && BigInt(wanted.size) === d.size && new Date(wanted.mtime).getTime() === d.mtime.getTime();
+        if (sameAsManifest) contentHash = wanted?.contentHash ?? null;
+        else if (revivable && row!.size === d.size && row!.mtime.getTime() === d.mtime.getTime()) contentHash = row!.contentHash;
+      }
+      return { node: d, id, mode, parentId: d.parentSub === null ? null : idOf.get(d.parentSub)!, contentHash };
+    });
+  }
+
+  private async commit(user: IndexUser, entryId: string, copy: StagedCopy | null, nodes: DiskNode[]): Promise<CommitOutcome> {
     let published: { from: string; to: string } | null = null;
     try {
       return await this.prisma.$transaction(async (tx): Promise<CommitOutcome> => {
@@ -181,8 +243,10 @@ export class TrashService {
         const src = copy ? copy.payload : entry.storePath;
         if (!copy && !(await exists(src))) throw unavailable();
 
+        // Everything is decided before anything becomes visible in the user folder.
+        const planned = await this.plan(tx, user, entry, nodes);
         const keys = new Set((await this.store.liveChildren(tx, user.id, target.parentId)).map((s) => s.nameKey));
-        const isFolder = entry.type === 'folder';
+        const isFolder = nodes[0].type === 'folder';
         let name = entry.name;
         for (let attempt = 0; ; attempt++) {
           if (keys.has(nameKey(name))) name = freeName(entry.name, keys, isFolder);
@@ -198,22 +262,15 @@ export class TrashService {
           }
         }
 
+        // After publishing: bulk writes only.
         const rel = joinRel(target.dirRel, name);
-        const manifest = new Map<string, TrashManifestEntry>();
-        for (const m of manifestOf(entry)) {
-          const sub = m.path === entry.originalPath ? '' : m.path.startsWith(entry.originalPath + '/') ? m.path.slice(entry.originalPath.length + 1) : null;
-          if (sub !== null) manifest.set(sub, m);
-        }
-        const st = await statEntry(this.abs(user, rel));
-        const top: DiskNode = { name, type: entry.type, ...st };
-        const rows: Item[] = [];
-        await this.place(tx, user, top, rel, '', target.parentId, manifest, rows);
-
-        await this.journal.record(tx, user.id, rows, 'upsert');
-        const sibs = await this.store.sameKeySiblings(tx, user.id, target.parentId, [nameKey(name)], new Set(rows.map((r) => r.id)));
+        await this.writeRows(tx, user, planned, target.parentId, rel, name);
+        await this.journal.record(tx, user.id, planned.map((p) => ({ id: p.id, type: p.node.type })), 'upsert');
+        const sibs = await this.store.sameKeySiblings(tx, user.id, target.parentId, [nameKey(name)], new Set([planned[0].id]));
         await this.journal.record(tx, user.id, sibs, 'upsert');
         await tx.trashEntry.delete({ where: { id: entry.id } });
-        return { done: { item: rows[0], restoredTo: rel, renamed: name !== entry.name } };
+        const item = await tx.item.findUniqueOrThrow({ where: { id: planned[0].id } });
+        return { done: { item, restoredTo: rel, renamed: name !== entry.name } };
       }, TX_OPTS);
     } catch (e) {
       // Rolled back after publishing: take the content back to where it came from.
@@ -223,41 +280,31 @@ export class TrashService {
     }
   }
 
-  /**
-   * Upserts the row for one restored disk entry (and recursively its children): the manifest id
-   * is reused if its row is tombstoned or gone; a currently live id gets a new id instead.
-   */
-  private async place(
-    tx: Tx, user: IndexUser, d: DiskNode, rel: string, sub: string, parentId: string | null,
-    manifest: Map<string, TrashManifestEntry>, rows: Item[],
-  ): Promise<void> {
-    const m = manifest.get(sub);
-    const wanted = m && m.type === d.type ? m : undefined;
-    const existing = wanted ? await tx.item.findUnique({ where: { id: wanted.id } }) : null;
-    const revivable = existing !== null && existing.ownerId === user.id && existing.deletedAt !== null && existing.type === d.type;
-    const isFile = d.type === 'file';
-    let contentHash: string | null = null;
-    if (isFile) {
-      const sameAsManifest = wanted?.size !== undefined && wanted.mtime !== undefined && BigInt(wanted.size) === d.size && new Date(wanted.mtime).getTime() === d.mtime.getTime();
-      if (sameAsManifest) contentHash = wanted?.contentHash ?? null;
-      else if (revivable && existing.size === d.size && existing.mtime.getTime() === d.mtime.getTime()) contentHash = existing.contentHash;
-    }
-    const data = {
-      parentId, type: d.type, name: d.name, nameKey: nameKey(d.name), path: rel,
-      size: isFile ? d.size : 0n, mtime: d.mtime, ino: d.ino, dev: d.dev, contentHash,
+  /** createMany for new/recreated rows, chunked `UPDATE … FROM (VALUES …)` for revived ones. */
+  private async writeRows(tx: Tx, user: IndexUser, planned: PlannedRow[], topParentId: string | null, rel: string, name: string): Promise<void> {
+    const fields = (p: PlannedRow, i: number) => {
+      const d = p.node;
+      const n = i === 0 ? name : d.name;
+      return {
+        parentId: i === 0 ? topParentId : p.parentId, name: n, nameKey: nameKey(n), path: i === 0 ? rel : `${rel}/${d.sub}`,
+        size: d.type === 'file' ? d.size : 0n, mtime: d.mtime, ino: d.ino, dev: d.dev, contentHash: p.contentHash,
+      };
     };
-    let row: Item;
-    if (revivable) {
-      row = await tx.item.update({ where: { id: existing.id }, data: { ...data, deletedAt: null, ...(isFile ? { version: { increment: 1 } } : {}) } });
-    } else if (wanted && existing === null) {
-      row = await tx.item.create({ data: { id: wanted.id, ownerId: user.id, ...data } });
-    } else {
-      row = await tx.item.create({ data: { ownerId: user.id, ...data } });
-    }
-    rows.push(row);
-    if (d.type !== 'folder') return;
-    for (const child of await readDisk(this.abs(user, rel), (msg) => this.log.warn(msg))) {
-      await this.place(tx, user, child, joinRel(rel, child.name), sub === '' ? child.name : `${sub}/${child.name}`, row.id, manifest, rows);
+    const creates = planned.flatMap((p, i) => (p.mode === 'create' ? [{ id: p.id, ownerId: user.id, type: p.node.type, ...fields(p, i) }] : []));
+    for (let i = 0; i < creates.length; i += WRITE_CHUNK) await tx.item.createMany({ data: creates.slice(i, i + WRITE_CHUNK) });
+    const revives = planned.flatMap((p, i) => (p.mode === 'revive' ? [{ p, f: fields(p, i) }] : []));
+    for (let i = 0; i < revives.length; i += WRITE_CHUNK) {
+      const values = revives.slice(i, i + WRITE_CHUNK).map(({ p, f }) => Prisma.sql`(${p.id}::uuid, ${f.parentId}::uuid, ${f.name}::text, ${f.nameKey}::text,
+        ${f.path}::text, ${f.size.toString()}::bigint, ${f.mtime.toISOString()}::timestamptz, ${f.ino.toString()}::bigint,
+        ${f.dev.toString()}::bigint, ${f.contentHash}::text, ${p.node.type === 'file'}::boolean)`);
+      const n = await tx.$executeRaw`
+        UPDATE "Item" AS i SET "parentId" = v.pid, name = v.name, "nameKey" = v.nkey, path = v.path, size = v.size,
+          mtime = v.mtime AT TIME ZONE 'UTC', ino = v.ino, dev = v.dev, "contentHash" = v.hash, "deletedAt" = NULL,
+          version = i.version + CASE WHEN v.isfile THEN 1 ELSE 0 END, "updatedAt" = now()
+        FROM (VALUES ${Prisma.join(values)}) AS v(id, pid, name, nkey, path, size, mtime, ino, dev, hash, isfile)
+        WHERE i.id = v.id AND i."ownerId" = ${user.id}::uuid AND i."deletedAt" IS NOT NULL`;
+      // Planned under the same lock, so this only fails on a broken invariant: roll back.
+      if (n !== Math.min(WRITE_CHUNK, revives.length - i)) throw new Error('restore: revived row count mismatch');
     }
   }
 
@@ -287,8 +334,16 @@ export class TrashService {
     }
   }
 
-  /** Deletes entries of all users whose `expiresAt` lies before `now` (entries without one never expire). */
+  /**
+   * Deletes entries of all users whose `expiresAt` lies before `now`. With retention 0 entries get
+   * no expiry and are kept. Also sweeps orphaned trash directories.
+   */
   async expire(now = new Date()): Promise<number> {
+    // Entries without an expiry (e.g. from before Phase 1b) get one from the current retention.
+    const days = this.config.trashRetentionDays;
+    if (days > 0) {
+      await this.prisma.$executeRaw`UPDATE "TrashEntry" SET "expiresAt" = "deletedAt" + make_interval(days => ${days}::int) WHERE "expiresAt" IS NULL`;
+    }
     const due = await this.prisma.trashEntry.findMany({ where: { expiresAt: { lt: now } }, select: { id: true, ownerId: true } });
     const ids = new Set(this.claim(due.map((e) => e.id)));
     let total = 0;
@@ -308,6 +363,7 @@ export class TrashService {
       this.release([...ids]);
     }
     if (total) this.log.log(`expired ${total} trash entr${total === 1 ? 'y' : 'ies'}`);
+    await this.sweepOrphans().catch((e) => this.log.error(`orphan sweep failed: ${(e as Error).message}`));
     return total;
   }
 
@@ -330,16 +386,47 @@ export class TrashService {
     for (const e of entries) await this.removeStore(e);
   }
 
-  /** Removes `/meta/trash/<id>` (only paths inside the trash root are ever touched). */
+  /**
+   * Removes `/meta/trash/<id>`. Refuses (logs and skips) unless `storePath` is exactly
+   * `/meta/trash/<entry.id>/<entry.name>`, so a corrupt row can never remove anything else.
+   */
   private async removeStore(entry: TrashEntry): Promise<void> {
-    const trashRoot = path.resolve(this.config.metaRoot, 'trash');
     const dir = this.trashDir(entry.id);
     const store = path.resolve(entry.storePath);
-    const target = path.dirname(store) === dir ? dir : store;
-    if (!target.startsWith(trashRoot + path.sep)) {
-      this.log.warn(`not removing trash content outside ${trashRoot}: ${target}`);
+    if (!UUID.test(entry.id) || store !== path.join(dir, entry.name) || path.dirname(store) !== dir) {
+      this.log.warn(`not removing trash content of ${entry.id}: unexpected store path ${entry.storePath}`);
       return;
     }
-    await rm(target, { recursive: true, force: true }).catch((e) => this.log.error(`cannot remove ${target}: ${String(e)}`));
+    await rm(dir, { recursive: true, force: true }).catch((e) => this.log.error(`cannot remove ${dir}: ${String(e)}`));
+  }
+
+  /**
+   * Removes `/meta/trash/<uuid>` directories without a TrashEntry (left by a crash between the
+   * row delete and the file removal). A row is always created before its directory, so a
+   * directory without a row is never one still being filled. Only UUID-named real directories
+   * directly below /meta/trash are touched.
+   */
+  async sweepOrphans(): Promise<number> {
+    const trashRoot = path.resolve(this.config.metaRoot, 'trash');
+    const names = (await readdir(trashRoot).catch(() => [] as string[])).filter((n) => UUID.test(n) && !this.busy.has(n));
+    let removed = 0;
+    for (let i = 0; i < names.length; i += ID_CHUNK) {
+      const chunk = names.slice(i, i + ID_CHUNK);
+      const known = new Set((await this.prisma.trashEntry.findMany({ where: { id: { in: chunk } }, select: { id: true } })).map((r) => r.id));
+      for (const n of chunk) {
+        if (known.has(n) || this.busy.has(n)) continue;
+        const abs = path.join(trashRoot, n);
+        const st = await lstat(abs).catch(() => null);
+        if (!st?.isDirectory()) continue;
+        try {
+          await rm(abs, { recursive: true, force: true });
+          removed++;
+        } catch (e) {
+          this.log.error(`cannot remove orphaned trash directory ${abs}: ${String(e)}`);
+        }
+      }
+    }
+    if (removed) this.log.warn(`removed ${removed} orphaned trash director${removed === 1 ? 'y' : 'ies'}`);
+    return removed;
   }
 }

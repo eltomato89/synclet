@@ -1,10 +1,12 @@
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { mkdir, readdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
+import { existsSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { createTestApp, createTestUser, TestContext } from '../../test/context';
 import type { IndexUser } from '../common/types';
 import { FilesService } from '../files/files.service';
+import { IndexerService } from '../indexer/indexer.service';
 import { moveNoReplace } from '../files/fs-ops';
 import { ItemStore } from '../journal/item-store';
 import { JournalService } from '../journal/journal.service';
@@ -290,6 +292,98 @@ describe('TrashService', () => {
       expect(await trash.expire(new Date(Date.now() + 31 * DAY))).toBe(1);
       expect(await ctx.prisma.trashEntry.count()).toBe(0);
     });
+    it('restores a folder with 5,000 files well within the transaction timeout, keeping ids', async () => {
+      const big = path.join(root, 'Big');
+      await mkdir(path.join(big, 'Sub'), { recursive: true });
+      for (let i = 0; i < 5000; i += 500) {
+        await Promise.all(Array.from({ length: 500 }, (_, j) => writeFile(path.join(big, (i + j) % 2 ? 'Sub' : '', `f${i + j}.txt`), `${i + j}`)));
+      }
+      await ctx.app.get(IndexerService).fullScan(user);
+      const folder = await ctx.prisma.item.findFirstOrThrow({ where: { path: 'Big' } });
+      const before = await liveIds();
+      expect(before).toHaveLength(5002);
+      await files.remove(user, folder.id);
+      const e = await trashOf(folder.id);
+      // Half the tombstones purged: those rows are recreated, the rest revived.
+      const purge = (await ctx.prisma.item.findMany({ where: { path: { startsWith: 'Big/Sub/' } }, select: { id: true } })).map((r) => r.id);
+      await ctx.prisma.item.deleteMany({ where: { id: { in: purge } } });
+      const t0 = Date.now();
+      const res = await trash.restore(user, e.id);
+      expect(Date.now() - t0).toBeLessThan(20_000);
+      expect(res.item.id).toBe(`d_${folder.id}`);
+      expect(await liveIds()).toEqual(before);
+      const changes = await ctx.prisma.fileChange.count({ where: { op: 'upsert', itemId: { in: before.map(([, id]) => id) } } });
+      expect(changes).toBeGreaterThanOrEqual(5002);
+      const f = await ctx.prisma.item.findFirstOrThrow({ where: { path: 'Big/f0.txt' } });
+      const disk = await ctx.prisma.item.findFirstOrThrow({ where: { path: 'Big/Sub/f1.txt' } });
+      expect(f.version).toBe(2); // revived
+      expect(disk.version).toBe(1); // recreated
+      // Revived via raw UPDATE: mtime/ino/size match the disk exactly.
+      const st = statSync(path.join(big, 'f0.txt'), { bigint: true });
+      expect(f.mtime.getTime()).toBe(Number(st.mtimeMs));
+      expect(f.ino).toBe(st.ino);
+      expect(f.size).toBe(1n);
+    }, 60_000);
+
+    it('removeStore never removes anything but /meta/trash/<id> of a well-formed entry', async () => {
+      const f1 = await files.upload(user, null, 'one.txt', body('1'), {});
+      const f2 = await files.upload(user, null, 'two.txt', body('2'), {});
+      await files.remove(user, f1.id);
+      await files.remove(user, f2.id);
+      const e1 = await trashOf(f1.id);
+      const e2 = await trashOf(f2.id);
+      // Corrupt row: e1 points at e2's directory.
+      await ctx.prisma.trashEntry.update({ where: { id: e1.id }, data: { storePath: path.join(ctx.config.metaRoot, 'trash', e2.id) } });
+      await trash.deleteForever(user, e1.id);
+      expect(existsSync(e2.storePath)).toBe(true);
+      expect(existsSync(path.join(ctx.config.metaRoot, 'trash', e1.id))).toBe(true); // left for the orphan sweep
+      // Corrupt row pointing outside /meta/trash.
+      await ctx.prisma.trashEntry.update({ where: { id: e2.id }, data: { storePath: path.join(root, 'victim.txt') } });
+      await writeFile(path.join(root, 'victim.txt'), 'user data');
+      await trash.deleteForever(user, e2.id);
+      expect(await readFile(path.join(root, 'victim.txt'), 'utf8')).toBe('user data');
+    });
+
+    it('expire() backfills a missing expiresAt from deletedAt + retention', async () => {
+      const f1 = await files.upload(user, null, 'old.txt', body('1'), {});
+      const f2 = await files.upload(user, null, 'new.txt', body('2'), {});
+      await files.remove(user, f1.id);
+      await files.remove(user, f2.id);
+      const old = await trashOf(f1.id);
+      const fresh = await trashOf(f2.id);
+      await ctx.prisma.trashEntry.update({ where: { id: old.id }, data: { expiresAt: null, deletedAt: new Date(Date.now() - 40 * DAY) } });
+      await ctx.prisma.trashEntry.update({ where: { id: fresh.id }, data: { expiresAt: null } });
+      expect(await trash.expire()).toBe(1);
+      expect(existsSync(path.join(ctx.config.metaRoot, 'trash', old.id))).toBe(false);
+      const kept = await ctx.prisma.trashEntry.findUniqueOrThrow({ where: { id: fresh.id } });
+      expect(kept.expiresAt!.getTime() - kept.deletedAt.getTime()).toBe(30 * DAY);
+    });
+
+    it('expire() sweeps orphaned UUID directories in /meta/trash and nothing else', async () => {
+      const f = await files.upload(user, null, 'kept.txt', body('k'), {});
+      await files.remove(user, f.id);
+      const e = await trashOf(f.id);
+      const trashRoot = path.join(ctx.config.metaRoot, 'trash');
+      const orphan = randomUUID();
+      await mkdir(path.join(trashRoot, orphan, 'x'), { recursive: true });
+      await writeFile(path.join(trashRoot, orphan, 'x', 'y.txt'), 'y');
+      await mkdir(path.join(trashRoot, 'not-a-uuid'));
+      await writeFile(path.join(trashRoot, randomUUID()), 'a file, not a directory');
+      const outside = path.join(root, 'Outside');
+      await mkdir(outside);
+      await writeFile(path.join(outside, 'precious.txt'), 'p');
+      const linked = randomUUID();
+      await symlink(outside, path.join(trashRoot, linked));
+      expect(await trash.expire()).toBe(0);
+      const left = (await readdir(trashRoot)).sort();
+      expect(left).not.toContain(orphan);
+      expect(left).toContain(e.id);
+      expect(left).toContain('not-a-uuid');
+      expect(left).toContain(linked);
+      expect(left).toHaveLength(4);
+      expect(await readFile(path.join(outside, 'precious.txt'), 'utf8')).toBe('p');
+      expect(existsSync(e.storePath)).toBe(true);
+    });
   });
 
   describe('with trashRetentionDays: 0', () => {
@@ -303,6 +397,7 @@ describe('TrashService', () => {
       expect((await trash.list(user))[0].expiresAt).toBeNull();
       expect(await trash.expire(new Date(Date.now() + 3650 * DAY))).toBe(0);
       expect(existsSync(e.storePath)).toBe(true);
+      expect((await ctx.prisma.trashEntry.findUniqueOrThrow({ where: { id: e.id } })).expiresAt).toBeNull(); // no backfill
     });
   });
 });
