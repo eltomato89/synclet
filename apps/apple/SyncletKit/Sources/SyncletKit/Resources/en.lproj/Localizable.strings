@@ -1,0 +1,23 @@
+/* Display name of the personal space in Finder. */
+"space.personal" = "My Files";
+
+"error.unauthorized" = "You are not signed in. Please sign in again.";
+"error.deviceRevoked" = "This device was signed out. Please sign in again.";
+"error.forbidden" = "You are not allowed to do this here.";
+"error.passwordLoginDisabled" = "Password login is disabled. Please sign in through the browser.";
+"error.notFound" = "The file or folder no longer exists.";
+"error.nameConflict" = "An item with this name already exists at the destination.";
+"error.setupDone" = "This server has already been set up.";
+"error.invalidMove" = "The item cannot be moved there.";
+"error.invalidName" = "The name is not allowed.";
+"error.invalidRequest" = "The server rejected the request.";
+"error.cursorExpired" = "Your files are being re-synchronized. Please wait a moment.";
+"error.conflict" = "The file was changed elsewhere in the meantime.";
+"error.preconditionRequired" = "The server requires the file version for this change.";
+"error.tooLarge" = "The file is too large for this server.";
+"error.rangeNotSatisfiable" = "The download could not be resumed.";
+"error.rateLimited" = "Too many attempts. Please try again in a moment.";
+"error.insufficientStorage" = "The server's storage is full.";
+"error.notModified" = "Unchanged.";
+"error.http" = "The server is not reachable right now (error %d). Please try again later.";
+"error.invalidResponse" = "Unexpected response from the server. Please try again later.";

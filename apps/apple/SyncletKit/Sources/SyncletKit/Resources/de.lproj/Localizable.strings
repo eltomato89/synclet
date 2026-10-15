@@ -1,0 +1,23 @@
+/* Anzeigename des persönlichen Bereichs im Finder. */
+"space.personal" = "Meine Dateien";
+
+"error.unauthorized" = "Du bist nicht angemeldet. Bitte melde dich erneut an.";
+"error.deviceRevoked" = "Dieses Gerät wurde abgemeldet. Bitte melde dich erneut an.";
+"error.forbidden" = "Diese Aktion ist hier nicht erlaubt.";
+"error.passwordLoginDisabled" = "Die Anmeldung mit Passwort ist deaktiviert. Bitte melde dich über den Browser an.";
+"error.notFound" = "Die Datei bzw. der Ordner existiert nicht mehr.";
+"error.nameConflict" = "Am Zielort gibt es bereits ein Element mit diesem Namen.";
+"error.setupDone" = "Dieser Server ist bereits eingerichtet.";
+"error.invalidMove" = "Das Element kann nicht dorthin verschoben werden.";
+"error.invalidName" = "Dieser Name ist nicht erlaubt.";
+"error.invalidRequest" = "Der Server hat die Anfrage abgelehnt.";
+"error.cursorExpired" = "Deine Dateien werden neu abgeglichen. Bitte einen Moment Geduld.";
+"error.conflict" = "Die Datei wurde inzwischen an anderer Stelle geändert.";
+"error.preconditionRequired" = "Der Server benötigt für diese Änderung die Dateiversion.";
+"error.tooLarge" = "Die Datei ist für diesen Server zu groß.";
+"error.rangeNotSatisfiable" = "Der Download konnte nicht fortgesetzt werden.";
+"error.rateLimited" = "Zu viele Versuche. Bitte versuche es gleich noch einmal.";
+"error.insufficientStorage" = "Der Speicher des Servers ist voll.";
+"error.notModified" = "Unverändert.";
+"error.http" = "Der Server ist gerade nicht erreichbar (Fehler %d). Bitte versuche es später erneut.";
+"error.invalidResponse" = "Unerwartete Antwort vom Server. Bitte versuche es später erneut.";
