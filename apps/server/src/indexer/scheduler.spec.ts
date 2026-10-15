@@ -68,6 +68,30 @@ describe('SchedulerService', () => {
     await watcher.flush();
     expect(await ctx.prisma.item.count()).toBe(1);
   });
+  it('scans a new user right away so an existing folder is adopted without waiting for the periodic scan', async () => {
+    await mkdir(path.join(ctx.config.dataRoot, 'jens', 'Bestand'), { recursive: true });
+    await writeFile(path.join(ctx.config.dataRoot, 'jens', 'Bestand', 'alt.txt'), 'alt');
+    const s = ctx.app.get(SchedulerService);
+    const scanUser = jest.spyOn(s, 'scanUser');
+    ctx.config.background = true;
+    try {
+      const res = await ctx.app.inject({ method: 'POST', url: '/api/setup', payload: { username: 'jens', displayName: 'Jens', password: 'correct horse battery' } });
+      expect(res.statusCode).toBe(201);
+      expect(scanUser).toHaveBeenCalledTimes(1);
+      await scanUser.mock.results[0].value;
+    } finally {
+      ctx.config.background = false;
+    }
+    expect((await ctx.prisma.item.findMany({ orderBy: { path: 'asc' } })).map((i) => i.path)).toEqual(['Bestand', 'Bestand/alt.txt']);
+  });
+
+  it('does not scan new users when background jobs are off', async () => {
+    const scanUser = jest.spyOn(ctx.app.get(SchedulerService), 'scanUser');
+    const res = await ctx.app.inject({ method: 'POST', url: '/api/setup', payload: { username: 'jens', displayName: 'Jens', password: 'correct horse battery' } });
+    expect(res.statusCode).toBe(201);
+    expect(scanUser).not.toHaveBeenCalled();
+  });
+
   it('bootstrap finishes trash recovery before the first scan (no delete journaled for an uncommitted delete)', async () => {
     const user = await createTestUser(ctx);
     const root = path.join(ctx.config.dataRoot, user.username);

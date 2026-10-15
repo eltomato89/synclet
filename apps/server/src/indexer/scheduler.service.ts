@@ -2,8 +2,10 @@ import { Inject, Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } f
 import { lstat, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { APP_CONFIG, AppConfig } from '../config';
+import { AppEvents } from '../common/events';
 import { isTempName } from '../common/names';
 import { userRoot } from '../common/paths';
+import type { IndexUser } from '../common/types';
 import { FilesService } from '../files/files.service';
 import { ItemStore } from '../journal/item-store';
 import { JournalService } from '../journal/journal.service';
@@ -27,8 +29,13 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     private readonly store: ItemStore,
     private readonly watcher: WatcherService,
     private readonly files: FilesService,
+    events: AppEvents,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
-  ) {}
+  ) {
+    // A new user may adopt an existing folder: index it now instead of at the next periodic scan
+    // (the watcher only reports changes, so untouched content would stay invisible until then).
+    events.on('user.created', (u) => { if (this.config.background) void this.scanUser(u); });
+  }
 
   async onApplicationBootstrap() {
     if (!this.config.background) return;
@@ -92,6 +99,11 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     } finally {
       this.scanning = false;
     }
+  }
+
+  async scanUser(u: IndexUser): Promise<void> {
+    const stats = await this.indexer.fullScan(u).catch((e) => { this.log.error(`scan ${u.username}: ${(e as Error).message}`); return null; });
+    if (stats && (stats.created || stats.updated || stats.moved || stats.deleted)) this.log.log(`scan ${u.username}: ${JSON.stringify(stats)}`);
   }
 
   async maintenance(): Promise<void> {
