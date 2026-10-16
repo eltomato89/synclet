@@ -356,10 +356,14 @@ contain them (a case-sensitive file system with `a.txt` and `A.txt`, or NFC and 
 
 Capabilities follow the user's role in the item's space (§3):
 
-- **write:** `root` → `write: true, addChildren: true, rename/move/delete: false`; `r_…` →
-  `addChildren: true`, everything else `false` except `read`; folders → all `true`; files → all
-  `true` except `addChildren: false`.
-- **read:** everything `false` except `read` (roots, folders and files alike).
+- **Space roots:** `root` (the personal space, always writable) → `write: true, addChildren: true,
+  rename/move/delete: false` – `write: true` on `root` is historical (Phase 1) and kept for
+  compatibility. `r_…` (team folders, external storages) → `write: false` and `rename/move/delete:
+  false` regardless of the role; only `addChildren` follows the role (`true` with write, `false`
+  with read). Clients decide whether they may create items in a space root by `addChildren`, never
+  by `write`.
+- **Folders and files, write:** folders → all `true`; files → all `true` except `addChildren: false`.
+- **Folders and files, read:** everything `false` except `read`.
 
 Clients **must** honor the flags: a write the flags do not allow answers `403 forbidden`.
 
@@ -681,26 +685,31 @@ covered by this contract). Authentication: `Authorization: Bearer`
 ### 8.3 Delete
 
 `DELETE /sync/v1/items/:id` → `204`. Files and folders (with their subtree) move to the **trash of
-their space**; `/changes` reports a `delete` for each of them. `root` → `403 forbidden`; unknown or
-already deleted → `404`; read access only → `403`. Deletions made directly on the server's disk do
+their space**; `/changes` reports a `delete` for each of them. Space roots (`root`, `r_…`) →
+`403 forbidden`; unknown or already deleted → `404`; read access only → `403`; space missing → `503`. Deletions made directly on the server's disk do
 not go to the trash.
 
 ### 8.4 Trash (`/api/trash`)
 
 Not needed for syncing; offered for clients with a trash UI. Same tokens as the Sync API.
 
-- `GET /api/trash` → `TrashEntry[]` of every space the user can **write**, most recently deleted
-  first: `{ id (uuid), itemId (sync id of the deleted item), type, name, originalPath, size,
+- `GET /api/trash` → `TrashEntry[]` of every available space the user can **write** (spaces with
+  read access only and missing spaces are left out), most recently deleted first: `{ id (uuid), itemId (sync id of the deleted item), type, name, originalPath, size,
   deletedAt, expiresAt | null, itemCount, spaceId?, deletedBy? }`. `originalPath` is relative to
   the root of the entry's space `spaceId` (API id; absent = personal); `deletedBy` is the user id of
   whoever deleted it (`null` when unknown, e.g. deleted on the server's disk). Entries expire after
   `SYNCLET_TRASH_RETENTION_DAYS` (default 30).
 - `POST /api/trash/:id/restore` → `200 { item: SyncItem, restoredTo: string, renamed: boolean }` –
   back to the original folder of its space (or the space root if it is gone), under a free name if
-  the original is taken, with the original ids. Needs write access to the space.
-- `DELETE /api/trash/:id` → `204` (delete forever, including versions; needs write access).
-  `DELETE /api/trash?space=<id>` → `200 { removed: number }` empties the trash of one space
-  (default `personal`; any other space needs write access).
+  the original is taken, with the original ids. Needs write access to the entry's space.
+- `DELETE /api/trash/:id` → `204` (delete forever, including versions; needs write access to the
+  entry's space).
+- Restore and delete forever: unknown entry, or an entry in a space without access → `404`; read
+  access only → `403 forbidden`; space missing → `503 space_unavailable`.
+- `DELETE /api/trash` → `200 { removed: number }` empties the trash of the **personal space only**;
+  `DELETE /api/trash?space=<id>` (`personal` or a space uuid) empties that space's trash instead.
+  Needs write access (read only → `403`, no access → `404`, missing → `503`). There is no "empty
+  every space" call.
 - `409 conflict` while an entry is being processed (e.g. right after the delete, while its content
   is still being moved into the trash store): retry after a moment.
 
@@ -737,7 +746,9 @@ highlight.js language for `kind = "code"`.
 
 ## 10. Versions (Phase 1c, optional)
 
-Versions exist in every space; listing and downloading need read access, restoring needs write.
+Versions exist in every space; listing and downloading need read access, restoring needs write
+(read access only → `403 forbidden`; no access to the item's space → `404`; space missing → `503`).
+A download token (`?dt=`) is only valid for the space the item was in when it was minted.
 
 Only when `GET /capabilities` reports `versions: true` (server setting `SYNCLET_VERSIONS=on`, off by
 default). When off, every route below answers `404 { code: "not_found", message: "versions disabled" }`
@@ -773,12 +784,16 @@ a folder id is `400 invalid_request` whether versions are on or off.
 - `GET /sync/v1/search?q=<1..200 chars>&limit=<1..50, default 20>&offset=<0..10000>&folder=<folder id>&space=<id>`
   → `{ hits: { item: SyncItem, path: string, snippet: string | null, matched: "name"|"content"|"both" }[], total: number }`.
   Names (case- and accent-insensitive, typo-tolerant) and extracted text (full text) of the live
-  items of every space the user can read. `item.spaceId` names the hit's space; `path` is the
+  items of every **available** space the user can read (missing spaces are skipped, not an error).
+  `item.spaceId` names the hit's space and `item.capabilities` follow the role there; `path` is the
   parent folder path relative to that space's root (`""` = top level). `snippet` highlights
-  matches with `«…»`. `folder` restricts to a subtree, `space` to one space (no access → `404`).
-  Empty `q` → `400`.
+  matches with `«…»`. Empty `q` → `400`.
+  - `space=<id>` (`personal` or a space uuid) restricts to one space: no access → `404`, missing → `503`.
+  - `folder=<id>` restricts to a subtree; a space root (`root`, `r_<uuid>`) means that whole space.
+    The folder must be readable (`404` otherwise); a file id → `400`. With both `folder` and `space`,
+    the folder must lie in that space (`400 invalid_request` otherwise).
 - `GET /sync/v1/recent?limit=<1..200, default 50>&space=<id>` → `SyncItem[]`: live files of every
-  readable space (or of `space`), newest `modifiedAt` first.
+  readable, available space (or of `space`, same rules as for search), newest `modifiedAt` first.
 
 ---
 
@@ -798,8 +813,12 @@ route and not part of this contract. Item ids are Sync ids (`d_<uuid>` / `f_<uui
 ```
 
 - `spaceId` is the API id of the shared item's space (absent from older servers = personal).
-  Creating a link needs write access to the space. A link only works while its creator is enabled
-  and still has write access there; otherwise it answers `404` publicly like a revoked link.
+  Links can be created in any space the user can **write** (read access only → `403 forbidden`).
+- A link is only valid while its creator is enabled, the space is available and the creator still
+  has **write** access there; otherwise it answers `404` publicly like a revoked link. Regaining
+  write access re-activates it (unless it was revoked or expired meanwhile).
+- The list (`GET /shares`) holds only the caller's own links – other writers of the same space do
+  not see them – including links that are currently inactive because write access was lost.
 
 - `url` is relative (`/s/<token>`, resolve it against the server origin) unless the server has
   `SYNCLET_PUBLIC_URL` set, in which case it is absolute. It is always present for the owner and
@@ -814,22 +833,28 @@ Routes:
   (default true), allowUpload?: boolean (default false) }` → `201 ShareLink`. `password` is 1..1024
   characters; `expiresAt` is ISO 8601 with offset and must be in the future. Unknown fields,
   `allowUpload` on a file, an invalid `itemId` or a past `expiresAt` → `400 invalid_request`;
-  unknown or trashed item → `404 not_found`.
+  unknown or trashed item, or an item in a space without access → `404 not_found`; read access
+  only → `403 forbidden`; space missing → `503 space_unavailable`.
 - `GET /shares?itemId=<id>` → `ShareLink[]`, newest first: the user's links that are not revoked
   (`revokedAt` is therefore always `null`), including links of trashed items. `itemId` filters.
 - `PATCH /shares/:id` `{ password?, expiresAt?, allowDownload?, allowUpload? }` (same rules; omitted
   = unchanged, `null` removes password / expiry) → `200 ShareLink`. Unknown, foreign or revoked id,
   or a trashed item → `404 not_found`.
 - `POST /shares/:id/rotate` → `200 ShareLink` with a new `url`; the old link stops working at once.
-- `DELETE /shares/:id` → `204`, idempotent. The link is revoked: it disappears from the list and
-  from then on `PATCH`/rotate answer `404`. Unknown or foreign id → `404 not_found`.
+- `PATCH` and rotate need write access to the link's space now (read only → `403`, no access →
+  `404`, missing → `503`).
+- `DELETE /shares/:id` → `204`, idempotent, and always possible for the creator (also after losing
+  access to the space). The link is revoked: it disappears from the list and from then on
+  `PATCH`/rotate answer `404`. Unknown or foreign id → `404 not_found`.
 
 ---
 
 ## 12. Not part of this contract (yet)
 
 - APNs pushes – Phase 3 (`PUT /devices/current/push` is already accepted).
-- Office editing (`GET /sync/v1/items/:id/office`, `POST /sync/v1/items/new-office`), public share
+- Office editing (`GET /sync/v1/items/:id/office`, `POST /sync/v1/items/new-office`; works in every
+  space: write access opens an editing session, read access a view-only session whose saves are
+  rejected; creating a document needs write in the target folder's space), public share
   routes (`/api/public/shares`; the owner side is §11a), admin routes (`/api/admin/*`) and SSO (`/api/auth/oidc/*`,
   `/api/auth/forward`) are web-app routes and may change without notice to native clients.
 - Pinning ("always keep offline") is purely client-side.

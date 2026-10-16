@@ -950,6 +950,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/TrashBusy' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
   /trash/{trashId}/restore:
     parameters:
       - { name: trashId, in: path, required: true, schema: { type: string, format: uuid } }
@@ -1032,7 +1033,9 @@ paths:
               schema: { $ref: '#/components/schemas/ShareLink' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
     delete:
       tags: [shares]
       operationId: revokeShare
@@ -1055,7 +1058,9 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ShareLink' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
 
 components:
   securitySchemes:
@@ -1230,6 +1235,7 @@ components:
 
     Capabilities:
       type: object
+      description: 'Follow the role in the item''s space (SYNC_API §4.5). Space roots `r_…` have `write: false` with `addChildren` following the role; the personal `root` has `write: true` (historical) and `addChildren: true`.'
       required: [read, write, rename, move, delete, addChildren]
       properties:
         read: { type: boolean, const: true }
