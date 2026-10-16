@@ -1,5 +1,6 @@
 import type { RestoreResult, TrashEntryWire } from '@synclet/shared';
 import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { PERSONAL } from '@/features/spaces/useSpaces';
 import { api } from '@/lib/api';
 
 export const TRASH_KEY = ['trash'] as const;
@@ -23,7 +24,8 @@ export function useTrashMutations() {
   const qc = useQueryClient();
   const drop = (ids: string[] | 'all') => qc.setQueryData<TrashEntryWire[]>(
     TRASH_KEY,
-    (list) => (ids === 'all' ? [] : list?.filter((e) => !ids.includes(e.id))),
+    // Emptying removes only the personal space's entries; other spaces' entries stay listed.
+    (list) => list?.filter((e) => (ids === 'all' ? (e.spaceId ?? PERSONAL) !== PERSONAL : !ids.includes(e.id))),
   );
   const settled = () => invalidateAfterTrashChange(qc);
   return {

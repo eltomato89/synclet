@@ -6,7 +6,8 @@ export type SyncErrorCode =
   | 'invalid_move' | 'invalid_name' | 'invalid_request' | 'cursor_expired' | 'conflict'
   | 'precondition_required' | 'too_large' | 'range_not_satisfiable' | 'setup_done'
   | 'share_password_required' | 'share_expired' | 'rate_limited' | 'upload_not_allowed'
-  | 'office_disabled' | 'sso_not_allowed' | 'password_login_disabled' | 'insufficient_storage';
+  | 'office_disabled' | 'sso_not_allowed' | 'password_login_disabled' | 'insufficient_storage'
+  | 'space_unavailable';
 
 export interface SyncCapabilities {
   read: true; write: boolean; rename: boolean; move: boolean; delete: boolean; addChildren: boolean;
@@ -30,11 +31,17 @@ export interface SyncItem {
   capabilities: SyncCapabilities;
   /** Preview state derived from DerivativeJob; absent = unknown. */
   preview?: PreviewInfo;
+  /** API id of the item's space (`personal` or the space uuid); absent from older servers = personal. */
+  spaceId?: string;
 }
 
 export type SyncSpaceKind = 'personal' | 'shared' | 'external';
 /** A top-level space of the account; each has its own root folder. Clients store sync state per space. */
-export interface SyncSpace { id: string; kind: SyncSpaceKind; name: string; rootId: string; canWrite: boolean }
+export interface SyncSpace {
+  id: string; kind: SyncSpaceKind; name: string; rootId: string; canWrite: boolean;
+  /** `missing`: the storage is unreachable (content answers 503); absent from older servers = available. */
+  status?: 'available' | 'missing';
+}
 
 export interface SyncAccount {
   userId: string; email: string | null; displayName: string;
@@ -71,6 +78,10 @@ export interface TrashEntryWire {
   id: string; itemId: string; type: 'folder' | 'file'; name: string;
   originalPath: string; size: number; deletedAt: string; expiresAt: string | null;
   itemCount: number;
+  /** API id of the entry's space; absent from older servers = personal. */
+  spaceId?: string;
+  /** User id of whoever deleted it (null when unknown, e.g. deleted on disk). */
+  deletedBy?: string | null;
 }
 export interface RestoreResult { item: SyncItem; restoredTo: string; renamed: boolean }
 

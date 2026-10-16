@@ -1,5 +1,5 @@
 import type { SyncItem } from '@synclet/shared';
-import { Download, Eye, FilePen, FolderInput, FolderOpen, FolderPlus, FolderUp, History, MoreHorizontal, PencilLine, Share2, Trash2, Upload } from 'lucide-react';
+import { Download, Eye, FilePen, FolderInput, FolderOpen, FolderPlus, FolderUp, History, Lock, MoreHorizontal, PencilLine, Share2, Trash2, Upload } from 'lucide-react';
 import type { ComponentType, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
@@ -36,6 +36,11 @@ export function canOpenInOffice(item: Pick<SyncItem, 'type' | 'name'>, actions: 
   return !!actions.openInOffice && item.type === 'file' && isOfficeFile(item.name);
 }
 
+/** Share links need write access to the item's space; a space root can't be shared. */
+export function canShare(item: Pick<SyncItem, 'kind' | 'capabilities'>): boolean {
+  return item.kind !== 'root' && item.capabilities.write !== false;
+}
+
 interface MenuParts {
   Item: ComponentType<{ onSelect?: () => void; variant?: 'default' | 'destructive'; disabled?: boolean; children: ReactNode }>;
   Separator: ComponentType;
@@ -56,7 +61,7 @@ function ItemMenuItems({ item, actions, parts: { Item, Separator, Shortcut } }: 
       </Item>
       {canOpenInOffice(item, actions) && (
         <Item onSelect={() => actions.openInOffice?.(item)}>
-          <FilePen />{t('office.open')}
+          <FilePen />{item.capabilities.write === false ? t('office.view') : t('office.open')}
         </Item>
       )}
       {actions.preview && item.type === 'file' && (
@@ -69,20 +74,29 @@ function ItemMenuItems({ item, actions, parts: { Item, Separator, Shortcut } }: 
           <History />{t('files.versions')}
         </Item>
       )}
-      <Item onSelect={() => actions.share(item)} disabled={item.kind === 'root'}>
-        <Share2 />{t('shares.action')}
-      </Item>
-      <Separator />
-      <Item onSelect={() => actions.rename(item)} disabled={!caps.rename}>
-        <PencilLine />{t('common.rename')}<Shortcut>F2</Shortcut>
-      </Item>
-      <Item onSelect={() => actions.move(item)} disabled={!caps.move}>
-        <FolderInput />{t('common.move')}
-      </Item>
-      <Separator />
-      <Item variant="destructive" onSelect={() => actions.remove(item)} disabled={!caps.delete}>
-        <Trash2 />{t('common.delete')}<Shortcut>{t('files.shortcutDelete')}</Shortcut>
-      </Item>
+      {canShare(item) && (
+        <Item onSelect={() => actions.share(item)}>
+          <Share2 />{t('shares.action')}
+        </Item>
+      )}
+      {/* Write actions are hidden, not disabled, where the item's space is read-only for the user. */}
+      {(caps.rename || caps.move) && <Separator />}
+      {caps.rename && (
+        <Item onSelect={() => actions.rename(item)}>
+          <PencilLine />{t('common.rename')}<Shortcut>F2</Shortcut>
+        </Item>
+      )}
+      {caps.move && (
+        <Item onSelect={() => actions.move(item)}>
+          <FolderInput />{t('common.move')}
+        </Item>
+      )}
+      {caps.delete && <Separator />}
+      {caps.delete && (
+        <Item variant="destructive" onSelect={() => actions.remove(item)}>
+          <Trash2 />{t('common.delete')}<Shortcut>{t('files.shortcutDelete')}</Shortcut>
+        </Item>
+      )}
     </>
   );
 }
@@ -125,11 +139,15 @@ export function BrowserContextMenu({ item, actions, onNewFolder, onUpload, onUpl
       {item ? (
         <ItemMenuItems item={item} actions={actions} parts={CONTEXT} />
       ) : (
-        <>
-          <ContextMenuItem onSelect={onNewFolder} disabled={!canAdd}><FolderPlus />{t('files.newFolderDialog.title')}</ContextMenuItem>
-          <ContextMenuItem onSelect={onUpload} disabled={!canAdd}><Upload />{t('files.uploadFiles')}</ContextMenuItem>
-          <ContextMenuItem onSelect={onUploadFolder} disabled={!canAdd}><FolderUp />{t('files.uploadFolder')}</ContextMenuItem>
-        </>
+        canAdd ? (
+          <>
+            <ContextMenuItem onSelect={onNewFolder}><FolderPlus />{t('files.newFolderDialog.title')}</ContextMenuItem>
+            <ContextMenuItem onSelect={onUpload}><Upload />{t('files.uploadFiles')}</ContextMenuItem>
+            <ContextMenuItem onSelect={onUploadFolder}><FolderUp />{t('files.uploadFolder')}</ContextMenuItem>
+          </>
+        ) : (
+          <ContextMenuItem disabled><Lock />{t('spaces.readOnlyMenu')}</ContextMenuItem>
+        )
       )}
     </ContextMenuContent>
   );

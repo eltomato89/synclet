@@ -58,6 +58,15 @@ describe('trash queries', () => {
     expect(qc.getQueryData<{ id: string }[]>(['trash'])?.map((e) => e.id)).toEqual(path === '/trash' ? [] : ['t2']);
   });
 
+  it('emptying drops only the personal entries from the list (other spaces are not emptied)', async () => {
+    vi.spyOn(apiMod, 'api').mockResolvedValue({ removed: 1 });
+    const { qc, wrapper } = testQueryClient();
+    qc.setQueryData(['trash'], [{ id: 't1' }, { id: 't2', spaceId: 'personal' }, { id: 't3', spaceId: 'team-uuid' }]);
+    const { result } = renderHook(() => useTrashMutations(), { wrapper });
+    await act(async () => { await result.current.empty.mutateAsync(); });
+    expect(qc.getQueryData<{ id: string }[]>(['trash'])?.map((e) => e.id)).toEqual(['t3']);
+  });
+
   it('keeps the entry and still refetches when a restore fails with 409 conflict', async () => {
     vi.spyOn(apiMod, 'api').mockRejectedValue(new apiMod.ApiError(409, 'conflict', 'trash content not available'));
     const { qc, wrapper, invalidated } = testQueryClient();

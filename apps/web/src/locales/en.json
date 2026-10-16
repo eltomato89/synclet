@@ -61,6 +61,16 @@
     "skipToContent": "Skip to content",
     "administration": "Administration"
   },
+  "spaces": {
+    "section": "Spaces",
+    "readOnly": "Read only",
+    "readOnlyBody": "You can view and download files in this space, but not change anything.",
+    "unavailable": "Not available",
+    "unavailableTitle": "This space is not available",
+    "unavailableBody": "Its storage cannot be reached right now. Try again later or contact your administrator.",
+    "space": "Space",
+    "readOnlyMenu": "Read only – you can’t add anything here"
+  },
   "files": {
     "newMenu": "New",
     "newFolder": "Folder",
@@ -89,7 +99,8 @@
     "empty": {
       "title": "This folder is empty",
       "rootTitle": "No files yet",
-      "body": "Drag files here or upload them. Everything you add is stored as a regular file on your server."
+      "body": "Drag files here or upload them. Everything you add is stored as a regular file on your server.",
+      "readOnlyBody": "Nothing here yet. You can only read in this space."
     },
     "loadError": {
       "title": "This folder couldn't be loaded",
@@ -171,7 +182,8 @@
       "network": "No connection to the server.",
       "server_error": "The server sent an unexpected response.",
       "unknown": "That didn't work. Try again.",
-      "upload_expired": "The interrupted upload has expired. Upload the file again."
+      "upload_expired": "The interrupted upload has expired. Upload the file again.",
+      "space_unavailable": "This space is not available right now."
     },
     "uploads": {
       "region": "Uploads",
@@ -542,6 +554,7 @@
   },
   "office": {
     "open": "Open in Office",
+    "view": "View in Office",
     "new": {
       "more": "More …",
       "label": "Name",
