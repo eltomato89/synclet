@@ -29,17 +29,20 @@ class SearchViewModel(
 
     fun onQueryChange(q: String) { mutable.update { it.copy(query = q) }; search(reset = true) }
     fun setScopeToFolder(on: Boolean) { mutable.update { it.copy(scopeToFolder = on) }; search(reset = true) }
-    fun loadMore() { val s = mutable.value; if (!s.loading && s.hits.size < s.total) search(reset = false) }
+    fun loadMore() { val s = mutable.value; if (!s.loading && s.error == null && s.hits.size < s.total) search(reset = false) }
+    /** Retry after a failed load-more (the first page uses [retry]). */
+    fun retryMore() { val s = mutable.value; if (!s.loading && s.hits.isNotEmpty()) search(reset = false) }
     fun retry() = search(reset = true)
 
     private fun search(reset: Boolean) {
         job?.cancel()
-        val s = mutable.value
-        val q = s.query.trim().take(200)
+        val q = mutable.value.query.trim().take(200)
         if (q.isEmpty()) { mutable.update { State(scopeToFolder = it.scopeToFolder) }; return }
+        // Loading before the debounce, so "No results" never flashes between keystrokes.
+        mutable.update { it.copy(loading = true, error = null) }
+        val s = mutable.value
         job = viewModelScope.launch {
             if (reset) delay(debounceMs)
-            mutable.update { it.copy(loading = true, error = null) }
             try {
                 val offset = if (reset) 0 else s.hits.size
                 val page = session.api.search(q, pageSize, offset, folder = folderId.takeIf { s.scopeToFolder })

@@ -3,6 +3,7 @@ package tech.jensk.synclet.ui.trash
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,8 +36,13 @@ class TrashViewModel(
 
     init { load() }
 
+    private var loadJob: Job? = null
+    private val inFlight = mutableSetOf<String>()
+
+    /** No-op while a load runs (first composition and resume both call it). */
     fun load() {
-        viewModelScope.launch { reload() }
+        if (loadJob?.isActive == true) return
+        loadJob = viewModelScope.launch { reload() }
     }
 
     private suspend fun reload() {
@@ -65,6 +71,7 @@ class TrashViewModel(
     }
 
     fun restore(entry: TrashEntry) {
+        if (!inFlight.add(entry.id)) return
         viewModelScope.launch {
             try {
                 val result = session.api.restoreTrash(entry.id)
@@ -78,11 +85,14 @@ class TrashViewModel(
                 throw e
             } catch (e: Exception) {
                 mutable.update { it.copy(message = UiMessage.Error(e)) }
+            } finally {
+                inFlight.remove(entry.id)
             }
         }
     }
 
     fun deleteForever(entry: TrashEntry) {
+        if (!inFlight.add(entry.id)) return
         viewModelScope.launch {
             try {
                 session.api.deleteTrash(entry.id)
@@ -91,6 +101,8 @@ class TrashViewModel(
                 throw e
             } catch (e: Exception) {
                 mutable.update { it.copy(message = UiMessage.Error(e)) }
+            } finally {
+                inFlight.remove(entry.id)
             }
         }
     }

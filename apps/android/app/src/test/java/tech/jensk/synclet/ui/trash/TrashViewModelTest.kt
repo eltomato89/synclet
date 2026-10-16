@@ -114,4 +114,13 @@ class TrashViewModelTest {
         assertEquals("DELETE", req.method); assertEquals("/api/trash/t1", req.path)
         assertTrue(vm.state.value.entries.isEmpty())
     }
+
+    @Test fun doubleTapRestoresOnce() {
+        server.json("[${entry("t1", "a.txt", null)}]")
+        server.json("""{"item":${itemJson(fileItem(F1, "a.txt"))},"restoredTo":"Docs/a.txt","renamed":false}""")
+        val vm = vm(); val e = vm.settle().entries.single()
+        vm.restore(e); vm.restore(e)
+        vm.await { it.entries.isEmpty() }
+        assertEquals(2, server.requestCount)
+    }
 }

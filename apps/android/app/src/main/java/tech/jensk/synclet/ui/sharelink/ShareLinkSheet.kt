@@ -1,5 +1,6 @@
 package tech.jensk.synclet.ui.sharelink
 
+import android.content.Context
 import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -24,6 +25,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,7 +54,9 @@ import tech.jensk.synclet.ui.components.syncErrorMessage
 @Composable
 fun ShareLinkSheet(graph: AppGraph, accountKey: String, item: SyncItem, onDismiss: () -> Unit) {
     val session = graph.session(accountKey) ?: return
-    val vm: ShareLinkViewModel = viewModel(key = "share/${item.id}", factory = viewModelFactory {
+    // A new key per opening of the sheet (kept across rotation): reopening starts from the server state.
+    val opening = rememberSaveable { java.util.UUID.randomUUID().toString() }
+    val vm: ShareLinkViewModel = viewModel(key = "share/${item.id}/$opening", factory = viewModelFactory {
         initializer { ShareLinkViewModel(session.api, session.api.origin, item) }
     })
     val state by vm.state.collectAsStateWithLifecycle()
@@ -62,10 +66,8 @@ fun ShareLinkSheet(graph: AppGraph, accountKey: String, item: SyncItem, onDismis
 
     LaunchedEffect(state.shareEvent) {
         val url = state.url
-        if (state.shareEvent > 0 && url != null) {
-            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, url)
-            context.startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        }
+        if (state.shareEvent > 0 && url != null) shareUrl(context, url)
+        if (state.shareEvent > 0) vm.shareConsumed()
     }
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -101,7 +103,7 @@ fun ShareLinkSheet(graph: AppGraph, accountKey: String, item: SyncItem, onDismis
             state.error?.let { Text(context.syncErrorMessage(it), color = MaterialTheme.colorScheme.error) }
 
             Button(
-                onClick = { vm.save() }, enabled = !state.busy && !state.loading,
+                onClick = { vm.save() }, enabled = !state.busy && state.loaded,
                 modifier = Modifier.fillMaxWidth().testTag(TestTags.SHARE_CREATE),
             ) {
                 Text(stringResource(if (state.active == null) R.string.share_create else R.string.share_save))
@@ -109,12 +111,7 @@ fun ShareLinkSheet(graph: AppGraph, accountKey: String, item: SyncItem, onDismis
             if (state.active != null) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
-                        onClick = {
-                            state.url?.let { url ->
-                                val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, url)
-                                context.startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                            }
-                        },
+                        onClick = { state.url?.let { shareUrl(context, it) } },
                         modifier = Modifier.weight(1f),
                     ) { Text(stringResource(R.string.share_send)) }
                     OutlinedButton(onClick = { vm.revoke() }, enabled = !state.busy, modifier = Modifier.weight(1f)) {
@@ -143,6 +140,11 @@ fun ShareLinkSheet(graph: AppGraph, accountKey: String, item: SyncItem, onDismis
             dismissButton = { TextButton(onClick = { pickDate = false }) { Text(stringResource(R.string.action_cancel)) } },
         ) { DatePicker(pickerState) }
     }
+}
+
+private fun shareUrl(context: Context, url: String) {
+    val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, url)
+    context.startActivity(Intent.createChooser(send, null).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
 }
 
 @Composable

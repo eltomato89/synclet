@@ -122,4 +122,24 @@ class ShareLinkViewModelTest {
         assertNotNull(vm.state.value.error)
         assertEquals(0, vm.state.value.shareEvent)
     }
+
+    @Test fun shareEventCanBeConsumed() {
+        server.json("[]"); server.json(link("n"))
+        val vm = vm(); vm.settle()
+        vm.save(); vm.settleAfterSave()
+        vm.shareConsumed()
+        assertEquals(0, vm.state.value.shareEvent)
+    }
+
+    @Test fun saveIsRefusedWhileTheInitialLoadFailed() {
+        server.error(500, null)
+        val vm = vm()
+        runBlocking { withTimeout(5_000) { vm.state.first { it.error != null } } }
+        vm.save()
+        assertEquals(1, server.requestCount)
+        server.json("[]")
+        vm.reload()
+        runBlocking { withTimeout(5_000) { vm.state.first { it.loaded } } }
+        assertNull(vm.state.value.error)
+    }
 }

@@ -17,6 +17,7 @@ import tech.jensk.synclet.testing.D1
 import tech.jensk.synclet.testing.F1
 import tech.jensk.synclet.testing.MainDispatcherRule
 import tech.jensk.synclet.testing.api
+import tech.jensk.synclet.testing.error
 import tech.jensk.synclet.testing.fileItem
 import tech.jensk.synclet.testing.itemJson
 import tech.jensk.synclet.testing.json
@@ -89,5 +90,45 @@ class SearchViewModelTest {
         vm.onQueryChange("rep")
         val s = runBlocking { withTimeout(5_000) { vm.state.first { it.error != null } } }
         assertTrue(s.error is SyncError.Transport)
+    }
+
+    @Test fun failedLoadMoreDoesNotRetryByItself() {
+        server.json(hits(50, 120)); server.error(500, null)
+        val vm = vm()
+        vm.onQueryChange("rep"); vm.settle()
+        vm.loadMore()
+        runBlocking { withTimeout(5_000) { vm.state.first { it.error != null } } }
+        assertEquals(50, vm.state.value.hits.size)
+        vm.loadMore(); vm.loadMore()
+        assertEquals(2, server.requestCount)
+        server.json(hits(50, 120, offset = 50))
+        vm.retryMore()
+        runBlocking { withTimeout(5_000) { vm.state.first { it.hits.size == 100 } } }
+        assertEquals(null, vm.state.value.error)
+    }
+
+    @Test fun staleResultIsDiscarded() {
+        server.dispatcher = object : okhttp3.mockwebserver.Dispatcher() {
+            override fun dispatch(request: okhttp3.mockwebserver.RecordedRequest): okhttp3.mockwebserver.MockResponse {
+                val a = request.requestUrl!!.queryParameter("q") == "a"
+                val r = okhttp3.mockwebserver.MockResponse().setHeader("Content-Type", "application/json")
+                    .setBody(if (a) hits(3, 3) else hits(1, 1))
+                if (a) r.setHeadersDelay(600, java.util.concurrent.TimeUnit.MILLISECONDS)
+                return r
+            }
+        }
+        val vm = vm()
+        vm.onQueryChange("a")
+        vm.onQueryChange("b")
+        val s = vm.settle()
+        Thread.sleep(900)
+        assertEquals(1, vm.state.value.hits.size)
+        assertEquals(1, s.hits.size)
+    }
+
+    @Test fun loadingIsSetImmediatelyWithDebounce() {
+        val vm = SearchViewModel(session(), null, null, debounceMs = 10_000, pageSize = 50)
+        vm.onQueryChange("x")
+        assertTrue(vm.state.value.loading)
     }
 }

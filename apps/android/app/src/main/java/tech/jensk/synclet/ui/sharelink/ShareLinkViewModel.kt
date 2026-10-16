@@ -33,12 +33,19 @@ class ShareLinkViewModel(
     data class State(
         val active: ShareLink? = null, val form: Form = Form(), val loading: Boolean = true, val busy: Boolean = false,
         val error: Throwable? = null, val url: String? = null, val shareEvent: Int = 0,
+        /** False until the existing links were read; saving before that could create a duplicate link. */
+        val loaded: Boolean = false,
     )
 
     private val mutable = MutableStateFlow(State())
     val state: StateFlow<State> = mutable.asStateFlow()
 
     init { viewModelScope.launch { load() } }
+
+    fun reload() {
+        mutable.update { it.copy(loading = true, error = null) }
+        viewModelScope.launch { load() }
+    }
 
     private suspend fun load() {
         try {
@@ -52,18 +59,22 @@ class ShareLinkViewModel(
 
     private fun adopt(link: ShareLink?) = mutable.update {
         it.copy(
-            active = link, loading = false, busy = false, url = link?.let { l -> ShareLinks.absoluteUrl(l, origin) },
+            active = link, loading = false, busy = false, loaded = true, url = link?.let { l -> ShareLinks.absoluteUrl(l, origin) },
             form = if (link == null) Form() else Form(
                 usePassword = link.hasPassword, expiresAt = link.expiresAt?.let(Instant::parse),
                 allowDownload = link.allowDownload, allowUpload = link.allowUpload),
         )
     }
 
+    /** The UI has opened the system chooser for the current [State.shareEvent]. */
+    fun shareConsumed() = mutable.update { it.copy(shareEvent = 0) }
+
     fun edit(transform: (Form) -> Form) = mutable.update { it.copy(form = transform(it.form)) }
 
     /** Creates the link or saves the changes, then asks the UI to open the share sheet (shareEvent + 1). */
     fun save() = viewModelScope.launch {
         val s = mutable.value
+        if (!s.loaded || s.busy) return@launch
         val f = s.form
         mutable.update { it.copy(busy = true, error = null) }
         try {
