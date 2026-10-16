@@ -83,7 +83,7 @@ services:
       SYNCLET_MAX_UPLOAD_BYTES: ${SYNCLET_MAX_UPLOAD_BYTES:-53687091200}
       # "on" (OFFICE_JWT_SECRET set) proxies /documentserver/* to the Document Server; otherwise 404.
       SYNCLET_OFFICE_ENABLED: ${OFFICE_JWT_SECRET:+on}
-      # on = also serve the Document Server's welcome/example pages (404 by default).
+      # on = also serve the Document Server's welcome/example/admin pages (404 by default).
       SYNCLET_OFFICE_WELCOME: ${SYNCLET_OFFICE_WELCOME:-}
       # A Document Server on another origin is added to the CSP (empty: same origin, 'self').
       SYNCLET_OFFICE_PUBLIC_URL: ${SYNCLET_OFFICE_PUBLIC_URL:-}

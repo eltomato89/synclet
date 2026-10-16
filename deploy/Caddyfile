@@ -74,24 +74,25 @@
 		route {
 			@office_off expression `"{$SYNCLET_OFFICE_ENABLED:}" != "on" || "{$SYNCLET_CADDY_OFFICE:}" == "on"`
 			respond @office_off 404
-			# The Document Server's welcome and example pages are not needed by Synclet and run in this
-			# site's origin: 404 unless SYNCLET_OFFICE_WELCOME=on. (Path matching is case-insensitive
-			# and works on the cleaned, unescaped path.)
+			# The Document Server's welcome, example and admin pages are not needed by Synclet and run
+			# in this site's origin: 404 unless SYNCLET_OFFICE_WELCOME=on. (Path matching is
+			# case-insensitive and works on the cleaned, unescaped path.)
 			@office_extras {
-				path /documentserver/welcome /documentserver/welcome/* /documentserver/example /documentserver/example/*
+				# Prefix match, so suffixes such as "welcome;x" or "admin%00" are covered as well.
+				path /documentserver/welcome* /documentserver/example* /documentserver/admin*
 				expression `"{$SYNCLET_OFFICE_WELCOME:}" != "on"`
 			}
 			respond @office_extras 404
 			redir /documentserver /documentserver/ 308
 			uri strip_prefix /documentserver
 			reverse_proxy office:80 {
-				# The Document Server builds every absolute URL (editor, websocket, downloads) from these;
-				# the "host/prefix" form makes it generate URLs below /documentserver. {hostport} keeps a
-				# non-default port. Client-sent values are replaced. {scheme} is https for a domain
-				# address; behind a TLS-terminating outer proxy set SYNCLET_TRUSTED_PROXIES so the outer
-				# proxy's X-Forwarded-Proto is honoured.
+				# The Document Server builds every absolute URL (editor, websocket, downloads) from
+				# X-Forwarded-Host/-Proto; the "host/prefix" form makes it generate URLs below
+				# /documentserver. {hostport} keeps a non-default port; a client-sent value is replaced.
+				# X-Forwarded-Proto is Caddy's default: the connection's scheme, or the value sent by a
+				# proxy in SYNCLET_TRUSTED_PROXIES (an outer proxy terminating TLS); never set it to
+				# {scheme} here, which would ignore the outer proxy and yield http:// URLs.
 				header_up X-Forwarded-Host {hostport}/documentserver
-				header_up X-Forwarded-Proto {scheme}
 				# WebSocket upgrades are proxied automatically; never buffer, no timeouts.
 				flush_interval -1
 				transport http {

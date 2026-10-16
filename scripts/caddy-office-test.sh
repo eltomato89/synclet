@@ -61,10 +61,17 @@ check 200 "up /9.3.5-abc/web-apps/apps/api/documents/api.js?x=1 " '/documentserv
 check 308 - /documentserver
 for p in /documentserver/welcome /documentserver/welcome/ /documentserver/welcome/index.html /DocumentServer/Welcome/ \
   /documentserver//welcome/ /documentserver/%77elcome/ /documentserver/./welcome/ /documentserver/x/../welcome/ \
-  /documentserver/example/ /documentserver/example; do
+  /documentserver/example/ /documentserver/example /documentserver/admin /documentserver/admin/ \
+  /documentserver/admin/index.html /documentserver/Admin/ '/documentserver/welcome;x/' /documentserver/welcome%00/ \
+  '/documentserver/admin;x' /documentserver/%61dmin/ /documentserver/welcomex; do
   check 404 - "$p"
 done
-check 200 "up /welcomex" /documentserver/welcomex
+check 200 "up /cache/files/data/k/output.docx?md5=x" '/documentserver/cache/files/data/k/output.docx?md5=x'
+
+echo "# office on, behind a trusted TLS-terminating proxy: its X-Forwarded-Proto is passed on"
+start SYNCLET_OFFICE_ENABLED=on SYNCLET_TRUSTED_PROXIES=0.0.0.0/0
+check 200 "up /healthcheck 127.0.0.1:$PORT/documentserver https" /documentserver/healthcheck -H 'X-Forwarded-Proto: https'
+check 200 "up /healthcheck 127.0.0.1:$PORT/documentserver http" /documentserver/healthcheck
 
 echo "# office on, welcome opt-in"
 start SYNCLET_OFFICE_ENABLED=on SYNCLET_OFFICE_WELCOME=on
@@ -74,5 +81,7 @@ echo "# office on its own subdomain (compose.office.yml)"
 start SYNCLET_OFFICE_ENABLED=on SYNCLET_CADDY_OFFICE=on SYNCLET_OFFICE_SITE_ADDRESS=http://office.localhost
 check 404 - /documentserver/healthcheck
 check 200 "up /healthcheck office.localhost http" /healthcheck -H 'Host: office.localhost'
+start SYNCLET_OFFICE_ENABLED=on SYNCLET_CADDY_OFFICE=on SYNCLET_OFFICE_SITE_ADDRESS=http://office.localhost SYNCLET_TRUSTED_PROXIES=0.0.0.0/0
+check 200 "up /healthcheck office.localhost https" /healthcheck -H 'Host: office.localhost' -H 'X-Forwarded-Proto: https'
 
 [ "$FAILS" = 0 ] && echo "all checks passed" || { echo "$FAILS check(s) failed"; exit 1; }
