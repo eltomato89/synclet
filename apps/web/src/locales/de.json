@@ -66,6 +66,7 @@
     "newFolder": "Ordner",
     "upload": "Hochladen",
     "uploadFiles": "Dateien hochladen",
+    "uploadFolder": "Ordner hochladen",
     "view": "Ansicht",
     "viewList": "Liste",
     "viewGrid": "Raster",
@@ -102,7 +103,7 @@
     "drop": {
       "title": "Zum Hochladen ablegen",
       "target": "Die Dateien landen in „{{folder}}“.",
-      "foldersUnsupported": "Ordner lassen sich noch nicht per Drag & Drop hochladen. Zieh die Dateien darin einzeln hierher."
+      "foldersUnsupported": "Ordner lassen sich hier nicht hochladen. Zieh die Dateien darin einzeln hierher."
     },
     "newFolderDialog": {
       "title": "Neuer Ordner",
@@ -111,6 +112,14 @@
       "placeholder": "Unbenannter Ordner",
       "submit": "Ordner erstellen",
       "submitting": "Wird erstellt …"
+    },
+    "folderConflict": {
+      "title": "„{{name}}“ existiert bereits",
+      "folderBody": "Hier gibt es schon einen Ordner mit diesem Namen. Beim Zusammenführen landet der Inhalt im vorhandenen Ordner; gleichnamige Dateien bekommen ein „(2)“.",
+      "fileBody": "Hier gibt es schon eine Datei mit diesem Namen. Der Ordner kann daneben unter einem anderen Namen angelegt werden.",
+      "merge": "Zusammenführen",
+      "keep": "Als „{{name}}“ behalten",
+      "applyAll": "Für alle übernehmen"
     },
     "renameDialog": {
       "title": "Umbenennen",
@@ -180,12 +189,27 @@
       "collapse": "Uploads einklappen",
       "expand": "Uploads ausklappen",
       "close": "Uploads schließen",
-      "dismiss": "Aus der Liste entfernen"
+      "dismiss": "Aus der Liste entfernen",
+      "folderProgress": "Ordner „{{name}}“: {{done}} von {{total}} Dateien",
+      "folderCreating": "Ordner werden angelegt …",
+      "folderErrors_one": "{{count}} Ordner konnte nicht angelegt werden",
+      "folderErrors_other": "{{count}} Ordner konnten nicht angelegt werden",
+      "folderError": "„{{path}}“: {{error}}",
+      "folderSkipped_one": "{{count}} Datei darin wurde nicht hochgeladen.",
+      "folderSkipped_other": "{{count}} Dateien darin wurden nicht hochgeladen.",
+      "cancelFolder": "Ordner-Upload abbrechen"
     },
     "preview": "Vorschau",
     "shortcutPreview": "Leertaste",
     "versionsShort": "Versionen",
-    "versions": "Versionen …"
+    "versions": "Versionen …",
+    "folderUpload": {
+      "readFailed": "Der Ordner konnte nicht gelesen werden.",
+      "failed": "„{{name}}“ konnte nicht hochgeladen werden: {{error}}",
+      "unreadable_one": "{{count}} Element konnte nicht gelesen werden und wurde ausgelassen.",
+      "unreadable_other": "{{count}} Elemente konnten nicht gelesen werden und wurden ausgelassen.",
+      "emptyFolder": "Der Ordner ist leer. Leere Ordner lassen sich nur per Drag & Drop hochladen."
+    }
   },
   "preview": {
     "close": "Vorschau schließen",

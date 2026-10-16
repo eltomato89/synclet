@@ -27,7 +27,7 @@ test('an interrupted upload resumes from the server offset after a reload', asyn
   await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: 8 * MiB });
 
   const firstChunk = page.waitForResponse((r) => r.request().method() === 'PATCH' && r.url().includes('/api/sync/v1/uploads/') && r.status() === 204);
-  await page.locator('input[type=file]').setInputFiles(file);
+  await page.locator('input[data-upload=files]').setInputFiles(file);
   const uploadUrl = (await firstChunk).url();
   await context.setOffline(true);
   // The tab goes away mid-transfer. The app asks before leaving with a running upload; confirm.
@@ -58,7 +58,7 @@ test('an interrupted upload resumes from the server offset after a reload', asyn
     if (r.method() === 'PATCH') patchOffsets.push(Number(r.headers()['upload-offset']));
   });
   await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
-  await page.locator('input[type=file]').setInputFiles(file);
+  await page.locator('input[data-upload=files]').setInputFiles(file);
   await expect(row(page, 'big.bin')).toBeVisible({ timeout: 60_000 });
   expect(posts).toEqual([]);
   expect(patchOffsets[0]).toBe(offset);

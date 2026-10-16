@@ -2,6 +2,7 @@ import type { PublicShareEntry } from '@synclet/shared';
 import { Check, CircleAlert, Upload, X } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { DropZone } from '@/features/files/DropZone';
 import { FileIcon } from '@/features/files/FileIcon';
@@ -96,7 +97,15 @@ export function PublicUploadZone({ token, folderId, folderName, onUploaded, onSh
 
   return (
     <section aria-labelledby="share-upload-title" className="mt-6">
-      <DropZone enabled folderName={folderName} onFiles={enqueue} />
+      <DropZone
+        enabled
+        folders={false}
+        folderName={folderName}
+        onPicked={(p) => {
+          if (p.folders.length) toast.info(t('files.drop.foldersUnsupported'), { position: 'bottom-center' });
+          enqueue(p.files.map((f) => f.file));
+        }}
+      />
       <div className="flex flex-col items-start gap-4 rounded-xl border border-dashed border-input bg-background/60 p-5 sm:flex-row sm:items-center sm:p-6">
         <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-accent-soft text-primary">
           <Upload className="size-5" aria-hidden />

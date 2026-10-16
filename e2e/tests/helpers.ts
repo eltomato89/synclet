@@ -13,7 +13,7 @@ import { inflateRawSync } from 'node:zlib';
 
 export const BASE_URL = process.env.SYNCLET_URL ?? 'http://localhost:8080';
 export const ADMIN = { login: 'e2e', password: 'correct horse battery' };
-export const SPEC_USERS = ['trash', 'share', 'preview', 'search', 'upload', 'versions', 'applogin', 'office', 'owner'] as const;
+export const SPEC_USERS = ['trash', 'share', 'preview', 'search', 'upload', 'versions', 'applogin', 'office', 'owner', 'folders'] as const;
 export type SpecUser = (typeof SPEC_USERS)[number];
 export const USER_PASSWORD = 'correct horse battery';
 export const FIXTURES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../apps/server/test/fixtures');

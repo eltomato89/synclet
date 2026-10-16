@@ -2,37 +2,24 @@ import { Upload } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { type Picked, pickedFromDataTransfer } from './folderUpload';
 
 const hasFiles = (e: DragEvent) => !!e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files');
 
-/** Splits a drop into plain files; dropped folders are reported separately (folder upload is Phase 1b). */
-function collect(dt: DataTransfer): { files: File[]; skippedFolders: boolean } {
-  const files: File[] = [];
-  let skippedFolders = false;
-  const items = Array.from(dt.items ?? []);
-  if (items.length > 0 && typeof items[0].webkitGetAsEntry === 'function') {
-    for (const it of items) {
-      if (it.kind !== 'file') continue;
-      const entry = it.webkitGetAsEntry();
-      if (entry?.isDirectory) { skippedFolders = true; continue; }
-      const f = it.getAsFile();
-      if (f) files.push(f);
-    }
-    return { files, skippedFolders };
-  }
-  return { files: Array.from(dt.files), skippedFolders };
-}
-
 /**
  * Drop target covering the whole window: dragging files from the OS anywhere onto the page
- * shows an overlay; dropping enqueues them into the current folder.
+ * shows an overlay; dropping hands the files and folders (walked recursively) to `onPicked`.
  */
-export function DropZone({ enabled, folderName, onFiles }: { enabled: boolean; folderName: string; onFiles(files: File[]): void }) {
+export function DropZone({ enabled, folderName, onPicked, folders = true }: {
+  enabled: boolean; folderName: string; onPicked(picked: Picked): void;
+  /** False: dropped folders are listed in `picked.folders` but not read. */
+  folders?: boolean;
+}) {
   const { t } = useTranslation();
   const [active, setActive] = useState(false);
   const depth = useRef(0);
-  const latest = useRef({ onFiles, t });
-  latest.current = { onFiles, t };
+  const latest = useRef({ onPicked, t, folders });
+  latest.current = { onPicked, t, folders };
 
   useEffect(() => {
     if (!enabled) return;
@@ -57,9 +44,10 @@ export function DropZone({ enabled, folderName, onFiles }: { enabled: boolean; f
       e.preventDefault();
       depth.current = 0;
       setActive(false);
-      const { files, skippedFolders } = collect(e.dataTransfer);
-      if (skippedFolders) toast.info(latest.current.t('files.drop.foldersUnsupported'), { position: 'bottom-center' });
-      if (files.length) latest.current.onFiles(files);
+      pickedFromDataTransfer(e.dataTransfer, { walk: latest.current.folders }).then(
+        (picked) => { if (picked.files.length || picked.folders.length) latest.current.onPicked(picked); },
+        () => { toast.error(latest.current.t('files.folderUpload.readFailed'), { position: 'bottom-center' }); },
+      );
     };
     window.addEventListener('dragenter', enter);
     window.addEventListener('dragover', over);

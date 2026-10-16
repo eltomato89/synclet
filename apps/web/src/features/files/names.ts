@@ -7,7 +7,19 @@ const IGNORED_EXACT = new Set([
   '.DS_Store', '.Spotlight-V100', '.Trashes', '.fseventsd', '.TemporaryItems', '.localized',
   'Thumbs.db', 'desktop.ini', '$RECYCLE.BIN', '@eaDir', '#recycle', 'lost+found',
 ]);
-const IGNORED_PATTERNS = [/^\._/, /^~\$/, /^~WRL.*\.tmp$/i, /^\.~lock\..*#$/, /^\.synclet-tmp-[A-Za-z0-9]+$/];
+const IGNORED_PATTERNS = [
+  /^\._/, /^~\$/, /^~WRL.*\.tmp$/i, /^\.~lock\..*#$/, /^\.synclet-tmp-[A-Za-z0-9]+$/, /^\.synclet-trash-[A-Za-z0-9-]+$/,
+];
+
+/** System and temporary files the server never syncs (SYNC_API §4.3); clients skip them. */
+export function isIgnored(name: string): boolean {
+  return IGNORED_EXACT.has(name) || IGNORED_PATTERNS.some((p) => p.test(name));
+}
+
+/** Two siblings collide when their keys are equal (NFC, case-insensitive; SYNC_API §4.3). */
+export function nameKey(name: string): string {
+  return name.normalize('NFC').toLowerCase();
+}
 
 export type NameError = 'empty' | 'forbidden_char' | 'trailing' | 'reserved' | 'too_long' | 'ignored';
 
@@ -17,7 +29,7 @@ export function validateName(name: string): NameError | null {
   if (/[ .]$/.test(name)) return 'trailing';
   if (RESERVED.test(name)) return 'reserved';
   if (new TextEncoder().encode(name.normalize('NFC')).length > 255) return 'too_long';
-  if (IGNORED_EXACT.has(name) || IGNORED_PATTERNS.some((p) => p.test(name))) return 'ignored';
+  if (isIgnored(name)) return 'ignored';
   return null;
 }
 
