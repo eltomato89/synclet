@@ -63,6 +63,8 @@ public final class BackgroundUploader: NSObject, Sendable {
         var leaseRenewedAt: [String: Date] = [:]
         var recovered = false
         var backgroundCompletion: (@Sendable () -> Void)?
+        /// `urlSessionDidFinishEvents` fired before a completion handler was handed over.
+        var eventsFinished = false
         var session: URLSession?
     }
 
@@ -147,8 +149,19 @@ public final class BackgroundUploader: NSObject, Sendable {
 
     /// From `application(_:handleEventsForBackgroundURLSession:completionHandler:)`; called
     /// once the session has delivered all pending events.
+    ///
+    /// The session may deliver its events (and `urlSessionDidFinishEvents`) before the app
+    /// delegate hands the handler over; then it is called right away instead of being lost.
     public func handleBackgroundEvents(completion: @escaping @Sendable () -> Void) {
-        state.withLock { $0.backgroundCompletion = completion }
+        let callNow = state.withLock { s -> Bool in
+            if s.eventsFinished {
+                s.eventsFinished = false
+                return true
+            }
+            s.backgroundCompletion = completion
+            return false
+        }
+        if callNow { DispatchQueue.main.async { completion() } }
     }
 
     // MARK: - Starting
@@ -186,6 +199,11 @@ public final class BackgroundUploader: NSObject, Sendable {
                 onChange(updated)
             }
         }
+    }
+
+    /// `uploading` and claimed by this uploader.
+    private func isOwned(_ entry: UploadEntry?) -> Bool {
+        entry?.status == .uploading && entry?.owner == identifier
     }
 
     /// An `uploading` entry nobody runs any more: ours without a live task in this session
@@ -318,11 +336,15 @@ public final class BackgroundUploader: NSObject, Sendable {
                     return
                 }
                 // Cancelled by the system (session invalidated): try again later without counting.
+                var changed = false
+                let identifier = identifier
                 let updated = queue.update(id: tag.entryId) { e in
-                    if e.status == .uploading { e.status = .waiting; e.owner = nil; e.leaseUntil = nil }
+                    guard e.status == .uploading, e.owner == identifier else { return }
+                    e.status = .waiting; e.owner = nil; e.leaseUntil = nil
+                    changed = true
                 }
                 release(tag.entryId)
-                if let updated { onChange(updated) }
+                if changed, let updated { onChange(updated) }
                 return
             }
             Log.upload.info("upload request failed: \(error.localizedDescription, privacy: .public)")
@@ -341,9 +363,12 @@ public final class BackgroundUploader: NSObject, Sendable {
         } else {
             result = .retry
         }
-        // A completion for an entry that went back to `waiting` (relaunch recovery ran first)
-        // is only recorded when it published the file; otherwise the next attempt resumes.
-        if case .finished = result {} else if queue.entry(id: tag.entryId)?.status != .uploading {
+        // Only the current owner drives an entry. A completion for an entry that went back to
+        // `waiting` (relaunch recovery ran first) or was taken over by another process after
+        // our lease expired is only recorded when it published the file; otherwise it is
+        // dropped and the owner (or the next attempt) carries on.
+        if case .finished = result {} else if !isOwned(queue.entry(id: tag.entryId)) {
+            Log.upload.info("dropping a completion for an entry this uploader no longer owns")
             release(tag.entryId)
             pumpLater()
             return
@@ -359,6 +384,9 @@ public final class BackgroundUploader: NSObject, Sendable {
             return
         }
         var next: UploadStep?
+        // Set by every non-final update closure that found the entry still ours; a closure that
+        // finds another owner changes nothing (never take an entry over from here).
+        var mine = false
         let at = now()
         let lease = at.addingTimeInterval(Self.leaseDuration)
         let identifier = identifier
@@ -383,17 +411,19 @@ public final class BackgroundUploader: NSObject, Sendable {
             Log.upload.info("upload finished")
         case .tusCreated(let url):
             updated = queue.update(id: entryId) { e in
+                guard e.status == .uploading, e.owner == identifier else { return }
+                mine = true
                 e.tusURL = url
                 e.tusOffset = 0
-                e.owner = identifier
                 e.leaseUntil = lease
             }
             if let updated { next = Self.patch(from: 0, size: updated.size) }
         case .tusOffset(let offset):
             updated = queue.update(id: entryId) { e in
+                guard e.status == .uploading, e.owner == identifier else { return }
+                mine = true
                 if offset <= e.size {
                     e.tusOffset = offset
-                    e.owner = identifier
                     e.leaseUntil = lease
                 } else {
                     e.status = .failed
@@ -408,14 +438,17 @@ public final class BackgroundUploader: NSObject, Sendable {
             if let updated, updated.status == .uploading { next = Self.patch(from: offset, size: updated.size) }
         case .restartTus:
             updated = queue.update(id: entryId) { e in
+                guard e.status == .uploading, e.owner == identifier else { return }
+                mine = true
                 e.tusURL = nil
                 e.tusOffset = 0
-                e.owner = identifier
                 e.leaseUntil = lease
             }
             next = .tusCreate
         case .retry:
             updated = queue.update(id: entryId) { e in
+                guard e.status == .uploading, e.owner == identifier else { return }
+                mine = true
                 // Delay 2 s · 2^n, n = retries before this one (2, 4, 8 … 300 s).
                 let delay = Self.backoff(retriesBefore: e.attempts)
                 e.attempts += 1
@@ -432,6 +465,8 @@ public final class BackgroundUploader: NSObject, Sendable {
             }
         case .fail(let failure, let message):
             updated = queue.update(id: entryId) { e in
+                guard e.status == .uploading, e.owner == identifier else { return }
+                mine = true
                 e.status = .failed
                 e.failure = failure
                 e.failureMessage = message
@@ -441,8 +476,9 @@ public final class BackgroundUploader: NSObject, Sendable {
             }
             Log.upload.error("upload failed: \(failure.rawValue, privacy: .public)")
         }
-        guard let updated else {
-            // Removed meanwhile (cancel, sign-out, the other process).
+        if case .finished = result { mine = true }
+        guard let updated, mine else {
+            // Removed meanwhile (cancel, sign-out, the other process), or no longer ours.
             release(entryId)
             pumpLater()
             return
@@ -562,10 +598,14 @@ extension BackgroundUploader: URLSessionDataDelegate, URLSessionDownloadDelegate
     }
 
     public func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
-        guard let completion = state.withLock({ s -> (@Sendable () -> Void)? in
-            defer { s.backgroundCompletion = nil }
-            return s.backgroundCompletion
-        }) else { return }
-        DispatchQueue.main.async { completion() }
+        let completion = state.withLock { s -> (@Sendable () -> Void)? in
+            guard let completion = s.backgroundCompletion else {
+                s.eventsFinished = true
+                return nil
+            }
+            s.backgroundCompletion = nil
+            return completion
+        }
+        if let completion { DispatchQueue.main.async { completion() } }
     }
 }

@@ -363,6 +363,69 @@ final class BackgroundUploaderTests: XCTestCase {
         XCTAssertEqual(MockURLProtocol.requests.count, 1)
     }
 
+    /// Lease takeover: while our PATCH is in flight another process takes the entry over
+    /// (our lease expired). Our late `204` must neither re-take the entry nor send more requests.
+    func testLateCompletionAfterTakeoverIsDropped() async throws {
+        useHoldingProtocol()
+        let size: Int64 = 40 << 20
+        HoldingURLProtocol.respond { request in
+            switch request.httpMethod {
+            case "POST": return .empty(201, headers: ["Location": "/api/sync/v1/uploads/abc"])
+            default: return .empty(204, headers: ["Upload-Offset": String(16 << 20)])
+            }
+        }
+        let entry = try enqueueSparse(size: size)
+        await uploader.pump()
+        await waitUntil("create sent") { HoldingURLProtocol.count == 1 }
+        HoldingURLProtocol.releaseAll()
+        await waitUntil("first PATCH sent") { HoldingURLProtocol.count == 2 }
+
+        let other = "tech.jensk.synclet.upload.share"
+        let otherLease = clock.now.addingTimeInterval(600)
+        queue.update(id: entry.id) { e in e.owner = other; e.leaseUntil = otherLease; e.tusOffset = 1234 }
+        HoldingURLProtocol.releaseAll()
+        try await Task.sleep(for: .milliseconds(300))
+
+        let e = try XCTUnwrap(queue.entry(id: entry.id))
+        XCTAssertEqual(e.status, .uploading)
+        XCTAssertEqual(e.owner, other)
+        XCTAssertEqual(e.leaseUntil, otherLease)
+        XCTAssertEqual(e.tusOffset, 1234, "the other owner's progress is left alone")
+        XCTAssertEqual(HoldingURLProtocol.count, 2, "no further request")
+        XCTAssertTrue(chunkFiles().isEmpty)
+    }
+
+    /// The old owner's completion that published the file still records `done`.
+    func testLateFinishedCompletionAfterTakeoverStillMarksDone() async throws {
+        useHoldingProtocol()
+        let entry = try enqueueSmall()
+        await uploader.pump()
+        await waitUntil("upload sent") { HoldingURLProtocol.count == 1 }
+        queue.update(id: entry.id) { e in e.owner = "tech.jensk.synclet.upload.share"; e.leaseUntil = clock.now.addingTimeInterval(600) }
+        HoldingURLProtocol.releaseAll()
+        await waitUntil("done") { status(entry.id) == .done }
+        XCTAssertNil(queue.entry(id: entry.id)?.owner)
+    }
+
+    func testBackgroundEventsCompletionWhenHandedOverFirst() async {
+        let called = expectation(description: "completion")
+        uploader.handleBackgroundEvents { called.fulfill() }
+        uploader.urlSessionDidFinishEvents(forBackgroundURLSession: URLSession.shared)
+        await fulfillment(of: [called], timeout: 5)
+    }
+
+    func testBackgroundEventsCompletionWhenEventsFinishedFirst() async {
+        uploader.urlSessionDidFinishEvents(forBackgroundURLSession: URLSession.shared)
+        let called = expectation(description: "completion")
+        uploader.handleBackgroundEvents { called.fulfill() }
+        await fulfillment(of: [called], timeout: 5)
+        // Consumed: the next handler waits for the next delivery again.
+        let second = expectation(description: "second completion")
+        second.isInverted = true
+        uploader.handleBackgroundEvents { second.fulfill() }
+        await fulfillment(of: [second], timeout: 0.3)
+    }
+
     func testTaskDescriptionRoutesCompletion() throws {
         let tag = BackgroundUploader.TaskTag(entryId: "e1", step: .tusPatch(offset: 16 << 20, length: 8 << 20))
         let text = try XCTUnwrap(tag.encoded)
@@ -378,9 +441,15 @@ final class HoldingURLProtocol: URLProtocol, @unchecked Sendable {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var held: [HoldingURLProtocol] = []
     nonisolated(unsafe) private static var started = 0
+    nonisolated(unsafe) private static var responder: (@Sendable (URLRequest) -> MockResponse)?
     private var stopped = false
 
-    static func reset() { lock.withLock { held = []; started = 0 } }
+    static func reset() { lock.withLock { held = []; started = 0; responder = nil } }
+
+    /// Answers released requests with `respond` instead of `201` + item JSON.
+    static func respond(_ respond: @escaping @Sendable (URLRequest) -> MockResponse) {
+        lock.withLock { responder = respond }
+    }
     /// Requests started so far.
     static var count: Int { lock.withLock { started } }
 
@@ -400,11 +469,12 @@ final class HoldingURLProtocol: URLProtocol, @unchecked Sendable {
 
     private func answer() {
         guard !Self.lock.withLock({ stopped }) else { return }
-        let id = "f_\(UUID().uuidString.prefix(6))"
-        let response = HTTPURLResponse(url: request.url!, statusCode: 201, httpVersion: "HTTP/1.1",
-                                       headerFields: ["Content-Type": "application/json"])!
+        let mock = Self.lock.withLock { Self.responder }?(request)
+            ?? .json(201, Fixtures.itemJSON(id: "f_\(UUID().uuidString.prefix(6))"))
+        let response = HTTPURLResponse(url: request.url!, statusCode: mock.status, httpVersion: "HTTP/1.1",
+                                       headerFields: mock.headers)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Data(Fixtures.itemJSON(id: id).utf8))
+        if !mock.body.isEmpty { client?.urlProtocol(self, didLoad: mock.body) }
         client?.urlProtocolDidFinishLoading(self)
     }
 }
