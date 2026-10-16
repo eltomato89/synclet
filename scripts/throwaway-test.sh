@@ -12,9 +12,10 @@ PORT=${SYNCLET_THROWAWAY_PORT:-18080}
 TLS_PORT=${SYNCLET_THROWAWAY_TLS_PORT:-18443}
 PROJECT=synclet-throwaway-$$
 WORK=$(mktemp -d)
-FILES="$WORK/files"; META="$WORK/meta"
+FILES="$WORK/files"; META="$WORK/meta"; TEAMS="$WORK/teams"
 NFD_NAME=$(printf 'Cafe\xcc\x81.txt')   # NFD name as created by macOS
-mkdir -p "$FILES/jens/Bestand/Unterordner" "$META"
+mkdir -p "$FILES/jens/Bestand/Unterordner" "$META" "$TEAMS/Vorhanden"
+printf 'team-alt' > "$TEAMS/Vorhanden/alt.txt"   # a team folder that exists before the first start
 printf 'alt' > "$FILES/jens/Bestand/alt.txt"
 printf 'nfd' > "$FILES/jens/Bestand/$NFD_NAME"
 ENV="$WORK/.env"
@@ -23,6 +24,7 @@ ENV="$WORK/.env"
 cat > "$ENV" <<EOF
 SYNCLET_DATA=$FILES
 SYNCLET_META=$META
+SYNCLET_TEAMS=$TEAMS
 PUID=$(id -u)
 PGID=$(id -g)
 POSTGRES_PASSWORD=throwaway
@@ -227,6 +229,31 @@ retry_412 -XPOST "$B/sync/v1/items/$VF/versions/$V1/restore"
 [ "$(version_files)" = 3 ] || fail "restore did not keep the replaced current content as a version ($(version_files) files)"
 [ "$(data_tree)" = "$TREE_BEFORE" ] || { diff <(echo "$TREE_BEFORE") <(data_tree); fail "restoring a version changed the data folder tree"; }
 
+# 3f) Team folders (spaces): an existing /teams subfolder is discovered, an admin-created one lands
+#     as a plain folder; "Entfernen" hides a team folder but never deletes it.
+ACCOUNT=$(api "$B/sync/v1/account")
+JENS_ID=$(jq -r .userId <<<"$ACCOUNT")
+members() { printf '[{"kind":"user","id":"%s","role":"write"}]' "$JENS_ID"; }
+FAM=$(api -XPOST "$B/admin/spaces" -H 'content-type: application/json' -d "{\"name\":\"Familie\",\"members\":$(members)}")
+FAM_ID=$(jq -r .id <<<"$FAM")
+[ -d "$TEAMS/Familie" ] || fail "team folder Familie not created in /teams"
+team_root() { api "$B/sync/v1/account" | jq -r --arg n "$1" '.spaces[] | select(.name==$n and .kind=="shared") | .rootId'; }
+FAM_ROOT=$(poll "Familie in the account's spaces" team_root Familie)
+FAM_FILE=$(upload "$FAM_ROOT" plan.txt 'plan')
+FAM_DIR=$(mkfolder "$FAM_ROOT" Fotos)
+[ "$(cat "$TEAMS/Familie/plan.txt" 2>/dev/null)" = plan ] || fail "team file not on disk in /teams"
+[ -d "$TEAMS/Familie/Fotos" ] || fail "team subfolder not on disk in /teams"
+[ "$(child_id "$FAM_ROOT" plan.txt)" = "$FAM_FILE" ] || fail "team file not listed"
+VORH_ID=$(poll "pre-existing team folder to be discovered" bash -c "curl -fsS -H 'authorization: Bearer $TOKEN' '$B/admin/spaces' | jq -r '.[] | select(.name==\"Vorhanden\") | .id'")
+api -XPATCH "$B/admin/spaces/$VORH_ID" -H 'content-type: application/json' -d "{\"members\":$(members)}" >/dev/null
+VORH_ROOT=$(poll "Vorhanden in the account's spaces" team_root Vorhanden)
+[ -n "$(poll "alt.txt of the pre-existing team folder" child_id "$VORH_ROOT" alt.txt)" ] || fail "pre-existing team file not indexed"
+WEG=$(api -XPOST "$B/admin/spaces" -H 'content-type: application/json' -d '{"name":"Weg"}' | jq -r .id)
+printf 'bleibt' > "$TEAMS/Weg/bleibt.txt"
+api -XDELETE "$B/admin/spaces/$WEG" >/dev/null
+[ "$(cat "$TEAMS/Weg/bleibt.txt" 2>/dev/null)" = bleibt ] || fail "removing a team folder deleted its content"
+team_leftovers() { (cd "$TEAMS" && find . -name '.synclet-*'); }
+
 # 4) Nothing but user content in the data folder: trash staging (.synclet-trash-*) is moved to
 #    /meta after commit, temp files (.synclet-tmp-*) never outlive a request.
 leftovers() { (cd "$FILES" && find . -name '.synclet-*'); }
@@ -237,6 +264,7 @@ for i in $(seq 1 30); do [ -z "$(leftovers)" ] && break; sleep 1; done
 "${DC[@]}" down -v
 STARTED=0
 [ -z "$(leftovers)" ] || fail "synclet entries left in the data folder after teardown: $(leftovers)"
+[ -z "$(team_leftovers)" ] || fail "synclet entries left in /teams after teardown: $(team_leftovers)"
 ACTUAL=$(cd "$FILES" && find . -mindepth 1 | LC_ALL=C sort)
 EXPECTED=$(printf '%s\n' ./jens ./jens/Bestand "./jens/Bestand/$NFD_NAME" ./jens/Bestand/Unterordner \
   ./jens/Dokumente "./jens/Dokumente/Angebot final.txt" ./jens/Dokumente/alt-verschoben.txt ./jens/Dokumente/tus.txt ./jens/Dokumente/versioniert.txt \
@@ -245,6 +273,13 @@ EXPECTED=$(printf '%s\n' ./jens ./jens/Bestand "./jens/Bestand/$NFD_NAME" ./jens
 if [ "$ACTUAL" != "$EXPECTED" ]; then
   echo "FAIL: folder differs"; diff <(echo "$EXPECTED") <(echo "$ACTUAL"); exit 1
 fi
+ACTUAL_TEAMS=$(cd "$TEAMS" && find . -mindepth 1 | LC_ALL=C sort)
+EXPECTED_TEAMS=$(printf '%s\n' ./Familie ./Familie/Fotos ./Familie/plan.txt ./Vorhanden ./Vorhanden/alt.txt ./Weg ./Weg/bleibt.txt | LC_ALL=C sort)
+if [ "$ACTUAL_TEAMS" != "$EXPECTED_TEAMS" ]; then
+  echo "FAIL: team folder differs"; diff <(echo "$EXPECTED_TEAMS") <(echo "$ACTUAL_TEAMS"); exit 1
+fi
+[ "$(cat "$TEAMS/Familie/plan.txt")" = plan ] || fail "team file content"
+[ "$(cat "$TEAMS/Vorhanden/alt.txt")" = team-alt ] || fail "pre-existing team file content"
 [ "$(cat "$FILES/jens/Dokumente/Angebot final.txt")" = "hallo" ] || fail "content"
 [ "$(cat "$FILES/jens/Dokumente/alt-verschoben.txt")" = "alt" ] || fail "moved file content"
 [ "$(cat "$FILES/jens/Dokumente/versioniert.txt")" = "eins" ] || fail "restored version content after teardown"
@@ -253,4 +288,4 @@ ls "$META/trash"/*/weg.txt >/dev/null || fail "deleted file not in /meta/trash"
 cmp -s "$FILES/jens/Medien/foto.heic" "$FX/sample.heic" || fail "uploaded heic differs"
 [ -n "$(find "$META/derived" -type f | head -1)" ] || fail "/meta/derived is empty"
 [ -z "$(ls -A "$META/uploads")" ] || fail "/meta/uploads not empty: $(ls -A "$META/uploads")"
-echo "PASS: folder is a plain 1:1 copy of what Synclet showed, metadata (incl. versions) stayed outside"
+echo "PASS: folder is a plain 1:1 copy of what Synclet showed (including the team folders), metadata (incl. versions) stayed outside"

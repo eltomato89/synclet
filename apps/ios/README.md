@@ -143,3 +143,15 @@ LAN-Adresse) mit zwei Benutzerkonten, die Web-Oberfläche im Browser eines Rechn
     → Seitenleiste mit Konten und „Meine Dateien“/„Zuletzt“/„Suche“/„Papierkorb“/„Uploads“, Inhalt
     rechts; das Layout bleibt in Split View und beim Drehen bedienbar (schmale Breite: Tab-Leiste wie
     auf dem iPhone). Drag & Drop aus der Dateien-App in die App gehört nicht zum Umfang (nicht prüfen).
+16. **Spaces:** Voraussetzung: Konto A ist Mitglied eines Team-Ordners „Familie“ (Schreibrechte) und eines
+    schreibgeschützten Spaces; Konto A hat zusätzlich „Meine Dateien“.
+    - Team-Ordner: in der Dateien-App und in der App erscheint „Familie“ neben „Meine Dateien“; eine
+      Datei aus dem Web ist sichtbar.
+    - Schreibgeschützter Space: Hochladen („+“), Umbenennen, Löschen und Ablegen aus der Dateien-App
+      werden abgelehnt; „+“ ist ausgeblendet bzw. gesperrt.
+    - Verschieben zwischen Spaces: eine Datei von „Meine Dateien“ nach „Familie“ verschieben → sie ist
+      danach nur noch dort (auch im Web).
+    - Zugriff entfernen: im Web den Benutzer aus „Familie“ entfernen → „Familie“ verschwindet binnen
+      Sekunden aus App und Dateien-App.
+    - Fehlender Mount: den externen Speicher auf dem Server aushängen → der Space zeigt „Nicht
+      verfügbar“, nichts wird gelöscht; nach dem Wiederanhängen ist er wieder nutzbar.

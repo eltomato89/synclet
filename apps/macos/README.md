@@ -376,7 +376,18 @@ Open Settings → Offline, or start the app with `-SyncletShowOffline`.
    - **Expected:** both files upload within about 1 minute, without restarting the app or signing in again, and the server has exactly one copy of each (no "(2)"). The app lifts the system's throttling (`signalErrorResolved` for `.insufficientQuota` and `.serverUnreachable`) on every new SSE connection and after every successful `/account` refresh (every 15 minutes). If nothing happens within 1 minute, wait up to 15 minutes; if it still does not upload, run `docker compose -p <project> restart server` (a new SSE `hello` lifts the throttling as well).
    - **Report:** the time from `rm` until the upload, and which of the three cases it took (by itself within 1 minute, at the 15-minute refresh, only after the server restart). Also report the `transfer` log lines.
    6. Sign out of this account, stop the server with Ctrl-C, then `hdiutil detach /Volumes/SyncletFull && rm ~/Desktop/SyncletFull.dmg`.
-31. **Clean up.**
+31. **Spaces (Team-Ordner und externe Speicher).** Voraussetzung: ein Server mit einem Team-Ordner "Familie" (Schreibrechte für den Benutzer), einem schreibgeschützten Space (z. B. `/storage/Archiv` mit `:ro`) und einem zweiten Benutzer als Mitglied von "Familie".
+   1. **Team-Ordner erscheint.** Finder → Synclet-Konto öffnen.
+      - **Expected:** neben "Meine Dateien" erscheint "Familie"; eine Datei aus dem Web ist sichtbar.
+   2. **Schreibgeschützter Space.** Im Space "Archiv" eine Datei hineinkopieren, eine vorhandene umbenennen und löschen.
+      - **Expected:** jede Aktion wird abgelehnt (Finder-Fehler "Schreibzugriff verweigert"), nichts ändert sich auf dem Server.
+   3. **Verschieben zwischen Spaces.** Eine Datei aus "Meine Dateien" nach "Familie" ziehen.
+      - **Expected:** die Datei liegt in "Familie", ist aus "Meine Dateien" verschwunden und im Web bei "Familie" zu sehen.
+   4. **Zugriff entfernen.** Im Web (Admin-Bereich → Spaces) den Benutzer aus "Familie" entfernen.
+      - **Expected:** "Familie" verschwindet binnen weniger Sekunden aus dem Finder, ohne Neuanmeldung.
+   5. **Fehlender Mount.** `docker compose -p <project> stop server`, den Mount von `/storage/Archiv` abziehen (oder die Freigabe trennen), Server starten.
+      - **Expected:** Finder und Menü zeigen den Space als nicht verfügbar; vorhandene Dateien bleiben auf dem Server und werden nicht gelöscht. Nach dem Wiederanhängen ist der Space nach einem Scan wieder da.
+32. **Clean up.**
    1. Run `DerivedData/Build/Products/Debug/Synclet.app/Contents/MacOS/Synclet -SyncletSignOutAll`.
    2. Press Ctrl-C in all server terminals.
    - **Expected:** `fileproviderctl dump | grep -i "synclet –"` shows no domain, and `docker ps` shows no `synclet-maclive-*` containers.
@@ -384,7 +395,7 @@ Open Settings → Offline, or start the app with `-SyncletShowOffline`.
 
 ## Known limitations
 
-- **Only the personal space.** The server's account response lists spaces, but Phase 2 servers return only `personal` ("Meine Dateien"). Shared spaces are a later phase.
+- **Spaces:** "Meine Dateien", team folders and external storages appear as folders at the top level of the account. Read-only spaces reject writes; a space with a missing mount is unavailable but nothing is deleted (see deploy/README.md).
 - **No push.** When the menu bar app is not running, server changes reach Finder only when macOS asks the extension again, for example on the next Finder access. While the app runs, changes arrive through `GET /api/sync/v1/events` (SSE). It falls back to polling every 60 s when the stream is down.
 - **Proxies.** SSE needs a reverse proxy without buffering and with an idle timeout above 25 s. Shorter timeouts break the stream, and polling then takes over. See SYNC_API.md §5a.
 - **The virtual top level is read-only.** Files go into "Meine Dateien". Nothing can be created, renamed or deleted at the account root or on the space folder.
