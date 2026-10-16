@@ -275,5 +275,10 @@ final class UploadCenterTests: XCTestCase {
         XCTAssertEqual(UploadFailure.targetGone.displayText, String(localized: "Target Folder Deleted"))
         XCTAssertEqual(UploadFailure.signedOut.displayText, String(localized: "Sign In Again"))
         XCTAssertEqual(UploadFailure.other.displayText, String(localized: "Error"))
+        XCTAssertEqual(UploadFailure.readOnly.displayText, String(localized: "Read Only"))
+        XCTAssertEqual(UploadFailure.spaceUnavailable.displayText, String(localized: "Space Not Available"))
+        let german = Bundle(path: Bundle(for: AccountsModel.self).path(forResource: "de", ofType: "lproj") ?? "")
+        XCTAssertEqual(german?.localizedString(forKey: "Space Not Available", value: nil, table: nil), "Bereich nicht verfügbar")
+        XCTAssertEqual(german?.localizedString(forKey: "Read Only", value: nil, table: nil), "Nur lesen")
     }
 }

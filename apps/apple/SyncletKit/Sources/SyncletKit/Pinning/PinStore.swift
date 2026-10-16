@@ -116,6 +116,20 @@ public final class PinStore: Sendable {
         return dropped
     }
 
+    /// Drops every pin of a space the account lost (and the extension's applied state).
+    /// Returns `true` if something was pinned.
+    @discardableResult
+    public func forgetSpace(_ space: String) throws -> Bool {
+        guard !pins(space: space).isEmpty || !appliedPins(space: space).isEmpty else { return false }
+        var hadPins = false
+        try update(space: space) { pins in
+            hadPins = !pins.isEmpty
+            pins = PinSet()
+        }
+        try setAppliedPins(PinSet(), space: space)
+        return hadPins
+    }
+
     // MARK: Applied state (extension bookkeeping, no notification)
 
     /// The pins whose policy the extension last re-reported to the system (never ⇒ empty).

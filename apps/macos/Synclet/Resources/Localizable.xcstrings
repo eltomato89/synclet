@@ -211,6 +211,16 @@
         }
       }
     },
+    "External storage": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Externer Speicher"
+          }
+        }
+      }
+    },
     "General": {
       "localizations": {
         "de": {
@@ -371,6 +381,16 @@
         }
       }
     },
+    "Read-only": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nur lesen"
+          }
+        }
+      }
+    },
     "Recent Problems": {
       "localizations": {
         "de": {
@@ -407,6 +427,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Einstellungen…"
+          }
+        }
+      }
+    },
+    "Shared space": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Geteilter Bereich"
           }
         }
       }
@@ -527,6 +557,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Synclet – Hinweis"
+          }
+        }
+      }
+    },
+    "Team folder": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Team-Ordner"
           }
         }
       }

@@ -55,7 +55,8 @@ export class AuthGuard implements CanActivate {
     if (allowDt && dt) {
       const claims = await this.auth.verify<DownloadClaims>(dt, 'dl');
       if (!claims || claims.item !== req.params?.id) throw new SyncError('unauthorized');
-      return this.loadUser(claims.sub, null);
+      // Tokens of older servers carry no space: they were minted for the personal space.
+      return { ...(await this.loadUser(claims.sub, null)), downloadSpace: claims.s ?? claims.sub };
     }
     throw new SyncError('unauthorized');
   }

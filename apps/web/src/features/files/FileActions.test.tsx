@@ -44,3 +44,26 @@ it('hides it without office, for other file types and for folders', () => {
   cleanup();
   expect(menuLabels(item('Folder.docx', 'folder'), actions(true)).some((l) => l.includes('Office'))).toBe(false);
 });
+
+it('hides rename, move, delete and share for items of a read-only space', () => {
+  const ro = { ...item('Plan.pdf'), capabilities: { read: true, write: false, rename: false, move: false, delete: false, addChildren: false } } as SyncItem;
+  const labels = menuLabels(ro, actions(false));
+  expect(labels.some((l) => l.startsWith('Download'))).toBe(true);
+  for (const hidden of ['Rename', 'Move', 'Delete', 'Share']) expect(labels.some((l) => l.startsWith(hidden))).toBe(false);
+});
+
+it('keeps rename, move, delete and share for writable items', () => {
+  const full = { ...item('Plan.pdf'), capabilities: { read: true, write: true, rename: true, move: true, delete: true, addChildren: false } } as SyncItem;
+  const labels = menuLabels(full, actions(false));
+  for (const shown of ['Rename', 'Move', 'Delete', 'Share']) expect(labels.some((l) => l.startsWith(shown))).toBe(true);
+});
+
+it('labels the office entry "View in Office" for read-only files (the server opens view mode)', () => {
+  const ro = { ...item('Plan.docx'), capabilities: { read: true, write: false, rename: false, move: false, delete: false, addChildren: false } } as SyncItem;
+  const a = actions(true);
+  const labels = menuLabels(ro, a);
+  expect(labels.some((l) => l.startsWith('View in Office'))).toBe(true);
+  expect(labels.some((l) => l.startsWith('Open in Office'))).toBe(false);
+  fireEvent.click(screen.getByRole('menuitem', { name: /View in Office/ }));
+  expect(a.openInOffice).toHaveBeenCalled();
+});

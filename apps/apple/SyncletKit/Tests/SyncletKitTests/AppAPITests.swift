@@ -51,6 +51,15 @@ final class AppAPITests: XCTestCase {
                        ["GET /api/trash", "POST /api/trash/t1/restore", "DELETE /api/trash/t1", "DELETE /api/trash"])
     }
 
+    func testTrashEntrySpaceIdIsOptional() throws {
+        let old = try JSONDecoder().decode(TrashEntry.self, from: Data(Fixtures.trashEntryJSON().utf8))
+        XCTAssertNil(old.spaceId)
+        let json = Fixtures.trashEntryJSON().replacingOccurrences(of: #""itemCount":1"#,
+                                                                   with: #""itemCount":1,"spaceId":"u2","deletedBy":"Jens""#)
+        let entry = try JSONDecoder().decode(TrashEntry.self, from: Data(json.utf8))
+        XCTAssertEqual(entry.spaceId, "u2")
+    }
+
     func testTrashRestoreConflict409IsReported() async {
         MockURLProtocol.reset { _ in .error(409, "conflict") }
         let expected = SyncAPIError.from(status: 409, body: SyncErrorBody(statusCode: 409, message: "conflict", code: "conflict", item: nil))

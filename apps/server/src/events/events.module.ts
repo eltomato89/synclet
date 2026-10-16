@@ -19,7 +19,10 @@ import { listenClientFactory, usesTransactionPooler } from './pg-listen-client';
           new Logger('ChangeNotifier').warn('DATABASE_URL uses pgbouncer=true: a transaction-pooling connection never delivers notifications; '
             + 'event streams fall back to the check before each ping (README, "PostgreSQL").');
         }
-        return new ChangeNotifier({ enabled: config.role === 'server', createClient: listenClientFactory(url) });
+        return new ChangeNotifier({
+          enabled: config.role === 'server',
+          createClient: listenClientFactory(url),
+        });
       },
     },
   ],

@@ -69,3 +69,14 @@ it('formats relative time', () => {
   expect(relativeTime('2026-10-14T12:00:00Z', 'en', now)).toBe('yesterday');
   expect(relativeTime('2026-10-15T11:59:50Z', 'en', now)).toBe('now');
 });
+
+it('offers no restore for a read-only file (list, preview and download stay)', async () => {
+  vi.spyOn(apiMod, 'api').mockResolvedValue(versions);
+  const { wrapper: qw } = testQueryClient();
+  const wrapper = ({ children }: { children: ReactNode }) => qw({ children: <TooltipProvider>{children}</TooltipProvider> });
+  const ro = { ...item, capabilities: { read: true, write: false, rename: false, move: false, delete: false, addChildren: false } } as SyncItem;
+  render(<VersionsPanel item={ro} open onOpenChange={() => undefined} />, { wrapper });
+  expect(await screen.findByText('Version 2')).toBeTruthy();
+  expect(screen.getByRole('button', { name: /Download version 2/i })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: /Restore version/i })).toBeNull();
+});

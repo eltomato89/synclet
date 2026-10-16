@@ -8,12 +8,18 @@ import SyncletKit
 /// the macOS `ChangeMonitor` without the wake-up observation (the app stops all monitors
 /// when it leaves the foreground and starts them again when it becomes active).
 ///
-/// - `.connected` (`hello`): the extension catches up (`.workingSet`); a cursor that moved
-///   since the last known one also counts as a change (missed while disconnected).
+/// Cursors are tracked per space (Phase 4): `hello` carries `cursors` (space id → cursor),
+/// `changes` the space it belongs to; a space's cursor is only compared with its own.
+///
+/// - `.connected` (`hello`): the extension catches up (`.workingSet`); a space whose cursor
+///   moved since the last known one also counts as a change (missed while disconnected).
 /// - `.changes`: ``onChange`` with the account key (the browser reloads), then `.workingSet`.
 ///   Both are coalesced: at most one per 500 ms (leading edge plus one trailing call).
-/// - Stream down (connecting / offline): `GET /account` every 60 s; when its `cursor`
-///   differs from the last known one ⇒ ``onChange`` + `.workingSet`.
+/// - `.account` (spaces or rights changed): `GET /account`, changed spaces are stored
+///   (``onSpacesChanged``, `.rootContainer`), then ``onChange`` + `.workingSet`.
+/// - Stream down (connecting / offline): `GET /account` (personal cursor) plus
+///   `GET /cursor?space=` per other space every 60 s; a moved cursor ⇒ ``onChange`` +
+///   `.workingSet`.
 /// - After `hello`: one `GET /account` refresh; changed spaces are stored and
 ///   `.rootContainer` is signalled. The server is reachable again ⇒
 ///   ``Dependencies/resolveErrors`` once per connection.
@@ -38,6 +44,8 @@ final class ForegroundMonitor {
         var signal: @Sendable (NSFileProviderItemIdentifier) async -> Void
         /// `GET /account` (cursor and spaces).
         var fetchAccount: @Sendable () async throws -> SyncAccount
+        /// `GET /cursor?space=<id>` (polling of the spaces other than `personal`).
+        var fetchCursor: @Sendable (String) async throws -> String = { _ in throw CancellationError() }
         /// Stores the spaces; `true` when they changed.
         var updateSpaces: @MainActor ([SyncSpace]) -> Bool
         /// The stream ended with 401/403 (write the marker, update the account list).
@@ -56,6 +64,9 @@ final class ForegroundMonitor {
         /// First delay before reopening a stream that ended by itself (doubles up to `reconnectMax`).
         var reconnectBase: Duration = .seconds(1)
         var reconnectMax: Duration = .seconds(60)
+        /// Longest wait for one space's cursor while polling (a hanging storage must not
+        /// hold back the others).
+        var cursorTimeout: Duration = .seconds(10)
     }
 
     private(set) var state: State = .connecting
@@ -63,6 +74,9 @@ final class ForegroundMonitor {
     /// Called with ``accountKey`` when something changed on the server (before the working
     /// set is signalled). Set by ``AccountsModel``.
     @ObservationIgnored var onChange: @MainActor (String) -> Void = { _ in }
+    /// Called after the stored spaces changed (SSE `account`, refresh after `hello`); the
+    /// account list reloads them. Set by ``AccountsModel``.
+    @ObservationIgnored var onSpacesChanged: @MainActor () -> Void = {}
 
     @ObservationIgnored private let dependencies: Dependencies
     @ObservationIgnored private let timing: Timing
@@ -73,8 +87,9 @@ final class ForegroundMonitor {
     @ObservationIgnored private var reconnectTask: Task<Void, Never>?
     @ObservationIgnored private var trailingSignal: Task<Void, Never>?
     @ObservationIgnored private var reconnectAttempt = 0
-    /// Last cursor seen (hello, changes, poll); `nil` until the first one.
-    @ObservationIgnored private var lastCursor: String?
+    /// Last cursor seen per space id (hello, changes, poll); empty until the first one.
+    @ObservationIgnored private var lastCursors: [String: String] = [:]
+    @ObservationIgnored private var hasCursors = false
     @ObservationIgnored private var lastSignal: ContinuousClock.Instant?
     /// A change is waiting for the trailing signal (its `onChange` is still due).
     @ObservationIgnored private var trailingIsChange = false
@@ -158,10 +173,13 @@ final class ForegroundMonitor {
 
     private func handle(_ signal: StreamSignal) {
         switch signal {
-        case .connected(let cursor):
+        case .connected(let cursor, let cursors):
             reconnectAttempt = 0
             setState(.connected)
-            let moved = advance(to: cursor)
+            // Servers before Phase 4 send only the personal cursor.
+            var all = cursors
+            if all[Self.personal] == nil { all[Self.personal] = cursor }
+            let moved = advance(to: all, complete: true)
             notify(change: moved)
             if !resolvedThisConnection {
                 resolvedThisConnection = true
@@ -170,10 +188,20 @@ final class ForegroundMonitor {
             }
             accountTask?.cancel()
             accountTask = Task { [weak self] in await self?.refreshSpaces() }
-        case .changes(_, let cursor):
+        case .changes(let space, let cursor):
             if state != .connected { setState(.connected) }
-            _ = advance(to: cursor)
+            _ = advance(to: [space: cursor], complete: false)
             notify(change: true)
+        case .account:
+            // The spaces or rights changed: reload them first (account list, root container),
+            // then let the browser and the extension catch up.
+            if state != .connected { setState(.connected) }
+            accountTask?.cancel()
+            accountTask = Task { [weak self] in
+                await self?.refreshSpaces()
+                guard !Task.isCancelled, let self, self.isRunning, self.state != .authFailed else { return }
+                self.notify(change: true)
+            }
         case .disconnected(let reason):
             Self.log.debug("stream disconnected: \(String(describing: reason), privacy: .public)")
             setState(.offline)
@@ -238,31 +266,80 @@ final class ForegroundMonitor {
 
     // MARK: - Polling
 
-    /// `GET /account`; a moved cursor is a change.
+    /// `GET /account` (the personal cursor) and the cursor of every other available space;
+    /// a moved cursor is a change.
     private func poll() async {
         do {
             let account = try await dependencies.fetchAccount()
+            var cursors = [Self.personal: account.cursor]
+            let others = account.spaces.filter { $0.id != Self.personal && $0.isAvailable }.map(\.id)
+            for (space, cursor) in await Self.fetchCursors(of: others, fetch: dependencies.fetchCursor,
+                                                           timeout: timing.cursorTimeout) {
+                cursors[space] = cursor
+            }
             guard isRunning, state != .authFailed, state != .connected, !Task.isCancelled else { return }
-            if advance(to: account.cursor) { notify(change: true) }
+            if advance(to: cursors, complete: false) { notify(change: true) }
         } catch {
             Self.log.debug("poll failed: \(String(describing: error), privacy: .public)")
         }
     }
 
-    /// Records `cursor`; `true` when a known cursor moved.
-    private func advance(to cursor: String) -> Bool {
-        defer { lastCursor = cursor }
-        guard let lastCursor else { return false }
-        return lastCursor != cursor
+    private static let personal = SyncAPIClient.personalSpaceID
+
+    /// The cursors of `spaces`, fetched concurrently; a space that fails or takes longer than
+    /// `timeout` is left out (its cursor stays as it was).
+    nonisolated private static func fetchCursors(of spaces: [String],
+                                                 fetch: @escaping @Sendable (String) async throws -> String,
+                                                 timeout: Duration) async -> [String: String] {
+        await withTaskGroup(of: (String, String?).self) { group in
+            for space in spaces {
+                group.addTask {
+                    await withTaskGroup(of: String?.self) { race in
+                        race.addTask { try? await fetch(space) }
+                        race.addTask {
+                            try? await Task.sleep(for: timeout)
+                            return nil
+                        }
+                        let first = await race.next() ?? nil
+                        race.cancelAll()
+                        return (space, first)
+                    }
+                }
+            }
+            var result: [String: String] = [:]
+            for await (space, cursor) in group {
+                if let cursor { result[space] = cursor }
+            }
+            return result
+        }
     }
 
-    /// One `GET /account` after `hello`: changed spaces ⇒ root container.
+    /// Records the cursors of the spaces in `cursors`; `true` when a known cursor of the same
+    /// space moved. `complete` (a `hello`) replaces the whole map: a space that appeared or
+    /// went away since the last `hello` also counts as a change.
+    private func advance(to cursors: [String: String], complete: Bool) -> Bool {
+        let known = hasCursors
+        let previous = lastCursors
+        hasCursors = true
+        if complete {
+            lastCursors = cursors
+        } else {
+            lastCursors.merge(cursors) { _, new in new }
+        }
+        guard known else { return false }
+        if cursors.contains(where: { space, cursor in previous[space].map { $0 != cursor } ?? false }) { return true }
+        return complete && Set(cursors.keys) != Set(previous.keys)
+    }
+
+    /// `GET /account` (after `hello`, on `account`): changed spaces ⇒ ``onSpacesChanged``
+    /// and the root container.
     private func refreshSpaces() async {
         do {
             let account = try await dependencies.fetchAccount()
             guard isRunning, state != .authFailed, !Task.isCancelled else { return }
             if dependencies.updateSpaces(account.spaces) {
                 Self.log.info("spaces changed: signalling the root container")
+                onSpacesChanged()
                 await dependencies.signal(.rootContainer)
             }
         } catch {
@@ -330,6 +407,10 @@ extension ForegroundMonitor {
             fetchAccount: {
                 guard let client = manager.client(for: key) else { throw SyncAPIError.unauthorized(message: "account removed") }
                 return try await client.account()
+            },
+            fetchCursor: { space in
+                guard let client = manager.client(for: key) else { throw SyncAPIError.unauthorized(message: "account removed") }
+                return try await client.cursor(space: space)
             },
             updateSpaces: { spaces in (try? manager.updateSpaces(key: key, spaces: spaces)) ?? false },
             reportAuthFailure: {

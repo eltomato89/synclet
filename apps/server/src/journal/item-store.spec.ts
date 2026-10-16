@@ -8,7 +8,7 @@ describe('ItemStore', () => {
   afterEach(async () => { await ctx.close(); });
 
   const mk = (path: string, type: 'folder' | 'file', parentId: string | null) =>
-    ctx.prisma.item.create({ data: { ownerId: user.id, parentId, type, name: path.split('/').pop()!, nameKey: path.split('/').pop()!.toLowerCase(), path, mtime: new Date() } });
+    ctx.prisma.item.create({ data: { spaceId: user.id, parentId, type, name: path.split('/').pop()!, nameKey: path.split('/').pop()!.toLowerCase(), path, mtime: new Date() } });
 
   it('rewrites descendant paths on folder move (unicode-safe)', async () => {
     const a = await mk('Ä 🚀', 'folder', null);
@@ -30,7 +30,7 @@ describe('ItemStore', () => {
 
   it('finds siblings sharing a name key', async () => {
     const x = await mk('Doc.md', 'file', null);
-    const y = await ctx.prisma.item.create({ data: { ownerId: user.id, parentId: null, type: 'file', name: 'doc.md', nameKey: 'doc.md', path: 'doc.md', mtime: new Date() } });
+    const y = await ctx.prisma.item.create({ data: { spaceId: user.id, parentId: null, type: 'file', name: 'doc.md', nameKey: 'doc.md', path: 'doc.md', mtime: new Date() } });
     const res = await ctx.prisma.$transaction((tx) => store.sameKeySiblings(tx, user.id, null, ['doc.md'], new Set([x.id])));
     expect(res.map((r) => r.id)).toEqual([y.id]);
   });

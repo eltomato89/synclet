@@ -155,7 +155,8 @@ struct ShareRootView: View {
         }
         .sheet(isPresented: $showsFolderPicker) {
             if let account = model.selectedAccount {
-                ShareFolderPicker(api: model.client(for: account), root: ShareTarget.root(of: account)) { folder in
+                ShareFolderPicker(api: model.client(for: account), roots: ShareTarget.spaceTargets(of: account),
+                                  spaces: SpaceDirectory(spaces: account.spaces)) { folder in
                     model.target = folder
                 }
             }

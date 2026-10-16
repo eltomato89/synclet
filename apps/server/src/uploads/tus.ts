@@ -15,12 +15,13 @@ import { APP_CONFIG, AppConfig } from '../config';
 import { validateName } from '../common/names';
 import { InsufficientStorageError, isStorageFull } from '../common/storage-errors';
 import { SyncError } from '../common/sync-error';
-import type { AuthUser } from '../common/types';
+import type { AuthUser, IndexSpace } from '../common/types';
 import { FilesService, OnConflict } from '../files/files.service';
-import { PrismaService } from '../prisma/prisma.service';
 import { importEsm } from '../common/import-esm';
+import { apiSpaceId } from '../spaces/space-ids';
+import { ItemResolver } from '../sync/item-resolver';
 import { SerializerService } from '../sync/serializer.service';
-import { parseSyncId, ROOT_ID } from '../sync/sync-ids';
+import { parseRootId, parseSyncId, ROOT_ID } from '../sync/sync-ids';
 
 export const TUS_PATH = '/api/sync/v1/uploads';
 /** Unfinished uploads older than this are refused (410) and removed by maintenance. */
@@ -45,6 +46,8 @@ const tusError = (status_code: number, body: string): TusError => ({ status_code
 
 /** Resolved, validated `Upload-Metadata` of a replace (`itemId` + `ifMatch`). */
 interface ReplaceMeta {
+  /** Space of the file (write access checked). */
+  space: IndexSpace;
   /** Live file row id. */
   itemId: string;
   /** Expected content version (`ifMatch` = `v<n>`). */
@@ -54,9 +57,11 @@ interface ReplaceMeta {
 
 /** Resolved, validated `Upload-Metadata` of a create. */
 interface UploadMeta {
+  /** Space of the parent folder (write access checked). */
+  space: IndexSpace;
   /** Sync id as sent (default `root`). */
   parentId: string;
-  /** Resolved live folder row id (null = user root). */
+  /** Resolved live folder row id (null = the space root). */
   parent: string | null;
   name: string;
   onConflict: OnConflict;
@@ -85,8 +90,8 @@ export class TusService implements OnModuleInit {
   constructor(
     private readonly guard: AuthGuard,
     private readonly files: FilesService,
-    private readonly prisma: PrismaService,
     private readonly serializer: SerializerService,
+    private readonly resolver: ItemResolver,
     private readonly adapterHost: HttpAdapterHost,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {
@@ -134,8 +139,10 @@ export class TusService implements OnModuleInit {
         if (!(err instanceof SyncError)) return undefined;
         const body: Record<string, unknown> = { statusCode: err.status, message: err.message, code: err.code };
         if (err.itemRow) {
-          const owner = await this.prisma.user.findUniqueOrThrow({ where: { id: err.itemRow.ownerId } });
-          body.item = (await this.serializer.toSyncItems(owner, [err.itemRow]))[0];
+          const raw = this.rawRequest(_req);
+          const user = raw && this.callers.get(raw);
+          const view = user ? await this.serializer.viewFor(user, err.itemRow.spaceId) : undefined;
+          body.item = (await this.serializer.toSyncItems({ id: err.itemRow.spaceId }, [err.itemRow], view))[0];
         }
         return { status_code: err.status, body: JSON.stringify(body) };
       },
@@ -193,14 +200,13 @@ export class TusService implements OnModuleInit {
     return user;
   }
 
-  private async resolveParent(user: AuthUser, rawId: string): Promise<string | null> {
+  /** The folder (or space root) to upload into; write access to its space is required. */
+  private async resolveParent(user: AuthUser, rawId: string): Promise<{ space: IndexSpace; parent: string | null }> {
     const parsed = parseSyncId(rawId);
-    if (!parsed) throw new SyncError('invalid_request', 'invalid parentId');
-    if (parsed.kind === 'root') return null;
-    if (parsed.kind !== 'folder') throw new SyncError('invalid_request', 'parent is not a folder');
-    const row = await this.prisma.item.findFirst({ where: { id: parsed.uuid, ownerId: user.id, deletedAt: null, type: 'folder' } });
-    if (!row) throw new SyncError('not_found', 'parent not found');
-    return row.id;
+    if (parsed?.kind === 'file') throw new SyncError('invalid_request', 'parent is not a folder');
+    if (!parsed && !parseRootId(rawId)) throw new SyncError('invalid_request', 'invalid parentId');
+    const { space, item } = await this.resolver.resolve(user, rawId, 'write');
+    return { space, parent: item?.id ?? null };
   }
 
   private parseModifiedAt(raw: string | null | undefined): Date | null {
@@ -220,13 +226,13 @@ export class TusService implements OnModuleInit {
     const ifMatch = m.ifMatch;
     if (!ifMatch) throw new SyncError('precondition_required', 'ifMatch required with itemId');
     const modifiedAt = this.parseModifiedAt(m.modifiedAt);
-    const row = await this.prisma.item.findFirst({ where: { id: parsed.uuid, ownerId: user.id, deletedAt: null, type: 'file' } });
+    const { space, item: row } = await this.resolver.resolve(user, m.itemId!, 'write');
     if (!row) throw new SyncError('not_found', 'item not found');
     const match = /^v(\d+)$/.exec(ifMatch);
     if (!match) throw new SyncError('conflict', 'unknown etag', row);
     const version = Number(match[1]);
     if (row.version !== version) throw new SyncError('conflict', 'version mismatch', row);
-    return { itemId: row.id, version, modifiedAt };
+    return { space, itemId: row.id, version, modifiedAt };
   }
 
   private async validateMeta(user: AuthUser, metadata: Upload['metadata']): Promise<UploadMeta | ReplaceMeta> {
@@ -239,14 +245,14 @@ export class TusService implements OnModuleInit {
     const nameError = validateName(name);
     if (nameError) throw new SyncError('invalid_name', `invalid name (${nameError})`);
     const parentId = m.parentId || ROOT_ID;
-    const parent = await this.resolveParent(user, parentId);
+    const { space, parent } = await this.resolveParent(user, parentId);
     const onConflict = m.onConflict || 'rename';
     if (onConflict !== 'fail' && onConflict !== 'rename') throw new SyncError('invalid_request', 'invalid onConflict');
     const modifiedAt = this.parseModifiedAt(m.modifiedAt);
-    return { parentId, parent, name, onConflict, modifiedAt };
+    return { space, parentId, parent, name, onConflict, modifiedAt };
   }
 
-  /** Publishes a completed upload into the user folder and drops the staged part. */
+  /** Publishes a completed upload into its space and drops the staged part. */
   private async finish(req: TusRequest, upload: Upload): Promise<{ status_code: number; headers: Record<string, string>; body: string }> {
     const user = this.caller(req);
     // A retried empty PATCH at the final offset while we publish must not publish twice.
@@ -254,13 +260,15 @@ export class TusService implements OnModuleInit {
     this.finishing.add(upload.id);
     let item: SyncItem;
     try {
+      // Checked again: access may have been revoked since the upload was created (→ 404).
       const meta = await this.validateMeta(user, upload.metadata);
+      const space = meta.space;
       const source = createReadStream(path.join(this.directory, upload.id));
       // A replace re-checks the base version under the user lock (412 → upload dropped below).
       const row = 'itemId' in meta
-        ? await this.files.replaceContent(user, meta.itemId, source, { ifMatchVersion: meta.version, modifiedAt: meta.modifiedAt })
-        : await this.files.upload(user, meta.parent, meta.name, source, { onConflict: meta.onConflict, modifiedAt: meta.modifiedAt });
-      item = (await this.serializer.toSyncItems(user, [row]))[0];
+        ? await this.files.replaceContent(space, meta.itemId, source, { ifMatchVersion: meta.version, modifiedAt: meta.modifiedAt, by: user.id })
+        : await this.files.upload(space, meta.parent, meta.name, source, { onConflict: meta.onConflict, modifiedAt: meta.modifiedAt });
+      item = (await this.serializer.toSyncItems(space, [row], { apiSpaceId: apiSpaceId(space, user), role: 'write' }))[0];
     } catch (e) {
       // Client errors (conflict, parent gone) cannot be fixed by retrying this upload: drop it.
       // Anything else (I/O, database, full disk = 507) keeps it; an empty PATCH at the final offset retries.

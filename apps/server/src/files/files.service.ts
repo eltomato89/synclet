@@ -2,21 +2,23 @@ import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import type { Item, VersionSource } from '@prisma/client';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { lstat, mkdir, open, readdir, readFile, rm, rmdir, unlink, utimes } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, readFile, rename, rm, rmdir, unlink, utimes } from 'node:fs/promises';
 import path from 'node:path';
 import { Transform, type Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { APP_CONFIG, AppConfig } from '../config';
 import { freeName, nameKey, tempName, TRASH_STAGING_PREFIX, trashStagingName, validateName } from '../common/names';
-import { absPath, joinRel, parentRel as parentOf, realpathInside, userRoot } from '../common/paths';
+import { absPath, joinRel, parentRel as parentOf, realpathInside } from '../common/paths';
+import { UUID } from '../common/ids';
 import { SyncError } from '../common/sync-error';
-import type { IndexUser } from '../common/types';
+import type { IndexSpace } from '../common/types';
 import { ItemStore } from '../journal/item-store';
 import { JournalService, Tx } from '../journal/journal.service';
 import { PrismaService, TX_OPTS } from '../prisma/prisma.service';
+import { SpacesRepo } from '../spaces/spaces.repo';
 import { PreparedVersion, StaleVersionError, VersionContentReplacer, VersionsService } from '../versions/versions.service';
 import { rethrowStorageError } from '../common/storage-errors';
-import { copyNoReplace, linkNoReplace, moveAcrossFs, moveNoReplace, replaceAtomic, statEntry } from './fs-ops';
+import { copyNoReplace, copyTree, linkNoReplace, moveAcrossFs, moveNoReplace, replaceAtomic, statEntry } from './fs-ops';
 
 export type OnConflict = 'fail' | 'rename';
 
@@ -26,6 +28,8 @@ export function itemEtag(item: Item): string {
 
 const errno = (e: unknown) => (e as NodeJS.ErrnoException)?.code;
 const isEexist = (e: unknown) => errno(e) === 'EEXIST';
+/** commitSpaceMove: the spaces are on different file systems, nothing was changed. */
+const CROSS_DEVICE = Symbol('cross-device');
 
 /** Disk errors that mean "the parent/source vanished on the host and is not indexed yet". */
 function mapMissing(e: unknown, what: string): unknown {
@@ -42,7 +46,20 @@ function guardBody(body: Readable) {
 
 const STAGED_TRASH = /^\.synclet-trash-([0-9a-f]{32})$/;
 /** Written to /meta/staging/<trashId>.json before an entry is vacated, so a crash before commit can be undone. */
-interface TrashIntent { userId: string; username: string; itemId: string; originalRel: string; name: string; type: 'folder' | 'file' }
+interface TrashIntent {
+  spaceId: string; itemId: string; originalRel: string; name: string; type: 'folder' | 'file';
+  /** Intents written before Phase 4 carry the user id (= personal space id) instead. */
+  userId?: string;
+  /** Who deleted it (absent in older intents). */
+  deletedBy?: string;
+}
+
+/** sha256 (hex) of a file's bytes, the format of `Item.contentHash`. */
+async function sha256Of(abs: string): Promise<string> {
+  const hash = createHash('sha256');
+  await pipeline(createReadStream(abs), hash);
+  return hash.digest('hex');
+}
 
 async function sizeOf(abs: string): Promise<bigint> {
   const st = await lstat(abs, { bigint: true });
@@ -72,6 +89,11 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
   private readonly log = new Logger(FilesService.name);
   /** Serialized background moves of committed deletes from their staging entry to /meta/trash. */
   private trashQueue: Promise<void> = Promise.resolve();
+  /**
+   * Test seams of moves between spaces: the same-file-system rename (replace it to simulate EXDEV)
+   * and a hook between the unlocked copy and its locked publication.
+   */
+  readonly moveOps: { moveNoReplace: (src: string, dst: string) => Promise<void>; afterCopy?: () => Promise<void> } = { moveNoReplace };
 
   constructor(
     private readonly prisma: PrismaService,
@@ -79,21 +101,22 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
     private readonly store: ItemStore,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
     private readonly versions: VersionsService,
+    private readonly spaces: SpacesRepo,
   ) {
     versions.attachReplacer(this);
   }
 
-  private abs(user: IndexUser, rel: string) { return absPath(this.config.dataRoot, user.username, rel); }
+  private abs(space: IndexSpace, rel: string) { return absPath(space.rootPath, rel); }
 
-  private root(user: IndexUser) { return userRoot(this.config.dataRoot, user.username); }
+  private root(space: IndexSpace) { return space.rootPath; }
 
   /**
-   * Asserts that folder `rel` is a chain of real directories below the user root: no symlinked
+   * Asserts that folder `rel` is a chain of real directories below the space root: no symlinked
    * ancestor (e.g. `Docs -> ../bob` swapped in after indexing), nothing resolving outside the root.
-   * Called under the user lock right before every disk mutation, so nothing is touched otherwise.
+   * Called under the space lock right before every disk mutation, so nothing is touched otherwise.
    */
-  async assertRealDir(user: IndexUser, rel: string): Promise<void> {
-    const root = this.root(user);
+  async assertRealDir(space: IndexSpace, rel: string): Promise<void> {
+    const root = this.root(space);
     let cur = root;
     for (const seg of rel === '' ? [] : rel.split('/')) {
       cur = path.join(cur, seg);
@@ -103,14 +126,14 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
     try {
       await realpathInside(cur, root);
     } catch {
-      throw new SyncError('not_found', 'path escapes the user root');
+      throw new SyncError('not_found', 'path escapes the space root');
     }
   }
 
   /** Checks an indexed entry before mutating it: real parent chain, and still the indexed type. */
-  private async entryOnDisk(user: IndexUser, item: Item): Promise<'ok' | 'missing'> {
-    await this.assertRealDir(user, parentOf(item.path));
-    const st = await lstat(this.abs(user, item.path)).catch((e) => (errno(e) === 'ENOENT' ? null : Promise.reject(e)));
+  private async entryOnDisk(space: IndexSpace, item: Item): Promise<'ok' | 'missing'> {
+    await this.assertRealDir(space, parentOf(item.path));
+    const st = await lstat(this.abs(space, item.path)).catch((e) => (errno(e) === 'ENOENT' ? null : Promise.reject(e)));
     if (!st) return 'missing';
     if (item.type === 'folder' ? !st.isDirectory() : !st.isFile()) throw new SyncError('not_found', 'entry on disk is not the indexed type');
     return 'ok';
@@ -122,38 +145,38 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
     return raw.normalize('NFC');
   }
 
-  private async parentPath(tx: Tx, user: IndexUser, parentId: string | null): Promise<string> {
+  private async parentPath(tx: Tx, space: IndexSpace, parentId: string | null): Promise<string> {
     if (parentId === null) return '';
-    const p = await this.store.getLive(tx, user.id, parentId);
+    const p = await this.store.getLive(tx, space.id, parentId);
     if (!p) throw new SyncError('not_found', 'parent not found');
     if (p.type !== 'folder') throw new SyncError('invalid_request', 'parent is not a folder');
     return p.path;
   }
 
-  private async takenKeys(tx: Tx, user: IndexUser, parentId: string | null, excludeId?: string) {
-    const sibs = (await this.store.liveChildren(tx, user.id, parentId)).filter((s) => s.id !== excludeId);
+  private async takenKeys(tx: Tx, space: IndexSpace, parentId: string | null, excludeId?: string) {
+    const sibs = (await this.store.liveChildren(tx, space.id, parentId)).filter((s) => s.id !== excludeId);
     return { sibs, keys: new Set(sibs.map((s) => s.nameKey)) };
   }
 
   /** Journals the items plus same-key siblings (their display names may change). */
-  private async announce(tx: Tx, user: IndexUser, items: Item[], extra: { parentId: string | null; key: string }[] = []) {
+  private async announce(tx: Tx, space: IndexSpace, items: Item[], extra: { parentId: string | null; key: string }[] = []) {
     const ids = new Set(items.map((i) => i.id));
     const sibs: Item[] = [];
     for (const { parentId, key } of [...items.map((i) => ({ parentId: i.parentId, key: i.nameKey })), ...extra]) {
-      sibs.push(...(await this.store.sameKeySiblings(tx, user.id, parentId, [key], ids)));
+      sibs.push(...(await this.store.sameKeySiblings(tx, space.id, parentId, [key], ids)));
     }
-    await this.journal.record(tx, user.id, [...items, ...sibs], 'upsert');
+    await this.journal.record(tx, space.id, [...items, ...sibs], 'upsert');
   }
 
-  async createFolder(user: IndexUser, parentId: string | null, rawName: string, onConflict: OnConflict = 'fail'): Promise<Item> {
+  async createFolder(space: IndexSpace, parentId: string | null, rawName: string, onConflict: OnConflict = 'fail'): Promise<Item> {
     const desired = this.checkName(rawName);
     let created: string | null = null;
     try {
       return await this.prisma.$transaction(async (tx) => {
-        await this.journal.lockUser(tx, user.id);
-        const parentRel = await this.parentPath(tx, user, parentId);
-        const { sibs, keys } = await this.takenKeys(tx, user, parentId);
-        await this.assertRealDir(user, parentRel);
+        await this.journal.lockSpaceForWrite(tx, space);
+        const parentRel = await this.parentPath(tx, space, parentId);
+        const { sibs, keys } = await this.takenKeys(tx, space, parentId);
+        await this.assertRealDir(space, parentRel);
         let name = desired;
         for (let attempt = 0; ; attempt++) {
           if (keys.has(nameKey(name))) {
@@ -161,8 +184,8 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
             name = freeName(desired, keys, true);
           }
           try {
-            await mkdir(this.abs(user, joinRel(parentRel, name)));
-            created = this.abs(user, joinRel(parentRel, name));
+            await mkdir(this.abs(space, joinRel(parentRel, name)));
+            created = this.abs(space, joinRel(parentRel, name));
             break;
           } catch (e) {
             if (!isEexist(e) || attempt > 100) throw mapMissing(e, 'parent folder');
@@ -171,11 +194,11 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
           }
         }
         const rel = joinRel(parentRel, name);
-        const st = await statEntry(this.abs(user, rel));
+        const st = await statEntry(this.abs(space, rel));
         const item = await tx.item.create({
-          data: { ownerId: user.id, parentId, type: 'folder', name, nameKey: nameKey(name), path: rel, size: 0n, mtime: st.mtime, ino: st.ino, dev: st.dev },
+          data: { spaceId: space.id, parentId, type: 'folder', name, nameKey: nameKey(name), path: rel, size: 0n, mtime: st.mtime, ino: st.ino, dev: st.dev },
         });
-        await this.announce(tx, user, [item]);
+        await this.announce(tx, space, [item]);
         return item;
       }, TX_OPTS);
     } catch (e) {
@@ -185,9 +208,9 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
     }
   }
 
-  /** Streams the body into a temp file in the user root (same file system as the target). */
-  private async receive(user: IndexUser, body: Readable, modifiedAt?: Date | null, max = this.config.maxUploadBytes): Promise<{ tmp: string; size: bigint; sha256: string }> {
-    const tmp = path.join(this.root(user), tempName(randomBytes(8).toString('hex')));
+  /** Streams the body into a temp file in the space root (same file system as the target). */
+  private async receive(space: IndexSpace, body: Readable, modifiedAt?: Date | null, max = this.config.maxUploadBytes): Promise<{ tmp: string; size: bigint; sha256: string }> {
+    const tmp = path.join(this.root(space), tempName(randomBytes(8).toString('hex')));
     const hash = createHash('sha256');
     let size = 0;
     const meter = new Transform({
@@ -210,14 +233,14 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
     return { tmp, size: BigInt(size), sha256: hash.digest('hex') };
   }
 
-  async upload(user: IndexUser, parentId: string | null, rawName: string, body: Readable, opts: { onConflict?: OnConflict; modifiedAt?: Date | null }): Promise<Item> {
+  async upload(space: IndexSpace, parentId: string | null, rawName: string, body: Readable, opts: { onConflict?: OnConflict; modifiedAt?: Date | null }): Promise<Item> {
     guardBody(body);
     const desired = this.checkName(rawName);
-    await this.prisma.$transaction((tx) => this.parentPath(tx, user, parentId)); // fail fast before streaming
-    const { tmp, sha256 } = await this.receive(user, body, opts.modifiedAt);
+    await this.prisma.$transaction((tx) => this.parentPath(tx, space, parentId)); // fail fast before streaming
+    const { tmp, sha256 } = await this.receive(space, body, opts.modifiedAt);
     try {
       try {
-        return await this.publishNew(user, parentId, desired, tmp, sha256, opts.onConflict ?? 'fail');
+        return await this.publishNew(space, parentId, desired, tmp, sha256, opts.onConflict ?? 'fail');
       } finally {
         await rm(tmp, { force: true });
       }
@@ -227,14 +250,14 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
   }
 
   /** Creates a file from a received temp file (hard link, never replacing). The caller removes `tmp`. */
-  private async publishNew(user: IndexUser, parentId: string | null, desired: string, tmp: string, sha256: string, onConflict: OnConflict): Promise<Item> {
+  private async publishNew(space: IndexSpace, parentId: string | null, desired: string, tmp: string, sha256: string, onConflict: OnConflict): Promise<Item> {
     let published: { abs: string; ino: bigint } | null = null;
     try {
       return await this.prisma.$transaction(async (tx) => {
-        await this.journal.lockUser(tx, user.id);
-        const parentRel = await this.parentPath(tx, user, parentId);
-        const { sibs, keys } = await this.takenKeys(tx, user, parentId);
-        await this.assertRealDir(user, parentRel);
+        await this.journal.lockSpaceForWrite(tx, space);
+        const parentRel = await this.parentPath(tx, space, parentId);
+        const { sibs, keys } = await this.takenKeys(tx, space, parentId);
+        await this.assertRealDir(space, parentRel);
         let name = desired;
         for (let attempt = 0; ; attempt++) {
           if (keys.has(nameKey(name))) {
@@ -242,7 +265,7 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
             name = freeName(desired, keys, false);
           }
           try {
-            await linkNoReplace(tmp, this.abs(user, joinRel(parentRel, name)));
+            await linkNoReplace(tmp, this.abs(space, joinRel(parentRel, name)));
             break;
           } catch (e) {
             if (!isEexist(e) || attempt > 100) throw mapMissing(e, 'parent folder');
@@ -251,12 +274,12 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
           }
         }
         const rel = joinRel(parentRel, name);
-        const st = await statEntry(this.abs(user, rel));
-        published = { abs: this.abs(user, rel), ino: st.ino };
+        const st = await statEntry(this.abs(space, rel));
+        published = { abs: this.abs(space, rel), ino: st.ino };
         const item = await tx.item.create({
-          data: { ownerId: user.id, parentId, type: 'file', name, nameKey: nameKey(name), path: rel, size: st.size, mtime: st.mtime, ino: st.ino, dev: st.dev, contentHash: sha256 },
+          data: { spaceId: space.id, parentId, type: 'file', name, nameKey: nameKey(name), path: rel, size: st.size, mtime: st.mtime, ino: st.ino, dev: st.dev, contentHash: sha256 },
         });
-        await this.announce(tx, user, [item]);
+        await this.announce(tx, space, [item]);
         return item;
       }, TX_OPTS);
     } catch (e) {
@@ -271,21 +294,21 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
   }
 
   /** New file from a template (e.g. an empty office document); a taken name gets a free suffix. */
-  async createFromTemplate(user: IndexUser, parentId: string | null, rawName: string, templatePath: string): Promise<Item> {
-    return this.upload(user, parentId, rawName, createReadStream(templatePath), { onConflict: 'rename' });
+  async createFromTemplate(space: IndexSpace, parentId: string | null, rawName: string, templatePath: string): Promise<Item> {
+    return this.upload(space, parentId, rawName, createReadStream(templatePath), { onConflict: 'rename' });
   }
 
   /**
-   * Under the user lock: the live file row and its absolute path. A host edit that is not indexed
+   * Under the space lock: the live file row and its absolute path. A host edit that is not indexed
    * yet is recorded as a new version first (`changedOnDisk`), so it is never overwritten blindly.
    */
-  private async lockedFile(tx: Tx, user: IndexUser, itemId: string): Promise<{ item: Item; target: string; changedOnDisk: boolean }> {
-    const item = await this.store.getLive(tx, user.id, itemId);
+  private async lockedFile(tx: Tx, space: IndexSpace, itemId: string): Promise<{ item: Item; target: string; changedOnDisk: boolean }> {
+    const item = await this.store.getLive(tx, space.id, itemId);
     if (!item || item.type !== 'file') throw new SyncError('not_found');
-    const target = this.abs(user, item.path);
+    const target = this.abs(space, item.path);
     // Deleted (or replaced by a folder) on the host but not indexed yet: never resurrect it
     // blindly; the indexer will journal the delete.
-    if ((await this.entryOnDisk(user, item)) === 'missing') throw new SyncError('not_found', 'file missing on disk');
+    if ((await this.entryOnDisk(space, item)) === 'missing') throw new SyncError('not_found', 'file missing on disk');
     const disk = await statEntry(target);
     // A new inode with equal size+mtime is an atomic save (temp + rename) on the host. Our own
     // writes store the inode they produce, so this never fires for them.
@@ -295,21 +318,51 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
         where: { id: item.id },
         data: { size: disk.size, mtime: disk.mtime, ino: disk.ino, dev: disk.dev, contentHash: null, version: { increment: 1 }, officeKey: null },
       });
-      await this.journal.record(tx, user.id, [fresh], 'upsert');
+      await this.journal.record(tx, space.id, [fresh], 'upsert');
       return { item: fresh, target, changedOnDisk: true };
     }
     return { item, target, changedOnDisk: false };
   }
 
   /**
-   * Runs one replace attempt with the current content's version prepared outside the user lock
+   * R-inode: some file systems (Docker Desktop's virtiofs) hand out a new inode for an unchanged
+   * file, e.g. after our own rename-over. lockedFile would take that for an atomic save on the host
+   * (version + 1, 412). Before the locked write: when only inode/device differ from the row (size and
+   * mtime equal) and the row has a content hash, the file is hashed (outside the lock); equal bytes
+   * just refresh ino/dev in a short locked transaction – guarded by an unchanged row and an
+   * unchanged disk entry – without a version bump or journal entry. Anything else is left to
+   * lockedFile (no hash: the conservative new version stays).
+   */
+  private async settleInodeDrift(space: IndexSpace, itemId: string): Promise<void> {
+    const row = await this.prisma.item.findFirst({ where: { id: itemId, spaceId: space.id, deletedAt: null } });
+    if (!row || row.type !== 'file' || row.ino === null || !row.contentHash) return;
+    const target = this.abs(space, row.path);
+    const same = (a: { size: bigint; mtime: Date; ino: bigint; dev: bigint } | null, b: { size: bigint; mtime: Date; ino: bigint; dev: bigint }) =>
+      !!a && a.size === b.size && a.mtime.getTime() === b.mtime.getTime() && a.ino === b.ino && a.dev === b.dev;
+    const disk = await statEntry(target).catch(() => null);
+    if (!disk || disk.size !== row.size || disk.mtime.getTime() !== row.mtime.getTime()) return;
+    if (disk.ino === row.ino && disk.dev === row.dev) return;
+    const hash = await sha256Of(target).catch(() => null);
+    if (hash !== row.contentHash || !same(await statEntry(target).catch(() => null), disk)) return;
+    await this.prisma.$transaction(async (tx) => {
+      if ((await this.journal.lockLiveSpace(tx, space)) !== 'ok') return;
+      if (!same(await statEntry(target).catch(() => null), disk)) return;
+      await tx.item.updateMany({
+        where: { id: row.id, deletedAt: null, path: row.path, version: row.version, size: row.size, mtime: row.mtime, ino: row.ino, dev: row.dev, contentHash: row.contentHash },
+        data: { ino: disk.ino, dev: disk.dev },
+      });
+    }, TX_OPTS);
+  }
+
+  /**
+   * Runs one replace attempt with the current content's version prepared outside the space lock
    * (a cross-file-system copy never holds the lock). If the file changed between preparing and
    * the locked commit, the preparation is discarded and redone once; a second change is a 412.
    * Prepared temp files (and a published version whose transaction did not commit) are removed.
    */
-  private async withPreparedVersion<T>(user: IndexUser, itemId: string, attempt: (prepared: PreparedVersion | null) => Promise<T>): Promise<T> {
+  private async withPreparedVersion<T>(space: IndexSpace, itemId: string, attempt: (prepared: PreparedVersion | null) => Promise<T>): Promise<T> {
     for (let i = 0; ; i++) {
-      const prepared = await this.versions.prepare(user, itemId);
+      const prepared = await this.versions.prepare(space, itemId);
       try {
         const out = await attempt(prepared);
         if (prepared) prepared.committed = true;
@@ -320,7 +373,7 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
         if (prepared?.replaced) await this.versions.recoverRow(prepared);
         if (!(e instanceof StaleVersionError)) throw e;
         if (i >= 1) {
-          const row = await this.prisma.item.findFirst({ where: { id: itemId, ownerId: user.id, deletedAt: null } });
+          const row = await this.prisma.item.findFirst({ where: { id: itemId, spaceId: space.id, deletedAt: null } });
           throw new SyncError('conflict', 'file changed while its version was captured', row ?? undefined);
         }
       } finally {
@@ -339,16 +392,16 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
   }
 
   /**
-   * Under the user lock: keeps the current content as a version (when versions are on; a failed
+   * Under the space lock: keeps the current content as a version (when versions are on; a failed
    * or stale capture throws and nothing is replaced), writes the row (version + 1) and journal,
    * and only then – as the very last step – renames the new content over the file. Any failure or
    * transaction timeout before that leaves the current file untouched and rolls back the rows.
    */
   private async commitReplace(
-    tx: Tx, user: IndexUser, item: Item, target: string, tmp: string, sha256: string,
+    tx: Tx, space: IndexSpace, item: Item, target: string, tmp: string, sha256: string,
     source: VersionSource, opts: { officeKey: string | null; by?: string; prepared?: PreparedVersion | null },
   ): Promise<Item> {
-    await this.versions.capture(tx, user, item, target, source, opts.by, opts.prepared);
+    await this.versions.capture(tx, space, item, target, source, opts.by, opts.prepared);
     const src = await this.nearTarget(tmp, target);
     try {
       // rename keeps inode, size and mtime: the row describes the file as it will be published.
@@ -357,7 +410,7 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
         where: { id: item.id },
         data: { size: st.size, mtime: st.mtime, ino: st.ino, dev: st.dev, contentHash: sha256, version: { increment: 1 }, officeKey: opts.officeKey },
       });
-      await this.journal.record(tx, user.id, [updated], 'upsert');
+      await this.journal.record(tx, space.id, [updated], 'upsert');
       // From here the published version may be the only copy of the previous content.
       if (opts.prepared) opts.prepared.replaced = true;
       try {
@@ -372,8 +425,8 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
     }
   }
 
-  async replaceContent(user: IndexUser, itemId: string, body: Readable, opts: { ifMatchVersion: number | null; modifiedAt?: Date | null }): Promise<Item> {
-    return this.replaceFrom(user, itemId, body, { ...opts, source: 'api', maxBytes: this.config.maxUploadBytes });
+  async replaceContent(space: IndexSpace, itemId: string, body: Readable, opts: { ifMatchVersion: number | null; modifiedAt?: Date | null; by?: string }): Promise<Item> {
+    return this.replaceFrom(space, itemId, body, { ...opts, source: 'api', maxBytes: this.config.maxUploadBytes });
   }
 
   /**
@@ -381,31 +434,32 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
    * the same path as a PUT with `If-Match: *`; the current content is captured first (`restore`).
    * Not limited by the upload size (the bytes were this file's content before). mtime = now.
    */
-  async restoreFromVersion(user: IndexUser, itemId: string, body: Readable): Promise<Item> {
-    return this.replaceFrom(user, itemId, body, { ifMatchVersion: null, modifiedAt: null, source: 'restore', maxBytes: Number.POSITIVE_INFINITY });
+  async restoreFromVersion(space: IndexSpace, itemId: string, body: Readable, by?: string): Promise<Item> {
+    return this.replaceFrom(space, itemId, body, { ifMatchVersion: null, modifiedAt: null, source: 'restore', maxBytes: Number.POSITIVE_INFINITY, by });
   }
 
-  /** PUT content and version restore: receive into a temp, then lockedFile + commitReplace under the user lock. */
+  /** PUT content and version restore: receive into a temp, then lockedFile + commitReplace under the space lock. */
   private async replaceFrom(
-    user: IndexUser, itemId: string, body: Readable,
-    opts: { ifMatchVersion: number | null; modifiedAt?: Date | null; source: VersionSource; maxBytes: number },
+    space: IndexSpace, itemId: string, body: Readable,
+    opts: { ifMatchVersion: number | null; modifiedAt?: Date | null; source: VersionSource; maxBytes: number; by?: string },
   ): Promise<Item> {
     guardBody(body);
-    const pre = await this.prisma.item.findFirst({ where: { id: itemId, ownerId: user.id, deletedAt: null } });
+    const pre = await this.prisma.item.findFirst({ where: { id: itemId, spaceId: space.id, deletedAt: null } });
     if (!pre || pre.type !== 'file') throw new SyncError('not_found');
     // ifMatchVersion null = `If-Match: *` (any current version).
     if (opts.ifMatchVersion !== null && pre.version !== opts.ifMatchVersion) throw new SyncError('conflict', 'version mismatch', pre);
-    const { tmp, sha256 } = await this.receive(user, body, opts.modifiedAt, opts.maxBytes);
+    const { tmp, sha256 } = await this.receive(space, body, opts.modifiedAt, opts.maxBytes);
     try {
+      await this.settleInodeDrift(space, itemId);
       // The transaction returns the conflict instead of throwing, so the recorded
       // external version is committed before the 412 goes out.
-      const outcome = await this.withPreparedVersion(user, itemId, (prepared) => this.prisma.$transaction(async (tx) => {
-        await this.journal.lockUser(tx, user.id);
-        const { item, target, changedOnDisk } = await this.lockedFile(tx, user, itemId);
+      const outcome = await this.withPreparedVersion(space, itemId, (prepared) => this.prisma.$transaction(async (tx) => {
+        await this.journal.lockSpaceForWrite(tx, space);
+        const { item, target, changedOnDisk } = await this.lockedFile(tx, space, itemId);
         // Edited on the host but not yet indexed: that version is recorded, report the conflict.
         if (changedOnDisk) return { conflict: item, reason: 'file changed on disk' } as const;
         if (opts.ifMatchVersion !== null && item.version !== opts.ifMatchVersion) return { conflict: item, reason: 'version mismatch' } as const;
-        return { ok: await this.commitReplace(tx, user, item, target, tmp, sha256, opts.source, { officeKey: null, by: user.id, prepared }) } as const;
+        return { ok: await this.commitReplace(tx, space, item, target, tmp, sha256, opts.source, { officeKey: null, by: opts.by, prepared }) } as const;
       }, TX_OPTS));
       if ('conflict' in outcome) throw new SyncError('conflict', outcome.reason, outcome.conflict);
       return outcome.ok;
@@ -423,28 +477,29 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
    * session): then the content goes into a sibling conflict copy and the original stays untouched.
    * Repeated saves of one session (forcesave, then the final save) overwrite each other.
    * A file that is gone (trashed, deleted through Synclet or on the host and indexed) never loses
-   * the edits either: they become a conflict copy in the original parent folder, or in the user
+   * the edits either: they become a conflict copy in the original parent folder, or in the space
    * root when that folder is gone too (`fallbackName` when even the row was purged). A live row
    * whose entry is briefly missing on disk (the middle of a host editor's delete+rename save)
    * gives `retry`: the Document Server is told to send the save again later.
    */
   async saveOfficeContent(
-    user: IndexUser, itemId: string, body: Readable,
+    space: IndexSpace, itemId: string, body: Readable,
     opts: { key: string; baseVersion: number; by?: string; conflictName: (name: string) => string; fallbackName: string },
   ): Promise<{ outcome: 'replaced' | 'conflict' | 'orphaned'; item: Item } | { outcome: 'retry' }> {
     guardBody(body);
-    const { tmp, sha256 } = await this.receive(user, body);
+    const { tmp, sha256 } = await this.receive(space, body);
     try {
-      const decided = await this.withPreparedVersion(user, itemId, (prepared) => this.prisma.$transaction(async (tx) => {
-        await this.journal.lockUser(tx, user.id);
-        const live = await this.store.getLive(tx, user.id, itemId);
+      await this.settleInodeDrift(space, itemId);
+      const decided = await this.withPreparedVersion(space, itemId, (prepared) => this.prisma.$transaction(async (tx) => {
+        await this.journal.lockSpaceForWrite(tx, space);
+        const live = await this.store.getLive(tx, space.id, itemId);
         if (!live || live.type !== 'file') {
-          const row = live ?? (await tx.item.findFirst({ where: { id: itemId, ownerId: user.id } }));
+          const row = live ?? (await tx.item.findFirst({ where: { id: itemId, spaceId: space.id } }));
           return { outcome: 'gone', row: row?.type === 'file' ? row : null } as const;
         }
         let cur: Awaited<ReturnType<FilesService['lockedFile']>>;
         try {
-          cur = await this.lockedFile(tx, user, itemId);
+          cur = await this.lockedFile(tx, space, itemId);
         } catch (e) {
           // Live row, entry missing on disk: let the indexer settle and have the save retried.
           if (e instanceof SyncError && e.code === 'not_found') return { outcome: 'retry' } as const;
@@ -452,24 +507,24 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
         }
         const { item, target } = cur;
         if (item.version !== opts.baseVersion && item.officeKey !== opts.key) return { outcome: 'conflict', item } as const;
-        return { outcome: 'replaced', item: await this.commitReplace(tx, user, item, target, tmp, sha256, 'office', { officeKey: opts.key, by: opts.by, prepared }) } as const;
+        return { outcome: 'replaced', item: await this.commitReplace(tx, space, item, target, tmp, sha256, 'office', { officeKey: opts.key, by: opts.by, prepared }) } as const;
       }, TX_OPTS));
       if (decided.outcome === 'replaced' || decided.outcome === 'retry') return decided;
       if (decided.outcome === 'conflict') {
-        const copy = await this.publishNew(user, decided.item.parentId, opts.conflictName(decided.item.name), tmp, sha256, 'rename');
+        const copy = await this.publishNew(space, decided.item.parentId, opts.conflictName(decided.item.name), tmp, sha256, 'rename');
         return { outcome: 'conflict', item: copy };
       }
       const name = opts.conflictName(decided.row?.name ?? opts.fallbackName);
       const parentId = decided.row?.parentId ?? null;
       if (parentId !== null) {
         try {
-          return { outcome: 'orphaned', item: await this.publishNew(user, parentId, name, tmp, sha256, 'rename') };
+          return { outcome: 'orphaned', item: await this.publishNew(space, parentId, name, tmp, sha256, 'rename') };
         } catch (e) {
-          // The original folder is gone (trashed, deleted, missing on disk): use the user root.
+          // The original folder is gone (trashed, deleted, missing on disk): use the space root.
           if (!(e instanceof SyncError && (e.code === 'not_found' || e.code === 'invalid_request'))) throw e;
         }
       }
-      return { outcome: 'orphaned', item: await this.publishNew(user, null, name, tmp, sha256, 'rename') };
+      return { outcome: 'orphaned', item: await this.publishNew(space, null, name, tmp, sha256, 'rename') };
     } catch (e) {
       rethrowStorageError(e); // the temp file is removed by `finally` right after
     } finally {
@@ -477,29 +532,36 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
     }
   }
 
-  async update(user: IndexUser, itemId: string, patch: { name?: string; parentId?: string | null }, opts: { ifMatchEtag?: string } = {}): Promise<Item> {
+  /**
+   * Renames and/or moves an item. With `targetSpace` other than `space`, `parentId` (null = its root)
+   * is in that space and the item moves there (moveToSpace); the caller checked write on both.
+   */
+  async update(space: IndexSpace, itemId: string, patch: { name?: string; parentId?: string | null; targetSpace?: IndexSpace }, opts: { ifMatchEtag?: string } = {}): Promise<Item> {
     const newName = patch.name === undefined ? undefined : this.checkName(patch.name);
+    if (patch.targetSpace && patch.targetSpace.id !== space.id) {
+      return this.moveToSpace(space, patch.targetSpace, itemId, patch.parentId ?? null, newName, opts);
+    }
     let moved: { from: string; to: string } | null = null;
     try {
       return await this.prisma.$transaction(async (tx) => {
-        await this.journal.lockUser(tx, user.id);
-        const item = await this.store.getLive(tx, user.id, itemId);
+        await this.journal.lockSpaceForWrite(tx, space);
+        const item = await this.store.getLive(tx, space.id, itemId);
         if (!item) throw new SyncError('not_found');
         if (opts.ifMatchEtag && opts.ifMatchEtag !== itemEtag(item)) throw new SyncError('conflict', 'etag mismatch', item);
         const targetParent = patch.parentId === undefined ? item.parentId : patch.parentId;
         const name = newName ?? item.name;
         if (targetParent === item.parentId && name === item.name) return item;
-        const parentRel = await this.parentPath(tx, user, targetParent);
+        const parentRel = await this.parentPath(tx, space, targetParent);
         if (item.type === 'folder' && (parentRel === item.path || parentRel.startsWith(item.path + '/'))) {
           throw new SyncError('invalid_move', 'cannot move a folder into itself');
         }
-        const { sibs, keys } = await this.takenKeys(tx, user, targetParent, item.id);
+        const { sibs, keys } = await this.takenKeys(tx, space, targetParent, item.id);
         if (keys.has(nameKey(name))) throw new SyncError('name_conflict', 'name already exists', sibs.find((s) => s.nameKey === nameKey(name)));
-        if ((await this.entryOnDisk(user, item)) === 'missing') throw new SyncError('not_found', 'entry missing on disk');
-        await this.assertRealDir(user, parentRel);
+        if ((await this.entryOnDisk(space, item)) === 'missing') throw new SyncError('not_found', 'entry missing on disk');
+        await this.assertRealDir(space, parentRel);
         const rel = joinRel(parentRel, name);
-        const from = this.abs(user, item.path);
-        const to = this.abs(user, rel);
+        const from = this.abs(space, item.path);
+        const to = this.abs(space, rel);
         try {
           await moveNoReplace(from, to);
           moved = { from, to };
@@ -508,8 +570,8 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
           throw mapMissing(e, 'item or target folder');
         }
         const updated = await tx.item.update({ where: { id: item.id }, data: { parentId: targetParent, name, nameKey: nameKey(name), path: rel } });
-        if (item.type === 'folder') await this.store.rewritePrefix(tx, user.id, item.path, rel);
-        await this.announce(tx, user, [updated], [{ parentId: item.parentId, key: item.nameKey }]);
+        if (item.type === 'folder') await this.store.rewritePrefix(tx, space.id, item.path, rel);
+        await this.announce(tx, space, [updated], [{ parentId: item.parentId, key: item.nameKey }]);
         return updated;
       }, TX_OPTS);
     } catch (e) {
@@ -521,25 +583,222 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
   }
 
   /**
-   * Deletes an item into the trash. The entry is vacated atomically under the user lock by
-   * renaming it to an ignored staging name in the user root (`.synclet-trash-<id>`, same file
+   * Moves an item (with its subtree) into another space, keeping its id. On one file system it is a
+   * rename under both space locks (taken in ascending id order, so a concurrent move the other way
+   * cannot deadlock). Across file systems (EXDEV: /data, /teams and /storage are separate mounts)
+   * the tree is first copied to an ignored temp entry in the target root *without* any lock, then a
+   * short locked transaction checks that the source is unchanged since the copy started (else 409
+   * `conflict`, nothing moved), publishes the copy by rename, stages the source under an ignored
+   * name and commits; the staged source is removed after commit. Rows get the new spaceId, paths and
+   * (after a copy) inodes; versions and share links follow the items; the source journal records a
+   * `delete`, the target journal an `upsert` of the subtree.
+   */
+  private async moveToSpace(src: IndexSpace, dst: IndexSpace, itemId: string, targetParent: string | null, newName: string | undefined, opts: { ifMatchEtag?: string }): Promise<Item> {
+    const fast = await this.commitSpaceMove(src, dst, itemId, targetParent, newName, opts, null);
+    if (fast !== CROSS_DEVICE) return fast;
+    // Snapshot first, then copy: any change of the subtree after this point fails the verification.
+    const pre = await this.prisma.$transaction(async (tx) => {
+      const item = await this.store.getLive(tx, src.id, itemId);
+      if (!item) throw new SyncError('not_found');
+      return { item, snap: await this.subtreeSnapshot(tx, src, item) };
+    }, TX_OPTS);
+    const tmp = path.join(dst.rootPath, tempName(randomBytes(8).toString('hex')));
+    try {
+      try {
+        await copyTree(this.abs(src, pre.item.path), tmp);
+      } catch (e) {
+        rethrowStorageError(mapMissing(e, 'item'));
+      }
+      await this.moveOps.afterCopy?.();
+      const out = await this.commitSpaceMove(src, dst, itemId, targetParent, newName, opts, { tmp, snap: pre.snap });
+      if (out === CROSS_DEVICE) throw new Error('unexpected cross-device move');
+      return out;
+    } finally {
+      await rm(tmp, { recursive: true, force: true }).catch((e) => this.log.error(`cannot remove move copy ${tmp}: ${String(e)}`));
+    }
+  }
+
+  /**
+   * The locked part of a move between spaces. `copy` null: rename the entry (returns CROSS_DEVICE
+   * when the spaces are on different file systems, nothing changed). With `copy`: verify the source
+   * against the snapshot, publish `copy.tmp` at the target, stage the source; the staged source is
+   * removed after commit. Any failure before commit puts everything back.
+   */
+  private async commitSpaceMove(
+    src: IndexSpace, dst: IndexSpace, itemId: string, targetParent: string | null, newName: string | undefined,
+    opts: { ifMatchEtag?: string }, copy: { tmp: string; snap: string } | null,
+  ): Promise<Item | typeof CROSS_DEVICE> {
+    let renamed: { from: string; to: string } | null = null;
+    let published: { tmp: string; to: string } | null = null;
+    let staged: { from: string; at: string } | null = null;
+    const versionMoves: { from: string; to: string }[] = [];
+    let result: Item | typeof CROSS_DEVICE;
+    try {
+      result = await this.prisma.$transaction(async (tx) => {
+        for (const sp of [src, dst].sort((a, b) => (a.id < b.id ? -1 : 1))) await this.journal.lockSpaceForWrite(tx, sp);
+        const item = await this.store.getLive(tx, src.id, itemId);
+        if (!item) throw new SyncError('not_found');
+        if (copy && (await this.subtreeSnapshot(tx, src, item)) !== copy.snap) {
+          throw new SyncError('conflict', 'changed while being moved, try again', item, 409);
+        }
+        if (opts.ifMatchEtag && opts.ifMatchEtag !== itemEtag(item)) throw new SyncError('conflict', 'etag mismatch', item);
+        const name = newName ?? item.name;
+        const parentRel = await this.parentPath(tx, dst, targetParent);
+        const { sibs, keys } = await this.takenKeys(tx, dst, targetParent);
+        if (keys.has(nameKey(name))) throw new SyncError('name_conflict', 'name already exists', sibs.find((s) => s.nameKey === nameKey(name)));
+        if ((await this.entryOnDisk(src, item)) === 'missing') throw new SyncError('not_found', 'entry missing on disk');
+        await this.assertRealDir(dst, parentRel);
+        const rel = joinRel(parentRel, name);
+        const from = this.abs(src, item.path);
+        const to = this.abs(dst, rel);
+        try {
+          if (!copy) {
+            await this.moveOps.moveNoReplace(from, to);
+            renamed = { from, to };
+          } else {
+            await moveNoReplace(copy.tmp, to); // same file system: the temp copy lives in the target root
+            published = { tmp: copy.tmp, to };
+            const at = path.join(src.rootPath, tempName(randomBytes(8).toString('hex')));
+            await moveAcrossFs(from, at); // a rename; ignored by the indexer, removed at boot after a crash
+            staged = { from, at };
+          }
+        } catch (e) {
+          if (!copy && errno(e) === 'EXDEV') return CROSS_DEVICE;
+          if (isEexist(e)) throw new SyncError('name_conflict', 'exists on disk');
+          throw mapMissing(e, 'item or target folder');
+        }
+        const subtree = item.type === 'folder' ? [item, ...(await this.store.liveDescendants(tx, src.id, item.path))] : [item];
+        const updated = await tx.item.update({ where: { id: item.id }, data: { spaceId: dst.id, parentId: targetParent, name, nameKey: nameKey(name), path: rel } });
+        if (item.type === 'folder') {
+          await tx.$executeRaw`
+            UPDATE "Item" SET "spaceId" = ${dst.id}::uuid, path = ${rel} || substring(path FROM char_length(${item.path}) + 1), "updatedAt" = now()
+            WHERE "spaceId" = ${src.id}::uuid AND "deletedAt" IS NULL
+            AND left(path, char_length(${item.path}) + 1) = ${item.path} || '/'`;
+        }
+        let arrived = item.type === 'folder' ? [updated, ...(await this.store.liveDescendants(tx, dst.id, rel))] : [updated];
+        // A copy has new inodes (and possibly coarser mtimes): without this the next write would
+        // take the rows for a host edit (version + 1, 412) and If-Range would never match.
+        if (copy) arrived = await this.refreshStats(tx, dst, arrived);
+        const ids = subtree.map((i) => i.id);
+        await tx.shareLink.updateMany({ where: { itemId: { in: ids }, spaceId: src.id }, data: { spaceId: dst.id } });
+        await this.moveVersions(tx, src, dst, subtree.filter((i) => i.type === 'file').map((i) => i.id), versionMoves);
+        // Source: the subtree is gone (+ same-key siblings whose display names may change).
+        await this.journal.record(tx, src.id, subtree, 'delete');
+        await this.journal.record(tx, src.id, await this.store.sameKeySiblings(tx, src.id, item.parentId, [item.nameKey], new Set([item.id])), 'upsert');
+        // Target: the whole subtree is new.
+        await this.announce(tx, dst, arrived);
+        return arrived[0];
+      }, TX_OPTS);
+    } catch (e) {
+      for (const d of versionMoves.reverse()) {
+        // A merge removed the emptied source folder: re-create it before moving back.
+        await mkdir(path.dirname(d.from), { recursive: true }).catch(() => {});
+        await rename(d.to, d.from).catch((err) => this.log.error(`cannot undo version move ${d.to} -> ${d.from}: ${String(err)}`));
+      }
+      const r = renamed as { from: string; to: string } | null;
+      if (r) await moveAcrossFs(r.to, r.from, this.moveOps.moveNoReplace).catch((err) => this.log.error(`cannot undo move ${r.to} -> ${r.from}: ${String(err)}`));
+      const s = staged as { from: string; at: string } | null;
+      if (s) await moveAcrossFs(s.at, s.from).catch((err) => this.log.error(`cannot restore ${s.at} -> ${s.from}: ${String(err)}`));
+      // Back to the temp name: the caller removes it.
+      const p = published as { tmp: string; to: string } | null;
+      if (p) await moveNoReplace(p.to, p.tmp).catch((err) => this.log.error(`cannot withdraw move copy ${p.to}: ${String(err)}`));
+      throw e;
+    }
+    const s = staged as { from: string; at: string } | null;
+    if (s) await rm(s.at, { recursive: true, force: true }).catch((e) => this.log.error(`cannot remove moved source ${s.at}: ${String(e)}`));
+    return result;
+  }
+
+  /**
+   * What a cross-file-system move must find unchanged before it publishes its copy: the live rows of
+   * the subtree (id, path, version, size, mtime) and the entries on disk (type, size, mtime, inode).
+   */
+  private async subtreeSnapshot(tx: Tx, space: IndexSpace, item: Item): Promise<string> {
+    const rows = item.type === 'folder' ? [item, ...(await this.store.liveDescendants(tx, space.id, item.path))] : [item];
+    const db = rows.map((r) => `${r.id}|${r.path}|${r.version}|${r.size}|${r.mtime.getTime()}`).sort();
+    const disk: string[] = [];
+    const walk = async (abs: string, rel: string): Promise<void> => {
+      const st = await lstat(abs, { bigint: true }).catch(() => null);
+      if (!st) { disk.push(`${rel}|missing`); return; }
+      const kind = st.isDirectory() ? 'd' : st.isFile() ? 'f' : 'o';
+      disk.push(`${rel}|${kind}|${kind === 'f' ? st.size : 0n}|${st.mtimeNs}|${st.ino}`);
+      if (kind === 'd') for (const n of (await readdir(abs)).sort()) await walk(path.join(abs, n), `${rel}/${n}`);
+    };
+    await walk(this.abs(space, item.path), '');
+    return JSON.stringify([db, disk.sort()]);
+  }
+
+  /** Re-reads inode, device and mtime of moved rows from disk (after a copy). Returns the updated rows. */
+  private async refreshStats(tx: Tx, space: IndexSpace, rows: Item[]): Promise<Item[]> {
+    const out: Item[] = [];
+    for (const r of rows) {
+      const st = await statEntry(this.abs(space, r.path)).catch(() => null);
+      out.push(st ? await tx.item.update({ where: { id: r.id }, data: { ino: st.ino, dev: st.dev, mtime: st.mtime } }) : r);
+    }
+    return out;
+  }
+
+  /**
+   * Moves the stored versions of `fileIds` from `<meta>/versions/<src>/<item>` to `<dst>/<item>`
+   * (same file system) and updates their rows. An existing target folder (left over from an earlier
+   * move) is merged, never overwritten: a taken file name gets a unique suffix. Every rename is
+   * pushed to `done` for an undo.
+   */
+  private async moveVersions(tx: Tx, src: IndexSpace, dst: IndexSpace, fileIds: string[], done: { from: string; to: string }[]): Promise<void> {
+    if (fileIds.length === 0) return;
+    const rows = await tx.fileVersion.findMany({ where: { spaceId: src.id, itemId: { in: fileIds } }, select: { id: true, itemId: true, storePath: true } });
+    if (rows.length === 0) return;
+    const store = path.resolve(this.config.metaRoot, 'versions');
+    const exists = (p: string) => lstat(p).then(() => true, () => false);
+    for (const itemId of [...new Set(rows.map((r) => r.itemId))]) {
+      const from = path.join(store, src.id, itemId);
+      const to = path.join(store, dst.id, itemId);
+      /** Old absolute path → new one, for the rows. */
+      const moved = new Map<string, string>();
+      if (await exists(from)) {
+        await mkdir(path.dirname(to), { recursive: true });
+        if (!(await exists(to))) {
+          await rename(from, to);
+          done.push({ from, to });
+          for (const n of await readdir(to)) moved.set(path.join(from, n), path.join(to, n));
+        } else {
+          for (const n of await readdir(from)) {
+            let target = path.join(to, n);
+            while (await exists(target)) target = path.join(to, `${n}.${randomBytes(4).toString('hex')}`);
+            await rename(path.join(from, n), target);
+            done.push({ from: path.join(from, n), to: target });
+            moved.set(path.join(from, n), target);
+          }
+          await rmdir(from).catch(() => {});
+        }
+      }
+      for (const r of rows.filter((x) => x.itemId === itemId)) {
+        const storePath = moved.get(path.resolve(r.storePath)) ?? r.storePath;
+        await tx.fileVersion.update({ where: { id: r.id }, data: { spaceId: dst.id, storePath } });
+      }
+    }
+  }
+
+  /**
+   * Deletes an item into the trash. The entry is vacated atomically under the space lock by
+   * renaming it to an ignored staging name in the space root (`.synclet-trash-<id>`, same file
    * system, so neither the indexer nor a concurrent API call can ever see it half-gone); the
    * possibly slow copy to /meta happens after commit, in the background (`pendingTrash()`).
    * A crash in between is finished by `recoverStagedTrash()` at the next start.
    */
-  async remove(user: IndexUser, itemId: string): Promise<void> {
+  async remove(space: IndexSpace, itemId: string, deletedBy?: string): Promise<void> {
     const trashId = randomUUID();
-    const staging = path.join(this.root(user), trashStagingName(trashId));
+    const staging = path.join(this.root(space), trashStagingName(trashId));
     let staged: { from: string; storePath: string } | null = null;
     try {
       await this.prisma.$transaction(async (tx) => {
-        await this.journal.lockUser(tx, user.id);
-        const item = await this.store.getLive(tx, user.id, itemId);
+        await this.journal.lockSpaceForWrite(tx, space);
+        const item = await this.store.getLive(tx, space.id, itemId);
         if (!item) throw new SyncError('not_found');
         // Already gone on the host (not indexed yet): the delete stands, there is nothing to trash.
-        if ((await this.entryOnDisk(user, item)) === 'ok') {
-          const from = this.abs(user, item.path);
-          await this.writeIntent(trashId, { userId: user.id, username: user.username, itemId: item.id, originalRel: item.path, name: item.name, type: item.type });
+        if ((await this.entryOnDisk(space, item)) === 'ok') {
+          const from = this.abs(space, item.path);
+          await this.writeIntent(trashId, { spaceId: space.id, itemId: item.id, originalRel: item.path, name: item.name, type: item.type, ...(deletedBy ? { deletedBy } : {}) });
           try {
             await moveAcrossFs(from, staging); // rename; copy only if a nested mount is in between
           } catch (e) {
@@ -553,15 +812,15 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
           const deletedAt = new Date();
           await tx.trashEntry.create({
             data: {
-              id: trashId, ownerId: user.id, itemId: item.id, type: item.type, name: item.name, originalPath: item.path,
+              id: trashId, spaceId: space.id, itemId: item.id, type: item.type, name: item.name, originalPath: item.path,
               size: gone.reduce((s, i) => s + i.size, 0n), storePath: (staged as { storePath: string }).storePath,
-              manifest: gone.map(manifestEntry), deletedAt, expiresAt: this.trashExpiry(deletedAt),
+              manifest: gone.map(manifestEntry), deletedAt, expiresAt: this.trashExpiry(deletedAt), deletedBy: deletedBy ?? null,
             },
           });
         }
-        await this.journal.record(tx, user.id, gone, 'delete');
-        const sibs = await this.store.sameKeySiblings(tx, user.id, item.parentId, [item.nameKey], new Set([item.id]));
-        await this.journal.record(tx, user.id, sibs, 'upsert');
+        await this.journal.record(tx, space.id, gone, 'delete');
+        const sibs = await this.store.sameKeySiblings(tx, space.id, item.parentId, [item.nameKey], new Set([item.id]));
+        await this.journal.record(tx, space.id, sibs, 'upsert');
       }, TX_OPTS);
     } catch (e) {
       // Rolled back after vacating: put the entry back where the DB still expects it.
@@ -639,7 +898,7 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
   }
 
   /**
-   * Finishes trash moves interrupted by a crash. For every `.synclet-trash-<id>` in a user root:
+   * Finishes trash moves interrupted by a crash. For every `.synclet-trash-<id>` in a space root:
    * - TrashEntry exists (crash after commit): move it into its storePath.
    * - only the intent file exists (crash before commit, so the delete never happened): move it
    *   back to its original path if that is free, otherwise into /meta/trash/<id>/ with a new
@@ -649,8 +908,11 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
    */
   async recoverStagedTrash(): Promise<number> {
     let handled = 0;
-    for (const u of await this.prisma.user.findMany({ select: { id: true, username: true } })) {
-      const root = userRoot(this.config.dataRoot, u.username);
+    // Missing spaces too: an unreadable root simply lists nothing, and a returned mount is handled then.
+    for (const row of await this.prisma.space.findMany({ select: { id: true, kind: true, rootPath: true } })) {
+      if (!row.rootPath) continue; // personal root not synced yet (never after SpacesRepo init)
+      const space = this.spaces.toIndexSpace(row);
+      const root = space.rootPath;
       const names = await readdir(root).catch(() => [] as string[]);
       for (const name of names.filter((n) => n.startsWith(TRASH_STAGING_PREFIX))) {
         const abs = path.join(root, name);
@@ -661,12 +923,12 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
         }
         const trashId = uuidFromHex(m[1]);
         try {
-          const entry = await this.prisma.trashEntry.findFirst({ where: { id: trashId, ownerId: u.id } });
+          const entry = await this.prisma.trashEntry.findFirst({ where: { id: trashId, spaceId: space.id } });
           const intent = entry ? null : await this.readIntent(trashId);
           if (entry) {
             await this.finishTrash(abs, entry.storePath);
-          } else if (intent && intent.userId === u.id) {
-            await this.undoStaging(u, abs, trashId, intent);
+          } else if (intent && (intent.spaceId ?? intent.userId) === space.id) {
+            await this.undoStaging(space, abs, trashId, intent);
           } else {
             this.log.warn(`staged trash ${abs} has neither a trash entry nor an intent; leaving it untouched`);
             continue;
@@ -682,15 +944,15 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
   }
 
   /** The delete never committed: put the entry back, or into the trash if its place is taken. */
-  private async undoStaging(user: IndexUser, staged: string, trashId: string, intent: TrashIntent): Promise<void> {
+  private async undoStaging(space: IndexSpace, staged: string, trashId: string, intent: TrashIntent): Promise<void> {
     const restored = await this.prisma.$transaction(async (tx) => {
-      await this.journal.lockUser(tx, user.id); // serialize with a concurrently starting indexer
+      await this.journal.lockSpace(tx, space.id); // serialize with a concurrently starting indexer
       try {
-        await this.assertRealDir(user, parentOf(intent.originalRel));
+        await this.assertRealDir(space, parentOf(intent.originalRel));
       } catch {
         return false;
       }
-      const dst = this.abs(user, intent.originalRel);
+      const dst = this.abs(space, intent.originalRel);
       try {
         await moveAcrossFs(staged, dst); // no-replace, copy fallback across mounts
       } catch (e) {
@@ -700,28 +962,28 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
       return true;
     }, TX_OPTS);
     if (restored) {
-      this.log.warn(`restored ${intent.originalRel} of ${user.username} from an interrupted delete`);
+      this.log.warn(`restored ${intent.originalRel} of space ${space.id} from an interrupted delete`);
       return;
     }
     const storePath = path.join(this.config.metaRoot, 'trash', trashId, intent.name);
     const deletedAt = new Date();
     await this.prisma.trashEntry.create({
       data: {
-        id: trashId, ownerId: user.id, itemId: intent.itemId, type: intent.type, name: intent.name, originalPath: intent.originalRel,
+        id: trashId, spaceId: space.id, itemId: intent.itemId, type: intent.type, name: intent.name, originalPath: intent.originalRel,
         size: await sizeOf(staged), storePath, manifest: [{ id: intent.itemId, type: intent.type, path: intent.originalRel, name: intent.name }],
-        deletedAt, expiresAt: this.trashExpiry(deletedAt),
+        deletedAt, expiresAt: this.trashExpiry(deletedAt), deletedBy: typeof intent.deletedBy === 'string' && UUID.test(intent.deletedBy) ? intent.deletedBy : null,
       },
     });
     await this.finishTrash(staged, storePath);
-    this.log.warn(`moved ${intent.originalRel} of ${user.username} from an interrupted delete to the trash (original path taken)`);
+    this.log.warn(`moved ${intent.originalRel} of space ${space.id} from an interrupted delete to the trash (original path taken)`);
   }
 
-  async openRead(user: IndexUser, itemId: string): Promise<{ item: Item; abs: string }> {
-    const item = await this.prisma.item.findFirst({ where: { id: itemId, ownerId: user.id, deletedAt: null } });
+  async openRead(space: IndexSpace, itemId: string): Promise<{ item: Item; abs: string }> {
+    const item = await this.prisma.item.findFirst({ where: { id: itemId, spaceId: space.id, deletedAt: null } });
     if (!item) throw new SyncError('not_found');
     if (item.type !== 'file') throw new SyncError('invalid_request', 'not a file');
     try {
-      const abs = await realpathInside(this.abs(user, item.path), this.root(user));
+      const abs = await realpathInside(this.abs(space, item.path), this.root(space));
       return { item, abs };
     } catch {
       throw new SyncError('not_found');

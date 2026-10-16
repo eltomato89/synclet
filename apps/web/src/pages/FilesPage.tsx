@@ -18,7 +18,7 @@ import { Breadcrumbs } from '@/features/files/Breadcrumbs';
 import { DropZone } from '@/features/files/DropZone';
 import { EmptyState, SkeletonRows, StatusMessage } from '@/features/files/EmptyState';
 import { errorKey } from '@/features/files/errors';
-import { BrowserContextMenu, type ItemActions } from '@/features/files/FileActions';
+import { BrowserContextMenu, canShare, type ItemActions } from '@/features/files/FileActions';
 import { FileGrid } from '@/features/files/FileGrid';
 import { FileList } from '@/features/files/FileList';
 import { FolderConflictDialog } from '@/features/files/FolderConflictDialog';
@@ -34,6 +34,8 @@ import { MORE_FORMATS, openOfficeTab, PRIMARY_FORMATS, reserveOfficeTab } from '
 import { useCapabilities, useCreateOfficeFile } from '@/features/office/queries';
 import { quickLookEntries } from '@/features/preview/navigation';
 import { isPreviewable, syncPreviewSource } from '@/features/preview/source';
+import { ReadOnlyBanner } from '@/features/spaces/ReadOnlyBanner';
+import { markSpaceUnavailable, PERSONAL, spaceIdOfRoot, spaceOfItem } from '@/features/spaces/useSpaces';
 import { ApiError, api } from '@/lib/api';
 
 const NewFolderDialog = lazy(() => import('@/features/files/NewFolderDialog').then((m) => ({ default: m.NewFolderDialog })));
@@ -45,7 +47,8 @@ const NewOfficeDialog = lazy(() => import('@/features/office/NewOfficeDialog').t
 const VersionsPanel = lazy(() => import('@/features/versions/VersionsPanel').then((m) => ({ default: m.VersionsPanel })));
 const ShareDialog = lazy(() => import('@/features/shares/ShareDialog').then((m) => ({ default: m.ShareDialog })));
 
-const FOLDER_ID = /^(root|d_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+/** `root` (My files), a folder `d_<uuid>`, or the root of another space `r_<uuid>`. */
+const FOLDER_ID = /^(root|[dr]_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
 const VIEW_KEY = 'synclet.files.view';
 const SORT_KEY = 'synclet.files.sort';
 
@@ -143,8 +146,10 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   selectedRef.current = selectedId;
 
   const folder = folderQ.data?.folder;
-  const folderName = !folder ? '' : folder.kind === 'root' ? t('shell.myFiles') : folder.name;
+  const folderName = !folder ? '' : folder.kind === 'root' && spaceOfItem(folder) === PERSONAL ? t('shell.myFiles') : folder.name;
   const canAdd = !!folder?.capabilities.addChildren;
+  /** Loaded and read-only: write actions are hidden (while loading they only show disabled). */
+  const readOnly = !!folder && !canAdd;
   const items = useMemo(
     () => (folderQ.data ? sortItems(folderQ.data.items, sort.key, sort.dir, i18n.language) : []),
     [folderQ.data, sort, i18n.language],
@@ -156,6 +161,16 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
     document.title = `${folderName} – Synclet`;
     return () => { document.title = prev; };
   }, [folderName]);
+
+  // A space whose storage is missing answers 503: the sidebar marks it until it loads again.
+  const loadError = folderQ.error;
+  useEffect(() => {
+    // The error first: a refetch of a cached folder can fail while its old data is still there.
+    if (loadError instanceof ApiError && loadError.code === 'space_unavailable') {
+      const space = spaceIdOfRoot(folderId) ?? (folder && spaceOfItem(folder)) ?? qc.getQueryData<SyncItem>(['item', folderId])?.spaceId;
+      if (space) markSpaceUnavailable(qc, space, true);
+    } else if (folder) markSpaceUnavailable(qc, spaceOfItem(folder), false);
+  }, [folder, loadError, folderId, qc]);
 
   const setView = (v: View) => { setViewState(v); writePref(VIEW_KEY, v); };
 
@@ -217,7 +232,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
     rename: (item) => { setSelectedId(item.id); if (item.capabilities.rename) openDialog({ kind: 'rename', item }); },
     move: (item) => { setSelectedId(item.id); if (item.capabilities.move) openDialog({ kind: 'move', item }); },
     remove: (item) => { setSelectedId(item.id); if (item.capabilities.delete) openDialog({ kind: 'delete', item }); },
-    share: (item) => { setSelectedId(item.id); if (item.kind !== 'root') openDialog({ kind: 'share', item }); },
+    share: (item) => { setSelectedId(item.id); if (canShare(item)) openDialog({ kind: 'share', item }); },
     openInOffice: officeEnabled ? (item) => openOfficeTab(item.id) : undefined,
     versions: capabilities.versions ? (item) => { setSelectedId(item.id); if (item.type === 'file') openDialog({ kind: 'versions', item }); } : undefined,
   };
@@ -297,7 +312,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
         <Breadcrumbs chain={ancestors.data ?? (ancestors.isError ? [] : undefined)} />
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
-        {selectedItem && (
+        {selectedItem && canShare(selectedItem) && (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -333,7 +348,13 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
             </Tooltip>
           ))}
         </ToggleGroup>
-        <DropdownMenu>
+        {readOnly && (
+          // The view toggle lives in the "New" menu on phones; read-only folders have no such menu.
+          <Button variant="ghost" size="icon-sm" className="text-muted-foreground sm:hidden" aria-label={view === 'list' ? t('files.viewGrid') : t('files.viewList')} onClick={() => setView(view === 'list' ? 'grid' : 'list')}>
+            {view === 'list' ? <LayoutGrid /> : <List />}
+          </Button>
+        )}
+        {!readOnly && <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="outline" size="sm" disabled={!canAdd} aria-label={t('files.newMenu')}>
               <Plus /><span className="max-sm:hidden">{t('files.newMenu')}</span>
@@ -362,8 +383,8 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
               {view === 'list' ? t('files.viewGrid') : t('files.viewList')}
             </DropdownMenuItem>
           </DropdownMenuContent>
-        </DropdownMenu>
-        <DropdownMenu>
+        </DropdownMenu>}
+        {!readOnly && <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button size="sm" disabled={!canAdd} aria-label={t('files.upload')}>
               <Upload /><span className="max-sm:hidden">{t('files.upload')}</span>
@@ -373,7 +394,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
             <DropdownMenuItem onSelect={startUpload}><Upload />{t('files.uploadFiles')}</DropdownMenuItem>
             <DropdownMenuItem onSelect={startFolderUpload}><FolderUp />{t('files.uploadFolder')}</DropdownMenuItem>
           </DropdownMenuContent>
-        </DropdownMenu>
+        </DropdownMenu>}
       </div>
     </>,
   );
@@ -383,6 +404,12 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   let body;
   if (err instanceof ApiError && (err.status === 404 || err.status === 400)) {
     body = <NotFoundMessage />;
+  } else if (err instanceof ApiError && err.code === 'space_unavailable') {
+    body = (
+      <StatusMessage title={t('spaces.unavailableTitle')} body={t('spaces.unavailableBody')}>
+        <Button variant="outline" onClick={() => void folderQ.refetch()} disabled={folderQ.isFetching}>{t('files.loadError.retry')}</Button>
+      </StatusMessage>
+    );
   } else if (!folderQ.data && err) {
     body = (
       <StatusMessage title={t('files.loadError.title')} body={t(errorKey(err))}>
@@ -442,6 +469,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
         }}
       />
       <FolderConflictDialog question={folderUpload.question} onAnswer={folderUpload.answer} />
+      {readOnly && <ReadOnlyBanner />}
       <div ref={viewRef} className="flex flex-1 flex-col" onKeyDown={onKeyDown} onClick={onBackgroundClick}>
         {body}
       </div>
@@ -460,6 +488,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
             onShare={actions.share}
             onOpenInOffice={actions.openInOffice}
             onVersions={actions.versions}
+            writable={(e: SyncItem) => e.capabilities.write !== false}
           />
         )}
         {d?.kind === 'newFolder' && (

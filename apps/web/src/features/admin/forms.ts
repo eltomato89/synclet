@@ -1,6 +1,8 @@
 import type { SsoSettingsInput, SsoSettingsWire } from '@synclet/shared';
 import { errorKey } from '@/features/files/errors';
+import { validateName } from '@/features/files/names';
 import { ApiError } from '@/lib/api';
+import type { SpaceRole } from './types';
 
 export const PASSWORD_MIN = 10;
 export const PASSWORD_MAX = 200;
@@ -63,6 +65,7 @@ export function adminErrorKey(err: unknown): string {
     const known = MESSAGES[err.message];
     if (known) return `admin.errors.${known}`;
     if (err.message.startsWith('data folder not writable')) return 'admin.errors.dataNotWritable';
+    if (err.code === 'name_conflict') return 'admin.errors.nameTaken';
     if (err.code === 'invalid_request') return 'admin.errors.invalid';
   }
   return errorKey(err);
@@ -210,4 +213,31 @@ export function ssoServerErrors(err: unknown): SsoErrors {
   if (m.startsWith('forward-auth needs')) return { 'forwardAuth.trustedProxies': key('proxyRequired') };
   if (m.startsWith('OIDC needs SYNCLET_PUBLIC_URL')) return { form: key('publicUrlMissing') };
   return { form: { raw: m } };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Groups and spaces
+
+/** Group and team folder names follow the file name rules (`admin.spaces.form.errors.*`). */
+export function validateSpaceName(raw: string): 'required' | 'invalid' | null {
+  const name = raw.trim();
+  if (!name) return 'required';
+  if (raw !== name && /[ .]$/.test(raw)) return 'invalid';
+  return validateName(name) ? 'invalid' : null;
+}
+
+export interface MemberRow { kind: 'user' | 'group'; id: string; name: string; role: SpaceRole }
+export const memberKey = (m: Pick<MemberRow, 'kind' | 'id'>) => `${m.kind}:${m.id}`;
+
+export function addMember(rows: MemberRow[], row: MemberRow): MemberRow[] {
+  return rows.some((r) => memberKey(r) === memberKey(row)) ? rows : [...rows, row];
+}
+export const removeMember = (rows: MemberRow[], key: string): MemberRow[] => rows.filter((r) => memberKey(r) !== key);
+export const setMemberRole = (rows: MemberRow[], key: string, role: SpaceRole): MemberRow[] =>
+  rows.map((r) => (memberKey(r) === key ? { ...r, role } : r));
+
+/** Group and space dialogs: a 409 means the name is taken; anything else uses the shared mapping. */
+export function nameConflictKey(err: unknown): { key: string; field: 'name' | null } {
+  if (err instanceof ApiError && err.status === 409) return { key: 'admin.errors.nameTaken', field: 'name' };
+  return { key: adminErrorKey(err), field: null };
 }

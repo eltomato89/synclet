@@ -8,7 +8,7 @@ import { APP_CONFIG, AppConfig } from '../config';
 import { freeName, nameKey, tempName } from '../common/names';
 import { absPath, joinRel, parentRel } from '../common/paths';
 import { SyncError } from '../common/sync-error';
-import type { IndexUser } from '../common/types';
+import type { IndexSpace } from '../common/types';
 import { FilesService, TrashManifestEntry } from '../files/files.service';
 import { InsufficientStorageError, isStorageFull, rethrowStorageError } from '../common/storage-errors';
 import { copyTree, moveNoReplace, statEntry } from '../files/fs-ops';
@@ -16,7 +16,7 @@ import { readDisk } from '../indexer/disk';
 import { ItemStore } from '../journal/item-store';
 import { JournalService, Tx } from '../journal/journal.service';
 import { PrismaService, TX_OPTS } from '../prisma/prisma.service';
-import { SerializerService } from '../sync/serializer.service';
+import { SerializerService, type ItemView } from '../sync/serializer.service';
 import { toSyncId, UUID } from '../sync/sync-ids';
 import { VersionsService } from '../versions/versions.service';
 
@@ -57,26 +57,37 @@ export class TrashService {
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
-  private abs(user: IndexUser, rel: string) { return absPath(this.config.dataRoot, user.username, rel); }
+  private abs(space: IndexSpace, rel: string) { return absPath(space.rootPath, rel); }
 
   private trashDir(id: string) { return path.resolve(this.config.metaRoot, 'trash', id); }
 
-  private toWire(e: TrashEntry): TrashEntryWire {
+  /** `apiSpaceId`: the entry's space as the caller sees it (`personal` or the space uuid). */
+  private toWire(e: TrashEntry, apiSpaceId: string): TrashEntryWire {
     return {
       id: e.id, itemId: toSyncId({ id: e.itemId, type: e.type }), type: e.type, name: e.name, originalPath: e.originalPath,
       size: Number(e.size), deletedAt: e.deletedAt.toISOString(), expiresAt: e.expiresAt?.toISOString() ?? null,
-      itemCount: manifestOf(e).length,
+      itemCount: manifestOf(e).length, spaceId: apiSpaceId, deletedBy: e.deletedBy,
     };
   }
 
-  async list(user: IndexUser): Promise<TrashEntryWire[]> {
-    const rows = await this.prisma.trashEntry.findMany({ where: { ownerId: user.id }, orderBy: [{ deletedAt: 'desc' }, { id: 'asc' }] });
-    return rows.map((e) => this.toWire(e));
+  /** Entries of the given spaces (with the caller's API id of each), newest first. */
+  async list(space: IndexSpace | Array<{ space: IndexSpace; apiSpaceId: string }>): Promise<TrashEntryWire[]> {
+    const spaces = Array.isArray(space) ? space : [{ space, apiSpaceId: space.kind === 'personal' ? 'personal' : space.id }];
+    if (spaces.length === 0) return [];
+    const apiIds = new Map(spaces.map((s) => [s.space.id, s.apiSpaceId]));
+    const rows = await this.prisma.trashEntry.findMany({ where: { spaceId: { in: [...apiIds.keys()] } }, orderBy: [{ deletedAt: 'desc' }, { id: 'asc' }] });
+    return rows.map((e) => this.toWire(e, apiIds.get(e.spaceId)!));
   }
 
-  private async find(user: IndexUser, trashId: string): Promise<TrashEntry> {
+  /** Space id of a trash entry (null for an unknown or malformed id); the caller checks access to it. */
+  async spaceOf(trashId: string): Promise<string | null> {
+    if (!UUID.test(trashId)) return null;
+    return (await this.prisma.trashEntry.findUnique({ where: { id: trashId }, select: { spaceId: true } }))?.spaceId ?? null;
+  }
+
+  private async find(space: IndexSpace, trashId: string): Promise<TrashEntry> {
     if (!UUID.test(trashId)) throw new SyncError('not_found');
-    const entry = await this.prisma.trashEntry.findFirst({ where: { id: trashId, ownerId: user.id } });
+    const entry = await this.prisma.trashEntry.findFirst({ where: { id: trashId, spaceId: space.id } });
     if (!entry) throw new SyncError('not_found');
     return entry;
   }
@@ -95,12 +106,12 @@ export class TrashService {
   /**
    * Restores a trash entry to its original folder (or the root if that folder is gone), under a
    * free name if the original one is taken, with the original item IDs wherever possible.
-   * Same file system: the content is renamed into place under the user lock. Otherwise it is first
+   * Same file system: the content is renamed into place under the space lock. Otherwise it is first
    * copied (outside the lock) into an ignored temp folder in the target folder, then published.
    * Nothing existing is ever replaced; on failure before commit the trash entry stays intact.
    */
-  async restore(user: IndexUser, trashId: string): Promise<RestoreResult> {
-    const entry = await this.find(user, trashId);
+  async restore(space: IndexSpace, trashId: string, view?: ItemView): Promise<RestoreResult> {
+    const entry = await this.find(space, trashId);
     if (this.claim([entry.id]).length === 0) throw busyError();
     try {
       if (!(await exists(entry.storePath))) {
@@ -110,19 +121,19 @@ export class TrashService {
       let copy: StagedCopy | null = null;
       try {
         for (let attempt = 0; ; attempt++) {
-          const outcome = await this.commit(user, entry.id, copy, await this.scan(copy ? copy.payload : entry.storePath));
+          const outcome = await this.commit(space, entry.id, copy, await this.scan(copy ? copy.payload : entry.storePath));
           if ('done' in outcome) {
             if (copy) await rmdir(copy.tmp).catch((e) => this.log.warn(`cannot remove ${copy?.tmp}: ${String(e)}`));
             copy = null;
             await this.removeStore(entry);
-            const [item] = await this.serializer.toSyncItems(user, [outcome.done.item]);
+            const [item] = await this.serializer.toSyncItems(space, [outcome.done.item], view);
             return { item, restoredTo: outcome.done.restoredTo, renamed: outcome.done.renamed };
           }
           // Different file system (or the target folder changed since the last copy): copy first.
           if (copy) await this.dropCopy(copy);
           copy = null;
           if (attempt >= 3) throw new SyncError('conflict', 'restore target keeps changing', undefined, 409);
-          copy = await this.stageCopy(user, entry, outcome.needCopy);
+          copy = await this.stageCopy(space, entry, outcome.needCopy);
         }
       } catch (e) {
         if (copy) await this.dropCopy(copy);
@@ -137,8 +148,8 @@ export class TrashService {
    * Copies the trashed content to `<targetDir>/.synclet-tmp-<hex>/<name>`. The temp folder is
    * created non-recursively, so a target folder deleted meanwhile is never re-created.
    */
-  private async stageCopy(user: IndexUser, entry: TrashEntry, dirRel: string): Promise<StagedCopy> {
-    const tmp = path.join(this.abs(user, dirRel), tempName(randomBytes(8).toString('hex')));
+  private async stageCopy(space: IndexSpace, entry: TrashEntry, dirRel: string): Promise<StagedCopy> {
+    const tmp = path.join(this.abs(space, dirRel), tempName(randomBytes(8).toString('hex')));
     await mkdir(tmp).catch((e) => Promise.reject(errno(e) === 'ENOENT' || errno(e) === 'ENOTDIR' ? new SyncError('conflict', 'restore target folder vanished', undefined, 409) : isStorageFull(e) ? new InsufficientStorageError() : e));
     const copy = { dirRel, tmp, payload: path.join(tmp, 'payload') };
     try {
@@ -154,26 +165,26 @@ export class TrashService {
     await rm(copy.tmp, { recursive: true, force: true }).catch((e) => this.log.error(`cannot remove restore temp ${copy.tmp}: ${String(e)}`));
   }
 
-  /** Moves trash content into the user folder without replacing anything (EXDEV across mounts). */
+  /** Moves trash content into the space folder without replacing anything (EXDEV across mounts). */
   protected moveIn(src: string, dst: string): Promise<void> {
     return moveNoReplace(src, dst);
   }
 
   /** Live folder of the original parent if it still exists as a real folder, else the root. */
-  private async target(tx: Tx, user: IndexUser, entry: TrashEntry): Promise<{ parentId: string | null; dirRel: string }> {
+  private async target(tx: Tx, space: IndexSpace, entry: TrashEntry): Promise<{ parentId: string | null; dirRel: string }> {
     const rel = parentRel(entry.originalPath);
     if (rel !== '') {
-      const p = await this.store.findLiveByPath(tx, user.id, rel);
+      const p = await this.store.findLiveByPath(tx, space.id, rel);
       if (p?.type === 'folder') {
         try {
-          await this.files.assertRealDir(user, rel);
+          await this.files.assertRealDir(space, rel);
           return { parentId: p.id, dirRel: rel };
         } catch {
           // gone or not a real folder on disk: fall back to the root
         }
       }
     }
-    await this.files.assertRealDir(user, '');
+    await this.files.assertRealDir(space, '');
     return { parentId: null, dirRel: '' };
   }
 
@@ -202,7 +213,7 @@ export class TrashService {
    * (same owner and type), created again if the row is gone, and replaced by a new id if it is
    * live (or otherwise unusable). Entries not in the manifest get new ids. One query.
    */
-  private async plan(tx: Tx, user: IndexUser, entry: TrashEntry, nodes: DiskNode[]): Promise<PlannedRow[]> {
+  private async plan(tx: Tx, space: IndexSpace, entry: TrashEntry, nodes: DiskNode[]): Promise<PlannedRow[]> {
     const manifest = new Map<string, TrashManifestEntry>();
     for (const m of manifestOf(entry)) {
       const sub = m.path === entry.originalPath ? '' : m.path.startsWith(entry.originalPath + '/') ? m.path.slice(entry.originalPath.length + 1) : null;
@@ -219,7 +230,7 @@ export class TrashService {
       const m = manifest.get(d.sub);
       const wanted = m && m.type === d.type && UUID.test(m.id) && !used.has(m.id) ? m : undefined;
       const row = wanted ? existing.get(wanted.id) : undefined;
-      const revivable = !!row && row.ownerId === user.id && row.deletedAt !== null && row.type === d.type;
+      const revivable = !!row && row.spaceId === space.id && row.deletedAt !== null && row.type === d.type;
       const mode: PlannedRow['mode'] = revivable ? 'revive' : 'create';
       const id = revivable || (wanted && !row) ? wanted!.id : randomUUID();
       used.add(id);
@@ -234,26 +245,26 @@ export class TrashService {
     });
   }
 
-  private async commit(user: IndexUser, entryId: string, copy: StagedCopy | null, nodes: DiskNode[]): Promise<CommitOutcome> {
+  private async commit(space: IndexSpace, entryId: string, copy: StagedCopy | null, nodes: DiskNode[]): Promise<CommitOutcome> {
     let published: { from: string; to: string } | null = null;
     try {
       return await this.prisma.$transaction(async (tx): Promise<CommitOutcome> => {
-        await this.journal.lockUser(tx, user.id);
-        const entry = await tx.trashEntry.findFirst({ where: { id: entryId, ownerId: user.id } });
+        await this.journal.lockSpaceForWrite(tx, space);
+        const entry = await tx.trashEntry.findFirst({ where: { id: entryId, spaceId: space.id } });
         if (!entry) throw new SyncError('not_found');
-        const target = await this.target(tx, user, entry);
+        const target = await this.target(tx, space, entry);
         if (copy && copy.dirRel !== target.dirRel) return { needCopy: target.dirRel };
         const src = copy ? copy.payload : entry.storePath;
         if (!copy && !(await exists(src))) throw unavailable();
 
-        // Everything is decided before anything becomes visible in the user folder.
-        const planned = await this.plan(tx, user, entry, nodes);
-        const keys = new Set((await this.store.liveChildren(tx, user.id, target.parentId)).map((s) => s.nameKey));
+        // Everything is decided before anything becomes visible in the space folder.
+        const planned = await this.plan(tx, space, entry, nodes);
+        const keys = new Set((await this.store.liveChildren(tx, space.id, target.parentId)).map((s) => s.nameKey));
         const isFolder = nodes[0].type === 'folder';
         let name = entry.name;
         for (let attempt = 0; ; attempt++) {
           if (keys.has(nameKey(name))) name = freeName(entry.name, keys, isFolder);
-          const to = this.abs(user, joinRel(target.dirRel, name));
+          const to = this.abs(space, joinRel(target.dirRel, name));
           try {
             await this.moveIn(src, to);
             published = { from: src, to };
@@ -267,10 +278,10 @@ export class TrashService {
 
         // After publishing: bulk writes only.
         const rel = joinRel(target.dirRel, name);
-        await this.writeRows(tx, user, planned, target.parentId, rel, name);
-        await this.journal.record(tx, user.id, planned.map((p) => ({ id: p.id, type: p.node.type })), 'upsert');
-        const sibs = await this.store.sameKeySiblings(tx, user.id, target.parentId, [nameKey(name)], new Set([planned[0].id]));
-        await this.journal.record(tx, user.id, sibs, 'upsert');
+        await this.writeRows(tx, space, planned, target.parentId, rel, name);
+        await this.journal.record(tx, space.id, planned.map((p) => ({ id: p.id, type: p.node.type })), 'upsert');
+        const sibs = await this.store.sameKeySiblings(tx, space.id, target.parentId, [nameKey(name)], new Set([planned[0].id]));
+        await this.journal.record(tx, space.id, sibs, 'upsert');
         await tx.trashEntry.delete({ where: { id: entry.id } });
         const item = await tx.item.findUniqueOrThrow({ where: { id: planned[0].id } });
         return { done: { item, restoredTo: rel, renamed: name !== entry.name } };
@@ -284,7 +295,7 @@ export class TrashService {
   }
 
   /** createMany for new/recreated rows, chunked `UPDATE … FROM (VALUES …)` for revived ones. */
-  private async writeRows(tx: Tx, user: IndexUser, planned: PlannedRow[], topParentId: string | null, rel: string, name: string): Promise<void> {
+  private async writeRows(tx: Tx, space: IndexSpace, planned: PlannedRow[], topParentId: string | null, rel: string, name: string): Promise<void> {
     const fields = (p: PlannedRow, i: number) => {
       const d = p.node;
       const n = i === 0 ? name : d.name;
@@ -293,7 +304,7 @@ export class TrashService {
         size: d.type === 'file' ? d.size : 0n, mtime: d.mtime, ino: d.ino, dev: d.dev, contentHash: p.contentHash,
       };
     };
-    const creates = planned.flatMap((p, i) => (p.mode === 'create' ? [{ id: p.id, ownerId: user.id, type: p.node.type, ...fields(p, i) }] : []));
+    const creates = planned.flatMap((p, i) => (p.mode === 'create' ? [{ id: p.id, spaceId: space.id, type: p.node.type, ...fields(p, i) }] : []));
     for (let i = 0; i < creates.length; i += WRITE_CHUNK) await tx.item.createMany({ data: creates.slice(i, i + WRITE_CHUNK) });
     const revives = planned.flatMap((p, i) => (p.mode === 'revive' ? [{ p, f: fields(p, i) }] : []));
     for (let i = 0; i < revives.length; i += WRITE_CHUNK) {
@@ -305,7 +316,7 @@ export class TrashService {
           mtime = v.mtime AT TIME ZONE 'UTC', ino = v.ino, dev = v.dev, "contentHash" = v.hash, "deletedAt" = NULL,
           version = i.version + CASE WHEN v.isfile THEN 1 ELSE 0 END, "updatedAt" = now()
         FROM (VALUES ${Prisma.join(values)}) AS v(id, pid, name, nkey, path, size, mtime, ino, dev, hash, isfile)
-        WHERE i.id = v.id AND i."ownerId" = ${user.id}::uuid AND i."deletedAt" IS NOT NULL`;
+        WHERE i.id = v.id AND i."spaceId" = ${space.id}::uuid AND i."deletedAt" IS NOT NULL`;
       // Planned under the same lock, so this only fails on a broken invariant: roll back.
       if (n !== Math.min(WRITE_CHUNK, revives.length - i)) throw new Error('restore: revived row count mismatch');
     }
@@ -313,11 +324,11 @@ export class TrashService {
 
   // ---------------------------------------------------------------- delete
 
-  async deleteForever(user: IndexUser, trashId: string): Promise<void> {
-    const entry = await this.find(user, trashId);
+  async deleteForever(space: IndexSpace, trashId: string): Promise<void> {
+    const entry = await this.find(space, trashId);
     if (this.claim([entry.id]).length === 0) throw busyError();
     try {
-      const removed = await this.dropRows(user.id, [entry.id]);
+      const removed = await this.dropRows(space.id, [entry.id]);
       if (removed.length === 0) throw new SyncError('not_found');
       await this.purge(removed);
     } finally {
@@ -325,11 +336,11 @@ export class TrashService {
     }
   }
 
-  /** Deletes all trash entries of the user (except those being restored right now). */
-  async empty(user: IndexUser): Promise<number> {
-    const ids = this.claim((await this.prisma.trashEntry.findMany({ where: { ownerId: user.id }, select: { id: true } })).map((e) => e.id));
+  /** Deletes all trash entries of the space (except those being restored right now). */
+  async empty(space: IndexSpace): Promise<number> {
+    const ids = this.claim((await this.prisma.trashEntry.findMany({ where: { spaceId: space.id }, select: { id: true } })).map((e) => e.id));
     try {
-      const removed = await this.dropRows(user.id, ids);
+      const removed = await this.dropRows(space.id, ids);
       await this.purge(removed);
       return removed.length;
     } finally {
@@ -347,19 +358,19 @@ export class TrashService {
     if (days > 0) {
       await this.prisma.$executeRaw`UPDATE "TrashEntry" SET "expiresAt" = "deletedAt" + make_interval(days => ${days}::int) WHERE "expiresAt" IS NULL`;
     }
-    const due = await this.prisma.trashEntry.findMany({ where: { expiresAt: { lt: now } }, select: { id: true, ownerId: true } });
+    const due = await this.prisma.trashEntry.findMany({ where: { expiresAt: { lt: now } }, select: { id: true, spaceId: true } });
     const ids = new Set(this.claim(due.map((e) => e.id)));
     let total = 0;
     try {
       const byOwner = new Map<string, string[]>();
-      for (const e of due) if (ids.has(e.id)) byOwner.set(e.ownerId, [...(byOwner.get(e.ownerId) ?? []), e.id]);
-      for (const [ownerId, list] of byOwner) {
+      for (const e of due) if (ids.has(e.id)) byOwner.set(e.spaceId, [...(byOwner.get(e.spaceId) ?? []), e.id]);
+      for (const [spaceId, list] of byOwner) {
         try {
-          const removed = await this.dropRows(ownerId, list, { expiresAt: { lt: now } });
+          const removed = await this.dropRows(spaceId, list, { expiresAt: { lt: now } });
           await this.purge(removed);
           total += removed.length;
         } catch (e) {
-          this.log.error(`trash expiry for ${ownerId} failed: ${(e as Error).message}`);
+          this.log.error(`trash expiry for ${spaceId} failed: ${(e as Error).message}`);
         }
       }
     } finally {
@@ -370,12 +381,12 @@ export class TrashService {
     return total;
   }
 
-  /** Deletes the rows under the user lock (serialized with a restore's commit); returns the deleted rows. */
-  private async dropRows(ownerId: string, ids: string[], extra: { expiresAt?: { lt: Date } } = {}): Promise<TrashEntry[]> {
+  /** Deletes the rows under the space lock (serialized with a restore's commit); returns the deleted rows. */
+  private async dropRows(spaceId: string, ids: string[], extra: { expiresAt?: { lt: Date } } = {}): Promise<TrashEntry[]> {
     if (ids.length === 0) return [];
     return this.prisma.$transaction(async (tx) => {
-      await this.journal.lockUser(tx, ownerId);
-      const rows = await tx.trashEntry.findMany({ where: { id: { in: ids }, ownerId, ...extra } });
+      await this.journal.lockSpace(tx, spaceId);
+      const rows = await tx.trashEntry.findMany({ where: { id: { in: ids }, spaceId, ...extra } });
       await tx.trashEntry.deleteMany({ where: { id: { in: rows.map((r) => r.id) } } });
       return rows;
     }, TX_OPTS);
@@ -404,7 +415,7 @@ export class TrashService {
     for (let i = 0; i < ids.length; i += ID_CHUNK) {
       const chunk = ids.slice(i, i + ID_CHUNK);
       const live = new Set((await this.prisma.item.findMany({ where: { id: { in: chunk }, deletedAt: null }, select: { id: true } })).map((r) => r.id));
-      await this.versions.deleteForItems(entry.ownerId, chunk.filter((id) => !live.has(id)));
+      await this.versions.deleteForItems(entry.spaceId, chunk.filter((id) => !live.has(id)));
     }
   }
 

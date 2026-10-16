@@ -1,9 +1,10 @@
 import fsp, { chmod, link, mkdir, readdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
-import { createTestApp, createTestUser, TestContext } from '../../test/context';
+import { createTestApp, createTestSpace, createTestUser, personalSpace, TestContext } from '../../test/context';
+import { AuthService } from '../auth/auth.service';
 import type { AppConfig } from '../config';
-import type { IndexUser } from '../common/types';
+import type { IndexSpace, IndexUser } from '../common/types';
 import { DerivativesGc } from '../derivatives/derivatives-gc';
 import { DerivedStore } from '../derivatives/derived-store';
 import { FilesService } from '../files/files.service';
@@ -26,12 +27,13 @@ async function walk(dir: string, rel = ''): Promise<string[]> {
 }
 
 describe('Versions', () => {
-  let ctx: TestContext; let files: FilesService; let versions: VersionsService; let user: IndexUser; let root: string;
+  let ctx: TestContext; let files: FilesService; let versions: VersionsService; let user: IndexUser; let space: IndexSpace; let root: string;
   const setup = async (overrides: Partial<AppConfig> = {}) => {
     ctx = await createTestApp({ versions: true, ...overrides });
     files = ctx.app.get(FilesService);
     versions = ctx.app.get(VersionsService);
     user = await createTestUser(ctx);
+    space = personalSpace(ctx, user);
     root = path.join(ctx.config.dataRoot, user.username);
   };
   afterEach(async () => { await ctx?.close(); });
@@ -43,25 +45,25 @@ describe('Versions', () => {
     beforeEach(() => setup());
 
     it('PUT content captures exactly one version with the previous bytes and adds nothing to /data', async () => {
-      const f = await files.upload(user, null, 'notes.txt', body('first'), {});
-      const updated = await files.replaceContent(user, f.id, body('second!'), { ifMatchVersion: 1 });
+      const f = await files.upload(space, null, 'notes.txt', body('first'), {});
+      const updated = await files.replaceContent(space, f.id, body('second!'), { ifMatchVersion: 1, by: user.id });
       expect(updated.version).toBe(2);
       expect(await walk(root)).toEqual(['notes.txt']);
       expect(await readFile(path.join(root, 'notes.txt'), 'utf8')).toBe('second!');
       const [v, ...more] = await rows(f.id);
       expect(more).toEqual([]);
-      expect(v).toMatchObject({ itemId: f.id, ownerId: user.id, version: 1, sha: f.contentHash, size: 5n, source: 'api', createdBy: user.id });
+      expect(v).toMatchObject({ itemId: f.id, spaceId: user.id, version: 1, sha: f.contentHash, size: 5n, source: 'api', createdBy: user.id });
       expect(v.mtime.getTime()).toBe(f.mtime.getTime());
       expect(v.storePath).toBe(path.join(versionsDir(), user.id, f.id, `1-${f.contentHash}`));
       expect(await readFile(v.storePath, 'utf8')).toBe('first');
-      const listed = await versions.list(user, f.id);
+      const listed = await versions.list(space, f.id);
       expect(listed).toEqual([expect.objectContaining({ id: v.id, version: 1, size: 5, sha256: f.contentHash, source: 'api', createdBy: { id: user.id, displayName: 'alice' } })]);
     });
 
     it('two PUTs within one second are both captured; prune then keeps one per 2 s bucket', async () => {
-      const f = await files.upload(user, null, 'a.txt', body('v1'), {});
-      await files.replaceContent(user, f.id, body('v2'), { ifMatchVersion: null });
-      await files.replaceContent(user, f.id, body('v3'), { ifMatchVersion: null });
+      const f = await files.upload(space, null, 'a.txt', body('v1'), {});
+      await files.replaceContent(space, f.id, body('v2'), { ifMatchVersion: null });
+      await files.replaceContent(space, f.id, body('v3'), { ifMatchVersion: null });
       const both = await rows(f.id);
       expect(both.map((r) => r.version)).toEqual([1, 2]);
       expect(await Promise.all(both.map((r) => readFile(r.storePath, 'utf8')))).toEqual(['v1', 'v2']);
@@ -75,8 +77,8 @@ describe('Versions', () => {
     });
 
     it('prune keeps versions in their retention buckets (older ones thinned out)', async () => {
-      const f = await files.upload(user, null, 'a.txt', body('x'), {});
-      for (let i = 0; i < 4; i++) await files.replaceContent(user, f.id, body(`y${i}`), { ifMatchVersion: null });
+      const f = await files.upload(space, null, 'a.txt', body('x'), {});
+      for (let i = 0; i < 4; i++) await files.replaceContent(space, f.id, body(`y${i}`), { ifMatchVersion: null });
       const all = await rows(f.id);
       // Spread them: 1 h, 1 h 10 min, 3 h, 5 h ago.
       const now = new Date();
@@ -87,12 +89,12 @@ describe('Versions', () => {
     });
 
     it('restore round-trip: current becomes a version, restored bytes current, same id, version + 1, journaled', async () => {
-      const f = await files.upload(user, null, 'doc.txt', body('original'), {});
-      await files.replaceContent(user, f.id, body('edited'), { ifMatchVersion: 1 });
+      const f = await files.upload(space, null, 'doc.txt', body('original'), {});
+      await files.replaceContent(space, f.id, body('edited'), { ifMatchVersion: 1 });
       const [v1] = await rows(f.id);
       await ctx.prisma.item.update({ where: { id: f.id }, data: { officeKey: 'session-1' } });
       const cursor = await ctx.prisma.fileChange.aggregate({ _max: { seq: true } });
-      const restored = await versions.restore(user, f.id, v1.id);
+      const restored = await versions.restore(space, f.id, v1.id);
       expect(restored.id).toBe(f.id);
       expect(restored.version).toBe(3);
       expect(restored.contentHash).toBe(f.contentHash);
@@ -108,93 +110,93 @@ describe('Versions', () => {
     });
 
     it('capture stores createdBy null for an unknown or malformed editor id instead of failing', async () => {
-      const f = await files.upload(user, null, 'o.docx', body('1'), {});
+      const f = await files.upload(space, null, 'o.docx', body('1'), {});
       const item = await ctx.prisma.item.findUniqueOrThrow({ where: { id: f.id } });
       const abs = path.join(root, 'o.docx');
       for (const by of ['00000000-0000-4000-8000-000000000000', 'not-a-uuid', user.id]) {
-        await ctx.prisma.$transaction((tx) => versions.capture(tx, user, item, abs, 'office', by));
+        await ctx.prisma.$transaction((tx) => versions.capture(tx, space, item, abs, 'office', by));
       }
       expect((await rows(f.id)).map((r) => r.createdBy ?? 'null').sort()).toEqual(['null', 'null', user.id].sort());
       expect(await readFile(abs, 'utf8')).toBe('1');
     });
 
     it('versions a 0-byte file', async () => {
-      const f = await files.upload(user, null, 'empty.txt', body(''), {});
-      await files.replaceContent(user, f.id, body('now with content'), { ifMatchVersion: 1 });
+      const f = await files.upload(space, null, 'empty.txt', body(''), {});
+      await files.replaceContent(space, f.id, body('now with content'), { ifMatchVersion: 1 });
       const [v] = await rows(f.id);
       expect(v.size).toBe(0n);
       expect((await stat(v.storePath)).size).toBe(0);
-      const restored = await versions.restore(user, f.id, v.id);
+      const restored = await versions.restore(space, f.id, v.id);
       expect(Number(restored.size)).toBe(0);
       expect(await readFile(path.join(root, 'empty.txt'), 'utf8')).toBe('');
     });
 
     it('versions follow the item id across rename and move', async () => {
-      const folder = await files.createFolder(user, null, 'Sub');
-      const f = await files.upload(user, null, 'a.txt', body('one'), {});
-      await files.replaceContent(user, f.id, body('two'), { ifMatchVersion: null });
-      await files.update(user, f.id, { name: 'b.txt', parentId: folder.id });
-      const listed = await versions.list(user, f.id);
+      const folder = await files.createFolder(space, null, 'Sub');
+      const f = await files.upload(space, null, 'a.txt', body('one'), {});
+      await files.replaceContent(space, f.id, body('two'), { ifMatchVersion: null });
+      await files.update(space, f.id, { name: 'b.txt', parentId: folder.id });
+      const listed = await versions.list(space, f.id);
       expect(listed).toHaveLength(1);
-      const { downloadName, abs } = await versions.openRead(user, f.id, listed[0].id);
+      const { downloadName, abs } = await versions.openRead(space, f.id, listed[0].id);
       expect(downloadName).toBe('b (v1).txt');
       expect(await readFile(abs, 'utf8')).toBe('one');
     });
 
     it('another user gets 404 for list, download and restore', async () => {
-      const f = await files.upload(user, null, 'a.txt', body('one'), {});
-      await files.replaceContent(user, f.id, body('two'), { ifMatchVersion: null });
+      const f = await files.upload(space, null, 'a.txt', body('one'), {});
+      await files.replaceContent(space, f.id, body('two'), { ifMatchVersion: null });
       const [v] = await rows(f.id);
       const bob = await createTestUser(ctx, 'bob');
-      await expect(versions.list(bob, f.id)).rejects.toMatchObject({ code: 'not_found' });
-      await expect(versions.openRead(bob, f.id, v.id)).rejects.toMatchObject({ code: 'not_found' });
-      await expect(versions.restore(bob, f.id, v.id)).rejects.toMatchObject({ code: 'not_found' });
+      await expect(versions.list(personalSpace(ctx, bob), f.id)).rejects.toMatchObject({ code: 'not_found' });
+      await expect(versions.openRead(personalSpace(ctx, bob), f.id, v.id)).rejects.toMatchObject({ code: 'not_found' });
+      await expect(versions.restore(personalSpace(ctx, bob), f.id, v.id)).rejects.toMatchObject({ code: 'not_found' });
       // A version id of another item is not reachable through this item either.
-      const g = await files.upload(user, null, 'g.txt', body('g'), {});
-      await expect(versions.openRead(user, g.id, v.id)).rejects.toMatchObject({ code: 'not_found' });
+      const g = await files.upload(space, null, 'g.txt', body('g'), {});
+      await expect(versions.openRead(space, g.id, v.id)).rejects.toMatchObject({ code: 'not_found' });
     });
 
     it('trash restore keeps versions; delete forever removes version files and rows', async () => {
       const trash = ctx.app.get(TrashService);
-      const folder = await files.createFolder(user, null, 'Dir');
-      const f = await files.upload(user, folder.id, 'a.txt', body('one'), {});
-      await files.replaceContent(user, f.id, body('two'), { ifMatchVersion: null });
+      const folder = await files.createFolder(space, null, 'Dir');
+      const f = await files.upload(space, folder.id, 'a.txt', body('one'), {});
+      await files.replaceContent(space, f.id, body('two'), { ifMatchVersion: null });
       const [v] = await rows(f.id);
-      await files.remove(user, folder.id);
+      await files.remove(space, folder.id);
       await files.pendingTrash();
       expect(await rows(f.id)).toHaveLength(1);
-      let [entry] = await trash.list(user);
-      await trash.restore(user, entry.id);
-      expect((await versions.list(user, f.id)).map((x) => x.id)).toEqual([v.id]);
-      await files.remove(user, folder.id);
+      let [entry] = await trash.list(space);
+      await trash.restore(space, entry.id);
+      expect((await versions.list(space, f.id)).map((x) => x.id)).toEqual([v.id]);
+      await files.remove(space, folder.id);
       await files.pendingTrash();
-      [entry] = await trash.list(user);
-      await trash.deleteForever(user, entry.id);
+      [entry] = await trash.list(space);
+      await trash.deleteForever(space, entry.id);
       expect(await rows(f.id)).toEqual([]);
       await expect(stat(path.join(versionsDir(), user.id, f.id))).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
     it('emptying the trash and trash expiry remove versions', async () => {
       const trash = ctx.app.get(TrashService);
-      const a = await files.upload(user, null, 'a.txt', body('1'), {});
-      const b = await files.upload(user, null, 'b.txt', body('1'), {});
-      for (const f of [a, b]) await files.replaceContent(user, f.id, body('2'), { ifMatchVersion: null });
-      await files.remove(user, a.id);
-      await files.remove(user, b.id);
+      const a = await files.upload(space, null, 'a.txt', body('1'), {});
+      const b = await files.upload(space, null, 'b.txt', body('1'), {});
+      for (const f of [a, b]) await files.replaceContent(space, f.id, body('2'), { ifMatchVersion: null });
+      await files.remove(space, a.id);
+      await files.remove(space, b.id);
       await files.pendingTrash();
-      const [eb] = await trash.list(user);
+      const [eb] = await trash.list(space);
       await ctx.prisma.trashEntry.update({ where: { id: eb.id }, data: { expiresAt: new Date(Date.now() - 1000) } });
       expect(await trash.expire()).toBe(1);
       expect((await rows()).map((r) => r.itemId)).toEqual([a.id]);
-      expect(await trash.empty(user)).toBe(1);
+      expect(await trash.empty(space)).toBe(1);
       expect(await rows()).toEqual([]);
       expect(await walk(versionsDir()).then((l) => l.filter((p) => p.split('/').length === 2))).toEqual([]);
     });
 
     it('prune removes versions of items deleted on the host once their row is gone', async () => {
-      const f = await files.upload(user, null, 'a.txt', body('1'), {});
-      const keep = await files.upload(user, null, 'k.txt', body('1'), {});
-      for (const x of [f, keep]) await files.replaceContent(user, x.id, body('2'), { ifMatchVersion: null });
+      const f = await files.upload(space, null, 'a.txt', body('1'), {});
+      const keep = await files.upload(space, null, 'k.txt', body('1'), {});
+      for (const x of [f, keep]) await files.replaceContent(space, x.id, body('2'), { ifMatchVersion: null });
       await ctx.prisma.item.delete({ where: { id: f.id } }); // tombstone purged after a host delete
       const res = await versions.prune();
       expect(res.orphaned).toBe(1);
@@ -203,7 +205,7 @@ describe('Versions', () => {
     });
 
     it('GC keeps derivatives of a content hash referenced only by a version', async () => {
-      const f = await files.upload(user, null, 'p.txt', body('picture'), {});
+      const f = await files.upload(space, null, 'p.txt', body('picture'), {});
       const sha = f.contentHash!;
       const derived = ctx.app.get(DerivedStore);
       const thumb = derived.pathFor(sha, 'thumb', 256);
@@ -211,7 +213,7 @@ describe('Versions', () => {
       await writeFile(thumb, 'webp');
       await writeFile(derived.pathFor(sha, 'thumb', 1024), 'webp'); // complete, so GC never requeues it
       await ctx.prisma.derivativeJob.create({ data: { sha, kind: 'thumb', status: 'done' } });
-      await files.replaceContent(user, f.id, body('other'), { ifMatchVersion: null });
+      await files.replaceContent(space, f.id, body('other'), { ifMatchVersion: null });
       const gc = ctx.app.get(DerivativesGc);
       await gc.run();
       expect(await readFile(thumb, 'utf8')).toBe('webp');
@@ -223,10 +225,10 @@ describe('Versions', () => {
     });
 
     it('capture failure (versions dir not writable) aborts the replace and leaves the current file untouched', async () => {
-      const f = await files.upload(user, null, 'safe.txt', body('precious'), {});
+      const f = await files.upload(space, null, 'safe.txt', body('precious'), {});
       // A file where the version store should be: mkdir fails even for root.
       await writeFile(versionsDir(), 'in the way');
-      await expect(files.replaceContent(user, f.id, body('new'), { ifMatchVersion: 1 })).rejects.toThrow();
+      await expect(files.replaceContent(space, f.id, body('new'), { ifMatchVersion: 1 })).rejects.toThrow();
       expect(await readFile(path.join(root, 'safe.txt'), 'utf8')).toBe('precious');
       expect(await walk(root)).toEqual(['safe.txt']);
       const row = await ctx.prisma.item.findUniqueOrThrow({ where: { id: f.id } });
@@ -235,11 +237,11 @@ describe('Versions', () => {
     });
 
     (isRoot ? it.skip : it)('capture failure with a read-only versions dir aborts the replace (no temp left)', async () => {
-      const f = await files.upload(user, null, 'safe.txt', body('precious'), {});
+      const f = await files.upload(space, null, 'safe.txt', body('precious'), {});
       await mkdir(versionsDir(), { recursive: true });
       await chmod(versionsDir(), 0o555);
       try {
-        await expect(files.replaceContent(user, f.id, body('new'), { ifMatchVersion: 1 })).rejects.toMatchObject({ code: 'EACCES' });
+        await expect(files.replaceContent(space, f.id, body('new'), { ifMatchVersion: 1 })).rejects.toMatchObject({ code: 'EACCES' });
         expect(await readFile(path.join(root, 'safe.txt'), 'utf8')).toBe('precious');
         expect(await walk(root)).toEqual(['safe.txt']);
         expect(await walk(versionsDir())).toEqual([]);
@@ -250,11 +252,11 @@ describe('Versions', () => {
     });
 
     it('copies (with hash) when hard links are not possible, leaving no temp behind', async () => {
-      const f = await files.upload(user, null, 'x.txt', body('cross-fs'), {});
+      const f = await files.upload(space, null, 'x.txt', body('cross-fs'), {});
       await ctx.prisma.item.update({ where: { id: f.id }, data: { contentHash: null } }); // not hashed yet
       const spy = jest.spyOn(fsp, 'link').mockRejectedValueOnce(Object.assign(new Error('EXDEV'), { code: 'EXDEV' }));
       try {
-        await files.replaceContent(user, f.id, body('new'), { ifMatchVersion: 1 });
+        await files.replaceContent(space, f.id, body('new'), { ifMatchVersion: 1 });
       } finally {
         spy.mockRestore();
       }
@@ -268,11 +270,11 @@ describe('Versions', () => {
     });
 
     it('a leftover file of a rolled-back capture is replaced, a referenced one never', async () => {
-      const f = await files.upload(user, null, 'a.txt', body('one'), {});
+      const f = await files.upload(space, null, 'a.txt', body('one'), {});
       const dir = path.join(versionsDir(), user.id, f.id);
       await mkdir(dir, { recursive: true });
       await writeFile(path.join(dir, `1-${f.contentHash}`), 'stale');
-      await files.replaceContent(user, f.id, body('two'), { ifMatchVersion: 1 });
+      await files.replaceContent(space, f.id, body('two'), { ifMatchVersion: 1 });
       const [v] = await rows(f.id);
       expect(await readFile(v.storePath, 'utf8')).toBe('one');
     });
@@ -286,7 +288,7 @@ describe('Versions', () => {
       };
 
       it('a slow copy of the current content does not hold the lock: another op of the same user proceeds', async () => {
-        const f = await files.upload(user, null, 'big.bin', body('old content'), {});
+        const f = await files.upload(space, null, 'big.bin', body('old content'), {});
         let entered!: () => void; const inCopy = new Promise<void>((r) => { entered = r; });
         let release!: () => void; const gate = new Promise<void>((r) => { release = r; });
         const proto = Object.getPrototypeOf(versions) as { copyHashed: (s: string, d: string) => Promise<string> };
@@ -296,10 +298,10 @@ describe('Versions', () => {
         });
         const linkSpy = jest.spyOn(fsp, 'link').mockRejectedValueOnce(Object.assign(new Error('EXDEV'), { code: 'EXDEV' }));
         try {
-          const put = files.replaceContent(user, f.id, body('new content'), { ifMatchVersion: 1 });
+          const put = files.replaceContent(space, f.id, body('new content'), { ifMatchVersion: 1 });
           await inCopy;
           // Same user, mutating, while the copy hangs: must not wait for it.
-          const folder = await Promise.race([files.createFolder(user, null, 'during'), new Promise<never>((_, rej) => setTimeout(() => rej(new Error('blocked by the capture')), 5000))]);
+          const folder = await Promise.race([files.createFolder(space, null, 'during'), new Promise<never>((_, rej) => setTimeout(() => rej(new Error('blocked by the capture')), 5000))]);
           expect(folder.name).toBe('during');
           release();
           expect((await put).version).toBe(2);
@@ -312,10 +314,10 @@ describe('Versions', () => {
       });
 
       it('a failure after the DB writes but before the final rename leaves the current file and no version row', async () => {
-        const f = await files.upload(user, null, 'keep.txt', body('current'), {});
+        const f = await files.upload(space, null, 'keep.txt', body('current'), {});
         const spy = jest.spyOn(fsOps, 'replaceAtomic').mockRejectedValueOnce(new Error('disk gone'));
         try {
-          await expect(files.replaceContent(user, f.id, body('next'), { ifMatchVersion: 1 })).rejects.toThrow('disk gone');
+          await expect(files.replaceContent(space, f.id, body('next'), { ifMatchVersion: 1 })).rejects.toThrow('disk gone');
         } finally {
           spy.mockRestore();
         }
@@ -336,10 +338,10 @@ describe('Versions', () => {
       };
 
       it('a COMMIT failing after the final rename keeps the version file and records its row again', async () => {
-        const f = await files.upload(user, null, 'c.txt', body('previous'), {});
+        const f = await files.upload(space, null, 'c.txt', body('previous'), {});
         const spy = failCommitOnce(false);
         try {
-          await expect(files.replaceContent(user, f.id, body('new'), { ifMatchVersion: 1 })).rejects.toThrow('COMMIT failed');
+          await expect(files.replaceContent(space, f.id, body('new'), { ifMatchVersion: 1 })).rejects.toThrow('COMMIT failed');
         } finally {
           spy.mockRestore();
         }
@@ -352,10 +354,10 @@ describe('Versions', () => {
       });
 
       it('an ambiguous COMMIT (committed, error reported) keeps the version file and adds no second row', async () => {
-        const f = await files.upload(user, null, 'c.txt', body('previous'), {});
+        const f = await files.upload(space, null, 'c.txt', body('previous'), {});
         const spy = failCommitOnce(true);
         try {
-          await expect(files.replaceContent(user, f.id, body('new'), { ifMatchVersion: 1 })).rejects.toThrow('connection lost');
+          await expect(files.replaceContent(space, f.id, body('new'), { ifMatchVersion: 1 })).rejects.toThrow('connection lost');
         } finally {
           spy.mockRestore();
         }
@@ -375,7 +377,7 @@ describe('Versions', () => {
       };
 
       it('a host change between prepare and commit is detected and the version is prepared again', async () => {
-        const f = await files.upload(user, null, 'h.txt', body('one'), {});
+        const f = await files.upload(space, null, 'h.txt', body('one'), {});
         const abs = path.join(root, 'h.txt');
         const orig = versions.prepare.bind(versions);
         let calls = 0;
@@ -385,7 +387,7 @@ describe('Versions', () => {
           return p;
         });
         try {
-          const updated = await files.replaceContent(user, f.id, body('api'), { ifMatchVersion: null });
+          const updated = await files.replaceContent(space, f.id, body('api'), { ifMatchVersion: null });
           expect(updated.version).toBe(3);
         } finally {
           spy.mockRestore();
@@ -399,7 +401,7 @@ describe('Versions', () => {
       });
 
       it('a file that keeps changing during capture yields 412 and is left as the host wrote it', async () => {
-        const f = await files.upload(user, null, 'h.txt', body('one'), {});
+        const f = await files.upload(space, null, 'h.txt', body('one'), {});
         const abs = path.join(root, 'h.txt');
         const orig = versions.prepare.bind(versions);
         let n = 0;
@@ -409,7 +411,7 @@ describe('Versions', () => {
           return p;
         });
         try {
-          await expect(files.replaceContent(user, f.id, body('api'), { ifMatchVersion: null })).rejects.toMatchObject({ code: 'conflict' });
+          await expect(files.replaceContent(space, f.id, body('api'), { ifMatchVersion: null })).rejects.toMatchObject({ code: 'conflict' });
         } finally {
           spy.mockRestore();
         }
@@ -420,11 +422,11 @@ describe('Versions', () => {
       });
 
       it('a file with another hard link is copied: edits through that link never change the version', async () => {
-        const f = await files.upload(user, null, 'a.txt', body('original'), {});
+        const f = await files.upload(space, null, 'a.txt', body('original'), {});
         const other = path.join(ctx.config.dataRoot, 'other-link');
         await link(path.join(root, 'a.txt'), other); // the user's own second name for the inode
         try {
-          await files.replaceContent(user, f.id, body('replaced'), { ifMatchVersion: 1 });
+          await files.replaceContent(space, f.id, body('replaced'), { ifMatchVersion: 1 });
           const [v] = await rows(f.id);
           expect((await stat(v.storePath)).ino).not.toBe((await stat(other)).ino);
           await writeFile(other, 'changed via the other link'); // in place, same inode as the old file
@@ -436,12 +438,12 @@ describe('Versions', () => {
 
       it('office save and restore go through commitReplace with their sources', async () => {
         const commit = jest.spyOn(files as unknown as { commitReplace: (...a: unknown[]) => Promise<unknown> }, 'commitReplace');
-        const f = await files.upload(user, null, 'o.docx', body('v1'), {});
-        const saved = await files.saveOfficeContent(user, f.id, body('v2 from office'), { key: 'k1', baseVersion: 1, by: user.id, conflictName: (n) => `${n} (conflict)`, fallbackName: 'Office' });
+        const f = await files.upload(space, null, 'o.docx', body('v1'), {});
+        const saved = await files.saveOfficeContent(space, f.id, body('v2 from office'), { key: 'k1', baseVersion: 1, by: user.id, conflictName: (n) => `${n} (conflict)`, fallbackName: 'Office' });
         expect(saved.outcome).toBe('replaced');
         const [v1] = await rows(f.id);
         expect(v1).toMatchObject({ version: 1, source: 'office', createdBy: user.id });
-        await versions.restore(user, f.id, v1.id);
+        await versions.restore(space, f.id, v1.id);
         expect(commit.mock.calls.map((c) => c[6])).toEqual(['office', 'restore']);
         expect((await rows(f.id)).map((r) => r.source)).toEqual(['office', 'restore']);
         expect(await readFile(path.join(root, 'o.docx'), 'utf8')).toBe('v1');
@@ -452,12 +454,12 @@ describe('Versions', () => {
     it('max bytes evicts the oldest versions but always keeps the newest per item', async () => {
       await ctx.close();
       await setup({ versionsMaxBytes: 10 });
-      const a = await files.upload(user, null, 'a.txt', body('aaaa'), {});
-      const b = await files.upload(user, null, 'b.txt', body('bbbbbbbb'), {});
-      await files.replaceContent(user, a.id, body('AAAA'), { ifMatchVersion: null }); // keeps a v1 'aaaa' (4 B)
-      await files.replaceContent(user, a.id, body('aaaaa'), { ifMatchVersion: null }); // keeps a v2 'AAAA' (4 B)
-      await files.replaceContent(user, b.id, body('B'), { ifMatchVersion: null }); // keeps b v1 (8 B)
-      await files.replaceContent(user, a.id, body('x'), { ifMatchVersion: null }); // keeps a v3 'aaaaa' (5 B)
+      const a = await files.upload(space, null, 'a.txt', body('aaaa'), {});
+      const b = await files.upload(space, null, 'b.txt', body('bbbbbbbb'), {});
+      await files.replaceContent(space, a.id, body('AAAA'), { ifMatchVersion: null }); // keeps a v1 'aaaa' (4 B)
+      await files.replaceContent(space, a.id, body('aaaaa'), { ifMatchVersion: null }); // keeps a v2 'AAAA' (4 B)
+      await files.replaceContent(space, b.id, body('B'), { ifMatchVersion: null }); // keeps b v1 (8 B)
+      await files.replaceContent(space, a.id, body('x'), { ifMatchVersion: null }); // keeps a v3 'aaaaa' (5 B)
       // Days apart, so the retention buckets keep all four.
       const all = await rows();
       for (const [i, days] of [30, 20, 15, 10].entries()) {
@@ -473,8 +475,8 @@ describe('Versions', () => {
     });
 
     it('prune sweeps stray files and temps older than an hour, never referenced ones', async () => {
-      const f = await files.upload(user, null, 'a.txt', body('one'), {});
-      await files.replaceContent(user, f.id, body('two'), { ifMatchVersion: null });
+      const f = await files.upload(space, null, 'a.txt', body('one'), {});
+      await files.replaceContent(space, f.id, body('two'), { ifMatchVersion: null });
       const [v] = await rows(f.id);
       const stray = path.join(path.dirname(v.storePath), '9-nohash');
       await writeFile(stray, 'x');
@@ -491,11 +493,11 @@ describe('Versions', () => {
     beforeEach(() => setup({ versions: false }));
 
     it('creates no rows or files and prune is a no-op', async () => {
-      const f = await files.upload(user, null, 'a.txt', body('1'), {});
-      await files.replaceContent(user, f.id, body('2'), { ifMatchVersion: null });
+      const f = await files.upload(space, null, 'a.txt', body('1'), {});
+      await files.replaceContent(space, f.id, body('2'), { ifMatchVersion: null });
       expect(await rows()).toEqual([]);
       await expect(stat(versionsDir())).rejects.toMatchObject({ code: 'ENOENT' });
-      await expect(versions.list(user, f.id)).rejects.toMatchObject({ code: 'not_found', message: 'versions disabled' });
+      await expect(versions.list(space, f.id)).rejects.toMatchObject({ code: 'not_found', message: 'versions disabled' });
     });
   });
 });
@@ -540,6 +542,40 @@ describe('Versions HTTP API', () => {
     expect((await api('GET', `/items/${item.id}/versions`)).json().map((x: { version: number }) => x.version)).toEqual([2, 1]);
     expect((await api('GET', `/items/${item.id}/versions/00000000-0000-4000-8000-000000000000/content`)).statusCode).toBe(404);
     expect((await api('GET', '/capabilities')).json()).toEqual({ versions: true, office: { enabled: true, url: 'https://office.example.com' } });
+  });
+
+  it('versions in a team space: stored under the space id, read members list and download, only write members restore', async () => {
+    await start(true);
+    const jens = await ctx.prisma.user.findFirstOrThrow({ where: { username: 'jens' } });
+    const team = await createTestSpace(ctx, 'Team');
+    const reader = await createTestUser(ctx, 'carol');
+    const outsider = await createTestUser(ctx, 'eve');
+    await ctx.prisma.spaceMember.createMany({ data: [{ spaceId: team.id, userId: jens.id, role: 'write' }, { spaceId: team.id, userId: reader.id, role: 'read' }] });
+    const tokenOf = async (id: string) => ctx.app.get(AuthService).signAccess(await ctx.prisma.user.findUniqueOrThrow({ where: { id } }));
+    const carol = await tokenOf(reader.id);
+    const eve = await tokenOf(outsider.id);
+    const as = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
+
+    const item = (await api('POST', `/items/upload?parentId=r_${team.id}&name=plan.txt`, { body: 'v1 team' })).json();
+    expect((await api('PUT', `/items/${item.id}/content`, { body: 'v2', headers: { 'if-match': '"v1"' } })).statusCode).toBe(200);
+    const [v] = (await api('GET', `/items/${item.id}/versions`)).json();
+    expect(v).toMatchObject({ version: 1, size: 7 });
+    const row = await ctx.prisma.fileVersion.findUniqueOrThrow({ where: { id: v.id } });
+    expect(row.spaceId).toBe(team.id);
+    expect(row.storePath.startsWith(path.join(ctx.config.metaRoot, 'versions', team.id, item.id.slice(2)) + path.sep)).toBe(true);
+
+    expect((await api('GET', `/items/${item.id}/versions`, as(carol))).json()).toHaveLength(1);
+    expect((await api('GET', `/items/${item.id}/versions/${v.id}/content`, as(carol))).body).toBe('v1 team');
+    const denied = await api('POST', `/items/${item.id}/versions/${v.id}/restore`, as(carol));
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json().code).toBe('forbidden');
+    for (const [m, u] of [['GET', `/items/${item.id}/versions`], ['GET', `/items/${item.id}/versions/${v.id}/content`], ['POST', `/items/${item.id}/versions/${v.id}/restore`]]) {
+      expect((await api(m, u, as(eve))).statusCode).toBe(404);
+    }
+    const restored = await api('POST', `/items/${item.id}/versions/${v.id}/restore`);
+    expect(restored.statusCode).toBe(200);
+    expect(restored.json()).toMatchObject({ id: item.id, version: 3, spaceId: team.id });
+    expect((await api('GET', `/items/${item.id}/content`)).body).toBe('v1 team');
   });
 
   it('a failed capture answers 500 and keeps the current content', async () => {

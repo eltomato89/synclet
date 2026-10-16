@@ -11,23 +11,25 @@ struct SearchView: View {
     var body: some View {
         DestinationStack(environment: environment, entry: entry, accountMenu: accountMenu, embedded: embedded,
                          title: "Search") { api, open in
-            SearchPage(api: api, open: open)
+            SearchPage(api: api, spaces: entry.spaces, open: open)
         }
     }
 }
 
 /// The search field and the results of the „Suche“ destination.
 private struct SearchPage: View {
+    let spaces: SpaceDirectory
     let open: (FolderRoute) -> Void
     @State private var model: SearchModel
 
-    init(api: SyncAPIClient, open: @escaping (FolderRoute) -> Void) {
+    init(api: SyncAPIClient, spaces: SpaceDirectory, open: @escaping (FolderRoute) -> Void) {
+        self.spaces = spaces
         self.open = open
         _model = State(initialValue: SearchModel(api: api))
     }
 
     var body: some View {
-        SearchResultsList(model: model, open: open)
+        SearchResultsList(model: model, spaces: spaces, open: open)
             .searchable(text: $model.query, placement: .navigationBarDrawer(displayMode: .always),
                         prompt: Text("Names and Contents"))
             .onChange(of: model.query) { model.queryChanged() }
@@ -38,6 +40,8 @@ private struct SearchPage: View {
 /// pushed. Further pages load at the end of the list.
 struct SearchResultsList: View {
     let model: SearchModel
+    /// The account's spaces (each hit shows its space when there are several).
+    let spaces: SpaceDirectory
     /// Opens a folder hit.
     let open: (FolderRoute) -> Void
     @State private var opening: SyncItem?
@@ -59,7 +63,7 @@ struct SearchResultsList: View {
         case .idle:
             ContentUnavailableView("Search", systemImage: "magnifyingglass",
                                    description: Text("Enter at least two characters to search names and contents."))
-        case .loading, .offline, .failed:
+        case .loading, .offline, .failed, .unavailable:
             LoadStatePlaceholder(state: model.state, failureTitle: "Search Failed") { model.queryChanged() }
         case .loaded:
             if model.hits.isEmpty {
@@ -75,12 +79,12 @@ struct SearchResultsList: View {
             ForEach(model.hits, id: \.item.id) { hit in
                 Button {
                     if hit.item.isFolder {
-                        open(FolderRoute(id: hit.item.id, title: hit.item.name))
+                        open(FolderRoute(item: hit.item))
                     } else {
                         opening = hit.item
                     }
                 } label: {
-                    SearchHitRow(hit: hit, api: model.api)
+                    SearchHitRow(hit: hit, location: spaces.location(of: hit), api: model.api)
                 }
                 .foregroundStyle(.primary)
                 .accessibilityIdentifier("search.hit.\(hit.item.name)")
@@ -102,6 +106,8 @@ struct SearchResultsList: View {
 /// A hit: thumbnail, name, path and (for content matches) the snippet.
 struct SearchHitRow: View {
     let hit: SyncSearchHit
+    /// The path, with the space in front when the account has several („Team · /Docs/a.pdf“).
+    let location: String
     let api: SyncAPIClient
 
     var body: some View {
@@ -111,7 +117,7 @@ struct SearchHitRow: View {
                 Text(verbatim: hit.item.name)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(verbatim: hit.path)
+                Text(verbatim: location)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -140,6 +146,7 @@ enum FolderSearchScope: Hashable {
 struct FolderSearch: ViewModifier {
     let model: SearchModel
     let folder: FolderRoute
+    let spaces: SpaceDirectory
     /// Opens a folder hit (after the search was ended).
     let open: (FolderRoute) -> Void
 
@@ -151,7 +158,7 @@ struct FolderSearch: ViewModifier {
     func body(content: Content) -> some View {
         @Bindable var model = model
         content
-            .overlay { FolderSearchOverlay(model: model, open: open) }
+            .overlay { FolderSearchOverlay(model: model, spaces: spaces, open: open) }
             .searchable(text: $model.query, prompt: Text("Search"))
             .searchScopes(scope, activation: .onSearchPresentation) {
                 Text("Everywhere").tag(FolderSearchScope.everywhere)
@@ -168,13 +175,14 @@ struct FolderSearch: ViewModifier {
 /// The results over the folder while its search field is active.
 private struct FolderSearchOverlay: View {
     let model: SearchModel
+    let spaces: SpaceDirectory
     let open: (FolderRoute) -> Void
     @Environment(\.isSearching) private var isSearching
     @Environment(\.dismissSearch) private var dismissSearch
 
     var body: some View {
         if isSearching, model.trimmedQuery.count >= SearchModel.minimumLength {
-            SearchResultsList(model: model) { route in
+            SearchResultsList(model: model, spaces: spaces) { route in
                 model.query = ""
                 model.queryChanged()
                 dismissSearch()
@@ -188,9 +196,10 @@ private struct FolderSearchOverlay: View {
 extension View {
     /// Search on a folder of „Meine Dateien“ (see ``FolderSearch``); `nil` adds nothing.
     @ViewBuilder
-    func folderSearch(_ model: SearchModel?, folder: FolderRoute, open: @escaping (FolderRoute) -> Void) -> some View {
+    func folderSearch(_ model: SearchModel?, folder: FolderRoute, spaces: SpaceDirectory,
+                      open: @escaping (FolderRoute) -> Void) -> some View {
         if let model {
-            modifier(FolderSearch(model: model, folder: folder, open: open))
+            modifier(FolderSearch(model: model, folder: folder, spaces: spaces, open: open))
         } else {
             self
         }

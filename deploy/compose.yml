@@ -25,6 +25,14 @@ services:
     volumes:
       - ${SYNCLET_DATA:?set SYNCLET_DATA to your files folder}:/data
       - ${SYNCLET_META:?set SYNCLET_META to a folder outside SYNCLET_DATA}:/meta
+      # Team folders: every direct subfolder is a team space (created/renamed in the admin area).
+      - ${SYNCLET_TEAMS:-./teams}:/teams
+      # External storages: every folder mounted below /storage becomes a space (name = folder name).
+      # Mount the same path read-only into the worker (below). Examples:
+      #   a host folder (bind mount):
+      # - /mnt/archive:/storage/Archiv
+      #   a network share (named CIFS volume, see "volumes:" at the end of this file):
+      # - nas-fotos:/storage/Fotos
     depends_on:
       postgres: { condition: service_healthy }
     restart: unless-stopped
@@ -41,6 +49,10 @@ services:
     volumes:
       - ${SYNCLET_DATA:?set SYNCLET_DATA to your files folder}:/data:ro
       - ${SYNCLET_META:?set SYNCLET_META to a folder outside SYNCLET_DATA}:/meta
+      - ${SYNCLET_TEAMS:-./teams}:/teams:ro
+      # External storages, read-only (same paths as in the server):
+      # - /mnt/archive:/storage/Archiv:ro
+      # - nas-fotos:/storage/Fotos:ro
     depends_on:
       server: { condition: service_healthy }
     healthcheck: { disable: true } # the worker has no HTTP port (the image healthcheck targets the server)
@@ -78,3 +90,10 @@ services:
 volumes:
   pgdata:
   caddy-data:
+  # External storage on a NAS (SMB/CIFS), mounted by Docker on the host:
+  # nas-fotos:
+  #   driver: local
+  #   driver_opts:
+  #     type: cifs
+  #     device: //192.168.1.20/share
+  #     o: "addr=192.168.1.20,username=…,password=…,uid=${PUID},gid=${PGID},file_mode=0664,dir_mode=0775"

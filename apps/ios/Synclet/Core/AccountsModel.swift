@@ -210,6 +210,8 @@ final class AccountsModel {
             } else {
                 monitor = makeMonitor(entry.account)
                 monitor.onChange = { [weak self] key in self?.publishChange(key) }
+                // New or lost spaces, changed rights: the browser and the sidebar follow.
+                monitor.onSpacesChanged = { [weak self] in self?.reload() }
                 monitors[entry.id] = monitor
                 if entry.status == .ok { monitor.start() }
             }

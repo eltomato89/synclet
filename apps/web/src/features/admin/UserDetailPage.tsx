@@ -14,7 +14,7 @@ import { formatBytes } from '@/lib/format';
 import { useAdminTitle } from './AdminLayout';
 import { adminErrorKey } from './forms';
 import { formatDateTime, formatRelative, notify, Section, useDescribeUserAgent } from './parts';
-import { useAccessMutations, useAdminUsers, useUserDevices, useUserSessions } from './queries';
+import { useAccessMutations, useAdminGroups, useAdminUsers, useUserDevices, useUserSessions } from './queries';
 import { UserDialog } from './UserDialog';
 import { IdentityBadges } from './UsersPage';
 
@@ -34,6 +34,7 @@ export function UserDetailPage() {
   const locale = i18n.language;
   const { user: me } = useAuth();
   const users = useAdminUsers();
+  const groups = useAdminGroups();
   const sessions = useUserSessions(id);
   const devices = useUserDevices(id);
   const m = useAccessMutations(id);
@@ -89,6 +90,14 @@ export function UserDetailPage() {
                 {user.lastLoginAt ? formatDateTime(user.lastLoginAt, locale) : t('admin.users.never')}
               </Fact>
               <Fact label={t('admin.users.columns.identities')}><IdentityBadges user={user} /></Fact>
+              <Fact label={t('admin.detail.groups')}>
+                {groups.data ? (
+                  (() => {
+                    const mine = groups.data.filter((g) => g.members.some((x) => x.id === user.id));
+                    return mine.length ? mine.map((g) => g.name).join(', ') : <span className="text-muted-foreground">{t('admin.detail.groupsEmpty')}</span>;
+                  })()
+                ) : '–'}
+              </Fact>
             </dl>
           </>
         ) : (

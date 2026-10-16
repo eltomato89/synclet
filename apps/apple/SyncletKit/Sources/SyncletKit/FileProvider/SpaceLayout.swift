@@ -33,6 +33,12 @@ public struct SpaceLayout: Sendable, Hashable {
         NSFileProviderItemIdentifier(identifierPrefix + space.id)
     }
 
+    /// Root id of a space by its id alone (spec §3.1: `personal` → `root`, any other space
+    /// `<uuid>` → `r_<uuid>`), for a space that is no longer in the layout.
+    public static func rootId(ofSpaceID id: String) -> String {
+        id == SyncAPIClient.personalSpaceID ? SyncItem.rootID : "r_" + id
+    }
+
     /// The space id of a `space:<id>` identifier, else `nil`.
     public static func spaceID(from identifier: NSFileProviderItemIdentifier) -> String? {
         let raw = identifier.rawValue
@@ -138,11 +144,9 @@ public struct SpaceLayout: Sendable, Hashable {
 
     // MARK: Change feeds
 
-    /// Spaces fed by the user's change journal (`GET /changes`). Phase 2: the personal
-    /// space; other kinds get their own feed in a later phase and are enumerated on demand.
-    public var feedSpaces: [SyncSpace] {
-        spaces.filter { $0.kind == .personal }
-    }
+    /// Spaces with a change feed (`GET /changes?space=<id>`): all of them (Phase 4). Each
+    /// keeps its own cursor in the sync anchor.
+    public var feedSpaces: [SyncSpace] { spaces }
 
     /// Server ids of all space roots (never reported as ordinary items).
     public var rootIds: Set<String> { Set(spaces.map(\.rootId)) }

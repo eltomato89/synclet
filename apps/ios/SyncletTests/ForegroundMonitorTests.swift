@@ -50,7 +50,17 @@ final class FakeMonitorWorld: @unchecked Sendable {
     /// Cursor `GET /account` answers with.
     var cursor = "7"
     var spaces: [SyncSpace] = [SyncSpace(id: "personal", kind: .personal, name: "Meine Dateien", rootId: "root", canWrite: true)]
+    /// Cursors of the other spaces (`GET /cursor?space=`).
+    var spaceCursors: [String: String] = [:]
+    /// What `updateSpaces` answers (`true` = the spaces changed).
+    var spacesChange = false
+    /// Spaces whose `GET /cursor` never answers.
+    var hangingSpaces: Set<String> = []
+    private var updates: [[SyncSpace]] = []
     let sleeper = ManualSleeper()
+
+    /// Every list handed to `updateSpaces`.
+    var updatedSpaces: [[SyncSpace]] { lock.withLock { updates } }
 
     var streamCount: Int { lock.withLock { streams.count } }
     var terminatedStreams: Set<Int> { lock.withLock { terminated } }
@@ -91,7 +101,19 @@ final class FakeMonitorWorld: @unchecked Sendable {
                 return SyncAccount(userId: "u1", email: nil, displayName: "Jens", organizationId: "srv1:u1",
                                    slug: "jens", cursor: cursor, spaces: spaces)
             },
-            updateSpaces: { _ in false },
+            fetchCursor: { space in
+                if self.lock.withLock({ self.hangingSpaces.contains(space) }) {
+                    try await Task.sleep(for: .seconds(60))
+                }
+                guard let cursor = self.lock.withLock({ self.spaceCursors[space] }) else { throw SyncAPIError.notFound }
+                return cursor
+            },
+            updateSpaces: { spaces in
+                self.lock.withLock {
+                    self.updates.append(spaces)
+                    return self.spacesChange
+                }
+            },
             reportAuthFailure: { self.lock.withLock { self.authFailures += 1 } },
             sleep: { duration in try await self.sleeper.sleep(duration) }
         )
@@ -109,12 +131,128 @@ final class ForegroundMonitorTests: XCTestCase {
     private func monitor() -> ForegroundMonitor {
         let monitor = ForegroundMonitor(accountKey: "srv1:u1", dependencies: world.dependencies(),
                                         timing: ForegroundMonitor.Timing(coalesce: .milliseconds(1),
-                                                                         reconnectBase: .milliseconds(20)))
+                                                                         reconnectBase: .milliseconds(20),
+                                                                         cursorTimeout: .milliseconds(100)))
         monitor.onChange = { [world] key in world?.record("change:\(key)") }
+        monitor.onSpacesChanged = { [world] in world?.record("spaces-changed") }
         return monitor
     }
 
     private var working: String { "signal:\(NSFileProviderItemIdentifier.workingSet.rawValue)" }
+    private var rootSignal: String { "signal:\(NSFileProviderItemIdentifier.rootContainer.rawValue)" }
+    private var changeCount: Int { world.events.filter { $0.hasPrefix("change:") }.count }
+
+    private let team = SyncSpace(id: "s1", kind: .shared, name: "Team", rootId: "r_s1", canWrite: true)
+
+    // MARK: - Spaces (Phase 4)
+
+    func testCursorsAreTrackedPerSpace() async throws {
+        let monitor = monitor()
+        monitor.start()
+        defer { monitor.stop() }
+        _ = await eventually { self.world.streamCount == 1 }
+        world.send(.connected(cursor: "1", cursors: ["personal": "1", "s1": "5"]))
+        _ = await eventually { monitor.state == .connected }
+
+        world.send(.changes(space: "s1", cursor: "9"))
+        let changed = await eventually { self.changeCount == 1 }
+        XCTAssertTrue(changed)
+
+        // Reconnect: nothing moved. The team cursor is never compared with the personal one.
+        world.send(.disconnected(reason: .ended))
+        _ = await eventually { monitor.state == .offline }
+        world.send(.connected(cursor: "1", cursors: ["personal": "1", "s1": "9"]))
+        _ = await eventually { monitor.state == .connected }
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(changeCount, 1, "same cursors per space: nothing new")
+
+        // The team space moved while disconnected.
+        world.send(.disconnected(reason: .ended))
+        _ = await eventually { monitor.state == .offline }
+        world.send(.connected(cursor: "1", cursors: ["personal": "1", "s1": "10"]))
+        let moved = await eventually { self.changeCount == 2 }
+        XCTAssertTrue(moved, "a moved team cursor counts as a change")
+    }
+
+    func testPollingComparesTheCursorOfEverySpace() async throws {
+        world.spaces = [world.spaces[0], team]
+        world.spaceCursors = ["s1": "5"]
+        let monitor = monitor()
+        monitor.start()
+        defer { monitor.stop() }
+        _ = await eventually { self.world.streamCount == 1 }
+        world.send(.connected(cursor: "7", cursors: ["personal": "7", "s1": "5"]))
+        _ = await eventually { monitor.state == .connected && self.world.accountFetches == 1 }
+        world.send(.disconnected(reason: .network(.notConnectedToInternet)))
+        _ = await eventually { monitor.state == .offline && self.world.sleeper.pending == 1 }
+
+        world.sleeper.fire()
+        _ = await eventually { self.world.accountFetches == 2 && self.world.sleeper.pending == 1 }
+        XCTAssertEqual(changeCount, 0, "nothing moved")
+
+        world.spaceCursors = ["s1": "6"]
+        world.sleeper.fire()
+        let changed = await eventually { self.changeCount == 1 }
+        XCTAssertTrue(changed, "the team space moved while the stream was down")
+    }
+
+    func testPollingDoesNotWaitForAHangingSpace() async throws {
+        let archive = SyncSpace(id: "s9", kind: .external, name: "Archiv", rootId: "r_s9", canWrite: false)
+        world.spaces = [world.spaces[0], archive, team]
+        world.spaceCursors = ["s1": "5", "s9": "1"]
+        world.hangingSpaces = ["s9"]
+        let monitor = monitor()
+        monitor.start()
+        defer { monitor.stop() }
+        _ = await eventually { self.world.streamCount == 1 }
+        world.send(.connected(cursor: "7", cursors: ["personal": "7", "s1": "5", "s9": "1"]))
+        _ = await eventually { monitor.state == .connected && self.world.accountFetches == 1 }
+        world.send(.disconnected(reason: .network(.notConnectedToInternet)))
+        _ = await eventually { monitor.state == .offline && self.world.sleeper.pending == 1 }
+
+        world.spaceCursors["s1"] = "6"
+        world.sleeper.fire()
+        let changed = await eventually(timeout: .seconds(2)) { self.changeCount == 1 }
+        XCTAssertTrue(changed, "the team space moved; the hanging storage times out")
+    }
+
+    func testAccountEventRefreshesTheSpacesThenSignals() async throws {
+        let monitor = monitor()
+        monitor.start()
+        defer { monitor.stop() }
+        _ = await eventually { self.world.streamCount == 1 }
+        world.send(.connected(cursor: "1"))
+        _ = await eventually { monitor.state == .connected && self.world.accountFetches == 1 }
+        _ = await eventually { self.world.events == [self.working] }
+
+        world.spaces = [world.spaces[0], team]
+        world.spacesChange = true
+        world.send(.account)
+
+        let done = await eventually { self.world.events.count == 5 }
+        XCTAssertTrue(done, "\(world.events)")
+        XCTAssertEqual(world.accountFetches, 2)
+        XCTAssertEqual(world.updatedSpaces.last?.map(\.id), ["personal", "s1"])
+        XCTAssertEqual(Array(world.events.dropFirst()),
+                       ["spaces-changed", rootSignal, "change:srv1:u1", working],
+                       "account list first, then the browser and the working set")
+    }
+
+    func testAccountEventWithoutChangedSpacesStillSignalsTheWorkingSet() async throws {
+        let monitor = monitor()
+        monitor.start()
+        defer { monitor.stop() }
+        _ = await eventually { self.world.streamCount == 1 }
+        world.send(.connected(cursor: "1"))
+        _ = await eventually { monitor.state == .connected && self.world.accountFetches == 1 }
+        _ = await eventually { self.world.events == [self.working] }
+
+        world.send(.account)
+        let done = await eventually { self.world.events.count == 3 }
+        XCTAssertTrue(done)
+        XCTAssertEqual(world.accountFetches, 2)
+        XCTAssertEqual(Array(world.events.dropFirst()), ["change:srv1:u1", working])
+    }
 
     func testSSEChangesCallOnChangeThenSignalTheWorkingSet() async throws {
         let monitor = monitor()

@@ -3,7 +3,8 @@ import { mkdir, mkdtemp, readdir, readFile, rename, rm, symlink, writeFile } fro
 import os from 'node:os';
 import { Readable } from 'node:stream';
 import path from 'node:path';
-import { createTestApp, createTestUser, TestContext } from '../../test/context';
+import { createTestApp, createTestSpace, createTestUser, personalSpace, TestContext } from '../../test/context';
+import { DiscoveryService } from '../spaces/discovery.service';
 import { trashStagingName } from '../common/names';
 import { FilesService } from '../files/files.service';
 import { TrashService } from '../trash/trash.service';
@@ -14,7 +15,7 @@ import { WatcherService } from './watcher.service';
 describe('SchedulerService', () => {
   let ctx: TestContext;
   beforeEach(async () => { ctx = await createTestApp(); });
-  afterEach(async () => { await ctx.close(); });
+  afterEach(async () => { jest.restoreAllMocks(); await ctx.close(); });
 
   it('removes leftover temp files at startup and scans all users', async () => {
     const user = await createTestUser(ctx);
@@ -31,7 +32,7 @@ describe('SchedulerService', () => {
 
   it('maintenance purges old tombstones', async () => {
     const user = await createTestUser(ctx);
-    await ctx.prisma.item.create({ data: { ownerId: user.id, type: 'file', name: 'x', nameKey: 'x', path: 'x', mtime: new Date(), deletedAt: new Date(Date.now() - 48 * 3600 * 1000) } });
+    await ctx.prisma.item.create({ data: { spaceId: user.id, type: 'file', name: 'x', nameKey: 'x', path: 'x', mtime: new Date(), deletedAt: new Date(Date.now() - 48 * 3600 * 1000) } });
     await ctx.app.get(SchedulerService).maintenance();
     expect(await ctx.prisma.item.count()).toBe(0);
   });
@@ -69,7 +70,7 @@ describe('SchedulerService', () => {
   it('scanAll refreshes the watcher user map (disabled users are dropped)', async () => {
     const user = await createTestUser(ctx);
     const watcher = ctx.app.get(WatcherService);
-    await watcher.refreshUsers();
+    await watcher.refresh();
     const root = path.join(ctx.config.dataRoot, user.username);
     await writeFile(path.join(root, 'a.txt'), 'x');
     await ctx.prisma.user.update({ where: { id: user.id }, data: { disabledAt: new Date() } });
@@ -111,8 +112,8 @@ describe('SchedulerService', () => {
     const user = await createTestUser(ctx);
     const root = path.join(ctx.config.dataRoot, user.username);
     const files = ctx.app.get(FilesService);
-    const a = await files.createFolder(user, null, 'A');
-    const x = await files.upload(user, a.id, 'x.txt', Readable.from([Buffer.from('x')]), {});
+    const a = await files.createFolder(personalSpace(ctx, user), null, 'A');
+    const x = await files.upload(personalSpace(ctx, user), a.id, 'x.txt', Readable.from([Buffer.from('x')]), {});
     // Crash between staging rename and commit: rows live, path vacated, intent on /meta.
     const trashId = '11111111-2222-4333-8444-777777777777';
     await mkdir(path.join(ctx.config.metaRoot, 'staging'), { recursive: true });
@@ -127,7 +128,7 @@ describe('SchedulerService', () => {
     let restoredWhenScanStarted: boolean | null = null;
     jest.spyOn(s, 'scanAll').mockImplementation(() => {
       restoredWhenScanStarted = existsSync(path.join(root, 'A', 'x.txt'));
-      scan = indexer.fullScan(user);
+      scan = indexer.fullScan(personalSpace(ctx, user));
       return scan.then(() => undefined);
     });
     ctx.config.background = true;
@@ -150,10 +151,13 @@ describe('SchedulerService', () => {
     const order: string[] = [];
     let releaseRecovery!: () => void;
     const recoveryGate = new Promise<void>((r) => { releaseRecovery = r; });
+    jest.spyOn(ctx.app.get(DiscoveryService), 'discover').mockImplementation(async () => { order.push('discover'); return { created: [], changed: [] }; });
     jest.spyOn(s, 'startupCleanup').mockImplementation(async () => { order.push('cleanup'); return 0; });
     jest.spyOn(files, 'recoverStagedTrash').mockImplementation(async () => { order.push('recover:start'); await recoveryGate; order.push('recover:end'); return 0; });
     const start = jest.spyOn(watcher, 'start').mockImplementation(async () => { order.push('watcher'); });
     jest.spyOn(s, 'scanAll').mockImplementation(async () => { order.push('scan'); });
+    // The deep sweep of team/external storages starts after boot and is not awaited.
+    jest.spyOn(s, 'deepCleanup').mockImplementation(() => { order.push('deep'); return new Promise<number>(() => {}); });
     ctx.config.background = true;
     try {
       // The watcher's own bootstrap hook must not subscribe (Nest runs hooks concurrently).
@@ -161,11 +165,11 @@ describe('SchedulerService', () => {
       expect(watcher.mode).toBe('off');
       const boot = s.onApplicationBootstrap();
       await new Promise((r) => setImmediate(r));
-      expect(order).toEqual(['cleanup', 'recover:start']);
+      expect(order).toEqual(['discover', 'cleanup', 'recover:start']);
       expect(start).not.toHaveBeenCalled();
       releaseRecovery();
       await boot;
-      expect(order).toEqual(['cleanup', 'recover:start', 'recover:end', 'watcher', 'scan']);
+      expect(order).toEqual(['discover', 'cleanup', 'recover:start', 'recover:end', 'watcher', 'deep', 'scan']);
     } finally {
       s.onModuleDestroy();
       ctx.config.background = false;
@@ -208,5 +212,82 @@ describe('SchedulerService', () => {
     await ctx.app.get(SchedulerService).maintenance();
     const left = (await ctx.prisma.session.findMany()).map((x) => x.tokenHash).sort();
     expect(left).toEqual(['live', 'recently-expired', 'recently-revoked']);
+  });
+
+  it('scanAll discovers new team/storage folders first and scans every available space', async () => {
+    const user = await createTestUser(ctx);
+    await writeFile(path.join(ctx.config.dataRoot, user.username, 'p.txt'), 'x');
+    await mkdir(path.join(ctx.config.teamsRoot, 'Familie'));
+    await writeFile(path.join(ctx.config.teamsRoot, 'Familie', 't.txt'), 'x');
+    await mkdir(path.join(ctx.config.storageRoot, 'NAS'));
+    await writeFile(path.join(ctx.config.storageRoot, 'NAS', 'n.txt'), 'x');
+    const gone = await createTestSpace(ctx, 'Weg', 'external', { status: 'missing' });
+    await rm(gone.rootPath, { recursive: true });
+    const discover = jest.spyOn(ctx.app.get(DiscoveryService), 'discover');
+    const fullScan = jest.spyOn(ctx.app.get(IndexerService), 'fullScan');
+    const s = ctx.app.get(SchedulerService);
+    await s.scanAll();
+    expect(fullScan.mock.calls.map(([sp]) => sp.id)).not.toContain(gone.id);
+    expect(fullScan).toHaveBeenCalledTimes(3);
+    expect(discover).toHaveBeenCalledTimes(1);
+    const rows = await ctx.prisma.item.findMany({ include: { space: true }, orderBy: { name: 'asc' } });
+    expect(rows.map((r) => [r.space.kind, r.space.name, r.path])).toEqual([
+      ['external', 'NAS', 'n.txt'], ['personal', user.username, 'p.txt'], ['team', 'Familie', 't.txt'],
+    ]);
+    expect(s.lastFullScanAt).toBeInstanceOf(Date);
+  });
+
+  it('startup discovers spaces and cleans temp leftovers in team and storage roots', async () => {
+    await mkdir(path.join(ctx.config.teamsRoot, 'Familie'));
+    await writeFile(path.join(ctx.config.teamsRoot, 'Familie', '.synclet-tmp-dead'), 'x');
+    await writeFile(path.join(ctx.config.teamsRoot, 'Familie', 'keep.txt'), 'x');
+    const s = ctx.app.get(SchedulerService);
+    await s.startup();
+    expect(await ctx.prisma.space.count({ where: { kind: 'team' } })).toBe(1);
+    expect(await readdir(path.join(ctx.config.teamsRoot, 'Familie'))).toEqual(['keep.txt']);
+  });
+
+  it('boot cleans only the top level of team/external roots; the deep sweep runs later, sparing newer temps', async () => {
+    const nas = await createTestSpace(ctx, 'NAS', 'external');
+    const team = await createTestSpace(ctx, 'Familie');
+    await mkdir(path.join(nas.rootPath, 'a', 'b'), { recursive: true });
+    await writeFile(path.join(nas.rootPath, '.synclet-tmp-top'), 'x');
+    await writeFile(path.join(nas.rootPath, 'a', 'b', '.synclet-tmp-deep'), 'x');
+    await mkdir(path.join(team.rootPath, 'd'));
+    await writeFile(path.join(team.rootPath, 'd', '.synclet-tmp-deep'), 'x');
+    const s = ctx.app.get(SchedulerService);
+    expect(await s.startupCleanup()).toBe(1);
+    expect(await readdir(nas.rootPath)).toEqual(['a']);
+    expect(await readdir(path.join(nas.rootPath, 'a', 'b'))).toEqual(['.synclet-tmp-deep']);
+    expect(await readdir(path.join(team.rootPath, 'd'))).toEqual(['.synclet-tmp-deep']);
+
+    // Background sweep after listen: only leftovers from before the boot, never an in-flight temp.
+    await new Promise((r) => setTimeout(r, 30));
+    const bootAt = new Date();
+    await new Promise((r) => setTimeout(r, 30));
+    await writeFile(path.join(nas.rootPath, 'a', '.synclet-tmp-inflight'), 'x');
+    expect(await s.deepCleanup(bootAt)).toBe(2);
+    expect(await readdir(path.join(nas.rootPath, 'a', 'b'))).toEqual([]);
+    expect(await readdir(path.join(team.rootPath, 'd'))).toEqual([]);
+    expect((await readdir(path.join(nas.rootPath, 'a'))).sort()).toEqual(['.synclet-tmp-inflight', 'b']);
+  });
+
+  it('honours a per-space scan interval for periodic cycles', async () => {
+    const fast = await createTestSpace(ctx, 'Schnell', 'external');
+    const slow = await createTestSpace(ctx, 'Langsam', 'external');
+    await ctx.prisma.space.update({ where: { id: slow.id }, data: { scanIntervalSec: 3600 } });
+    const fullScan = jest.spyOn(ctx.app.get(IndexerService), 'fullScan');
+    const s = ctx.app.get(SchedulerService);
+    await s.scanAll({ dueOnly: true });
+    expect(fullScan.mock.calls.map(([sp]) => sp.id).sort()).toEqual([fast.id, slow.id].sort());
+    fullScan.mockClear();
+    // One global interval later: the space with its own 1 h interval is not due yet.
+    jest.spyOn(Date, 'now').mockReturnValue(Date.now() + ctx.config.scanIntervalSec * 1000 + 1000);
+    await s.scanAll({ dueOnly: true });
+    expect(fullScan.mock.calls.map(([sp]) => sp.id)).toEqual([fast.id]);
+    // A forced full scan (no dueOnly) scans everything.
+    fullScan.mockClear();
+    await s.scanAll();
+    expect(fullScan.mock.calls.map(([sp]) => sp.id).sort()).toEqual([fast.id, slow.id].sort());
   });
 });

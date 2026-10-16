@@ -9,10 +9,12 @@ import { hashToken } from '../auth/crypto';
 import { RateLimiter } from '../auth/rate-limit';
 import { ServerConfigService } from '../auth/server-config.service';
 import { SecretBox } from '../common/secret-box';
-import { absPath, userRoot } from '../common/paths';
+import { absPath } from '../common/paths';
 import { SyncError } from '../common/sync-error';
-import type { IndexUser } from '../common/types';
+import type { IndexSpace, IndexUser } from '../common/types';
 import { APP_CONFIG, AppConfig } from '../config';
+import { SpaceAccess } from '../spaces/space-access.service';
+import { SpacesRepo } from '../spaces/spaces.repo';
 import { PrismaService } from '../prisma/prisma.service';
 import { parseSyncId, UUID } from '../sync/sync-ids';
 
@@ -62,10 +64,11 @@ export class ShareRateLimits {
   }
 }
 
-/** A share resolved for an anonymous request: the link row, its live root item and the owner. */
+/** A share resolved for an anonymous request: the link row, its live root item, its space and the owner. */
 export interface ResolvedShare {
   share: ShareLink;
   root: Item;
+  space: IndexSpace;
   owner: IndexUser & { displayName: string };
 }
 
@@ -83,6 +86,8 @@ export class ShareAuth {
     private readonly jwt: JwtService,
     private readonly serverConfig: ServerConfigService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
+    private readonly spaces: SpacesRepo,
+    private readonly access: SpaceAccess,
   ) {}
 
   private async secretBox(): Promise<SecretBox> {
@@ -137,18 +142,25 @@ export class ShareAuth {
     return this.load(share);
   }
 
-  /** Owner (enabled) and live shared item of an active share; 404 otherwise. No password check. */
+  /**
+   * Owner and live shared item of an active share; 404 otherwise. No password check. A link is
+   * only valid while its creator is enabled and still has write in the share's space (an available
+   * one): losing either makes it answer like a revoked link, regaining it re-activates it.
+   */
   async load(share: ShareLink): Promise<ResolvedShare> {
     const owner = await this.prisma.user.findUnique({ where: { id: share.ownerId } });
     if (!owner || owner.disabledAt) throw new SyncError('not_found');
-    const root = await this.prisma.item.findFirst({ where: { id: share.itemId, ownerId: share.ownerId, deletedAt: null } });
+    const row = await this.prisma.space.findUnique({ where: { id: share.spaceId } });
+    if (!row || row.status !== 'available' || (await this.access.roleFor(owner, row)) !== 'write') throw new SyncError('not_found');
+    const space = this.spaces.toIndexSpace(row);
+    const root = await this.prisma.item.findFirst({ where: { id: share.itemId, spaceId: share.spaceId, deletedAt: null } });
     if (!root) throw new SyncError('not_found');
-    return { share, root, owner: { id: owner.id, username: owner.username, displayName: owner.displayName } };
+    return { share, root, space, owner: { id: owner.id, username: owner.username, displayName: owner.displayName } };
   }
 
   /** True if `item` is the shared item or a descendant of it, on current DB paths. */
   static inScope(rs: ResolvedShare, item: Item): boolean {
-    if (item.ownerId !== rs.share.ownerId || item.deletedAt) return false;
+    if (item.spaceId !== rs.share.spaceId || item.deletedAt) return false;
     if (item.id === rs.root.id) return true;
     return rs.root.type === 'folder' && item.path.startsWith(rs.root.path + '/');
   }
@@ -162,7 +174,7 @@ export class ShareAuth {
     if (rawId !== undefined && rawId !== '') {
       const id = parseItemId(rawId);
       if (!id) throw new SyncError('not_found');
-      item = id === rs.root.id ? rs.root : await this.prisma.item.findFirst({ where: { id, ownerId: rs.share.ownerId, deletedAt: null } });
+      item = id === rs.root.id ? rs.root : await this.prisma.item.findFirst({ where: { id, spaceId: rs.share.spaceId, deletedAt: null } });
     }
     if (!item || !ShareAuth.inScope(rs, item)) throw new SyncError('not_found');
     if (type && item.type !== type) throw new SyncError('not_found');
@@ -170,15 +182,15 @@ export class ShareAuth {
   }
 
   /**
-   * Real path of an item, required to be exactly its indexed path below the real user root: no
+   * Real path of an item, required to be exactly its indexed path below the real space root: no
    * symlink anywhere in the chain (a folder swapped for a symlink on the host, even one pointing
-   * elsewhere inside the same user root, is never followed).
+   * elsewhere inside the same space root, is never followed).
    */
   private async canonical(rs: ResolvedShare, item: Item): Promise<string> {
     try {
-      const realUser = await realpath(userRoot(this.config.dataRoot, rs.owner.username));
-      const real = await realpath(absPath(this.config.dataRoot, rs.owner.username, item.path));
-      if (real !== path.join(realUser, ...item.path.split('/'))) throw new Error('symlink in path');
+      const realSpace = await realpath(rs.space.rootPath);
+      const real = await realpath(absPath(rs.space.rootPath, item.path));
+      if (real !== path.join(realSpace, ...item.path.split('/'))) throw new Error('symlink in path');
       return real;
     } catch {
       throw new SyncError('not_found');

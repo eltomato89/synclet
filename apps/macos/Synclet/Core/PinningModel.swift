@@ -37,7 +37,7 @@ final class PinningModel {
     }
 
     struct SpaceState: Identifiable, Equatable, Sendable {
-        let space: SyncSpace
+        var space: SyncSpace
         var title: String
         /// What is pinned (from the ``PinStore``).
         var pins = PinSet()
@@ -50,6 +50,20 @@ final class PinningModel {
 
         var id: String { space.id }
         var wholeSpace: Bool { pins.wholeSpace }
+
+        /// Kind of a shared space ("Team folder", "External storage") and "read-only";
+        /// `nil` for the personal space.
+        var detail: String? {
+            var parts: [String] = []
+            switch space.kind {
+            case .personal: break
+            case .shared: parts.append(String(localized: "Team folder"))
+            case .external: parts.append(String(localized: "External storage"))
+            case .unknown: parts.append(String(localized: "Shared space"))
+            }
+            if !space.canWrite { parts.append(String(localized: "Read-only")) }
+            return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        }
 
         func isPinned(_ folderId: String) -> Bool { pins.folders.contains(folderId) }
 
@@ -120,6 +134,8 @@ final class PinningModel {
     @ObservationIgnored private var refreshAgain: Set<String> = []
     @ObservationIgnored private var announcements: [String: Task<Void, Never>] = [:]
     @ObservationIgnored private var announceAgain: Set<String> = []
+    /// Accounts whose folders were loaded (a space that joins later is loaded on its own).
+    @ObservationIgnored private var loadedAccounts: Set<String> = []
 
     /// - Parameters:
     ///   - makeStore: the pin store of an account (default: `accounts/<key16>/` in the app group).
@@ -155,21 +171,34 @@ final class PinningModel {
     // MARK: - Accounts
 
     /// Follows the account list (and space lists) of ``AccountsModel``; keeps loaded folders,
-    /// re-reads the pins, and cancels all work of accounts that are gone.
+    /// re-reads the pins, takes over changed names and rights, loads the folders of spaces
+    /// that joined an already loaded account, and cancels all work of accounts that are gone.
     func reload() {
         let previous = Dictionary(accounts.map { ($0.key, $0) }, uniquingKeysWith: { a, _ in a })
+        var joined: [(key: String, space: String)] = []
         accounts = accountsModel.entries.map { entry in
             let store = makeStore(entry.account)
             let old = previous[entry.id]
             let spaces = entry.account.spaces.map { space -> SpaceState in
-                var state = old?.spaces.first { $0.id == space.id }
-                    ?? SpaceState(space: space, title: SpaceLayout.displayName(for: space))
+                var state: SpaceState
+                if let existing = old?.spaces.first(where: { $0.id == space.id }) {
+                    state = existing
+                    state.space = space
+                    state.title = SpaceLayout.displayName(for: space)
+                } else {
+                    state = SpaceState(space: space, title: SpaceLayout.displayName(for: space))
+                    if loadedAccounts.contains(entry.id) { joined.append((entry.id, space.id)) }
+                }
                 state.pins = store.pins(space: space.id)
                 return state
             }
             return AccountState(key: entry.id, title: entry.title, spaces: spaces)
         }
         let current = Set(accounts.map(\.key))
+        loadedAccounts.formIntersection(current)
+        for (key, space) in joined {
+            Task { await self.load(key: key, spaces: [space]) }
+        }
         for key in Set(refreshes.keys).union(announcements.keys).union(refreshAgain).union(announceAgain)
             where !current.contains(key) {
             cancelWork(key: key)
@@ -236,10 +265,12 @@ final class PinningModel {
 
     /// Loads the first-level folders (`GET children` of each space root, folders only,
     /// sorted), drops pins of folders that are gone, and measures what is pinned.
-    func load(key: String) async {
+    /// - Parameter only: the spaces to load (`nil` = all of the account).
+    func load(key: String, spaces only: Set<String>? = nil) async {
         guard let client = accountsModel.manager.client(for: key), let store = store(key: key),
               let spaces = account(key: key)?.spaces else { return }
-        for space in spaces {
+        loadedAccounts.insert(key)
+        for space in spaces where only?.contains(space.id) ?? true {
             update(key: key, space: space.id) {
                 $0.isLoading = true
                 $0.error = nil

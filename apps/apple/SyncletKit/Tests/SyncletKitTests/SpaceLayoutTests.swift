@@ -115,8 +115,23 @@ final class SpaceLayoutTests: XCTestCase {
         XCTAssertFalse(item.capabilities.contains(.allowsDeleting))
     }
 
-    func testFeedSpaces() {
-        XCTAssertEqual(layout.feedSpaces, [personal])
+    func testFeedSpacesAreAllSpaces() {
+        // Phase 4: every space has its own change feed (`?space=<id>`).
+        XCTAssertEqual(layout.feedSpaces, [personal, team])
         XCTAssertEqual(layout.rootIds, ["root", "d_team"])
+    }
+
+    func testSharedAndExternalKindsShowTheSpaceName() {
+        let shared = SyncSpace(id: "6f1c0d2e-0000-4000-8000-000000000001", kind: .shared, name: "Marketing",
+                               rootId: "r_6f1c0d2e-0000-4000-8000-000000000001", canWrite: true)
+        let external = SyncSpace(id: "6f1c0d2e-0000-4000-8000-000000000002", kind: .external, name: "NAS Archiv",
+                                 rootId: "r_6f1c0d2e-0000-4000-8000-000000000002", canWrite: false)
+        let layout = SpaceLayout(spaces: [personal, shared, external])
+        for language in ["en", "de"] {
+            let items = layout.topLevelItems(bundle: TestBundles.lproj(language))
+            XCTAssertEqual(items.map(\.filename).dropFirst(), ["Marketing", "NAS Archiv"])
+        }
+        XCTAssertEqual(layout.providerParent(forServerParentId: shared.rootId).rawValue, "space:\(shared.id)")
+        XCTAssertEqual(try layout.serverParentId(for: SpaceLayout.identifier(for: external)), external.rootId)
     }
 }

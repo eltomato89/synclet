@@ -146,7 +146,11 @@ public enum UploadRequestBuilder {
         let message = error?.message
         switch status {
         case 401: return .fail(.signedOut, message: message)
+        // Read-only space (also after the role changed mid-upload); the copy stays for a retry.
+        case 403: return .fail(.readOnly, message: message)
         case 404: return .fail(.targetGone, message: message)
+        // Missing storage: terminal instead of backing off; „Erneut versuchen“ works later.
+        case 503 where error?.code == "space_unavailable": return .fail(.spaceUnavailable, message: message)
         case 413: return .fail(.tooLarge, message: message)
         case 507: return .fail(.insufficientStorage, message: message)
         case 400 where error?.code == "invalid_name": return .fail(.invalidName, message: message)

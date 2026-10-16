@@ -100,7 +100,8 @@ final class AccountsModel {
     /// added later get theirs in ``reload()``.
     func startMonitoring(factory: ((StoredAccount) -> ChangeMonitor)? = nil) {
         makeMonitor = factory ?? { [weak self, manager, finder] account in
-            ChangeMonitor.live(account: account, manager: manager, container: manager.accounts.directory, finder: finder) {
+            ChangeMonitor.live(account: account, manager: manager, container: manager.accounts.directory, finder: finder,
+                               onSpacesChanged: { self?.reload() }) {
                 self?.processAuthFailures()
             }
         }

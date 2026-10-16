@@ -9,6 +9,7 @@ const STATUS: Record<SyncErrorCode, number> = {
   precondition_required: 428, too_large: 413, range_not_satisfiable: 416, setup_done: 409,
   share_password_required: 401, share_expired: 410, rate_limited: 429, upload_not_allowed: 403,
   office_disabled: 503, sso_not_allowed: 403, password_login_disabled: 403, insufficient_storage: 507,
+  space_unavailable: 503,
 };
 
 export class SyncError extends Error {
@@ -23,12 +24,13 @@ export class SyncError extends Error {
 @Catch(SyncError)
 export class SyncErrorFilter implements ExceptionFilter {
   /** Installed by SyncModule so error bodies can carry a serialized SyncItem. */
-  static serializeItem?: (row: Item) => Promise<unknown>;
+  static serializeItem?: (row: Item, user?: { id: string }) => Promise<unknown>;
 
   async catch(err: SyncError, host: ArgumentsHost) {
     const reply = host.switchToHttp().getResponse<FastifyReply>();
+    const user = host.switchToHttp().getRequest<{ user?: { id: string } }>()?.user;
     const body: Record<string, unknown> = { statusCode: err.status, message: err.message, code: err.code };
-    if (err.itemRow && SyncErrorFilter.serializeItem) body.item = await SyncErrorFilter.serializeItem(err.itemRow);
+    if (err.itemRow && SyncErrorFilter.serializeItem) body.item = await SyncErrorFilter.serializeItem(err.itemRow, user);
     await reply.status(err.status).send(body);
   }
 }

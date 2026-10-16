@@ -61,6 +61,16 @@
     "skipToContent": "Zum Inhalt springen",
     "administration": "Administration"
   },
+  "spaces": {
+    "section": "Bereiche",
+    "readOnly": "Nur lesen",
+    "readOnlyBody": "In diesem Bereich kannst du Dateien ansehen und herunterladen, aber nichts ändern.",
+    "unavailable": "Nicht verfügbar",
+    "unavailableTitle": "Dieser Bereich ist nicht verfügbar",
+    "unavailableBody": "Der Speicherort ist gerade nicht erreichbar. Bitte versuche es später noch einmal oder wende dich an die Administration.",
+    "space": "Bereich",
+    "readOnlyMenu": "Nur lesen – hier kannst du nichts ablegen"
+  },
   "files": {
     "newMenu": "Neu",
     "newFolder": "Ordner",
@@ -89,7 +99,8 @@
     "empty": {
       "title": "Dieser Ordner ist leer",
       "rootTitle": "Noch keine Dateien",
-      "body": "Zieh Dateien hierher oder lade sie hoch. Alles, was du ablegst, liegt als normale Datei auf deinem Server."
+      "body": "Zieh Dateien hierher oder lade sie hoch. Alles, was du ablegst, liegt als normale Datei auf deinem Server.",
+      "readOnlyBody": "Hier liegt noch nichts. In diesem Bereich kannst du nur lesen."
     },
     "loadError": {
       "title": "Der Ordner konnte nicht geladen werden",
@@ -171,7 +182,8 @@
       "server_error": "Der Server hat unerwartet geantwortet.",
       "network": "Keine Verbindung zum Server.",
       "unknown": "Das hat nicht geklappt. Versuch es noch einmal.",
-      "upload_expired": "Der unterbrochene Upload ist abgelaufen. Lade die Datei noch einmal hoch."
+      "upload_expired": "Der unterbrochene Upload ist abgelaufen. Lade die Datei noch einmal hoch.",
+      "space_unavailable": "Der Bereich ist gerade nicht verfügbar."
     },
     "uploads": {
       "region": "Uploads",
@@ -542,6 +554,7 @@
   },
   "office": {
     "open": "In Office öffnen",
+    "view": "In Office ansehen",
     "new": {
       "more": "Weitere …",
       "label": "Name",
@@ -681,7 +694,9 @@
       "users": "Benutzer",
       "status": "Status",
       "shares": "Freigabelinks",
-      "sso": "Anmeldung"
+      "sso": "Anmeldung",
+      "groups": "Gruppen",
+      "spaces": "Bereiche"
     },
     "tags": {
       "remove": "{{value}} entfernen"
@@ -696,7 +711,8 @@
       "folderMissing": "Diesen Ordner gibt es im Datenverzeichnis nicht mehr. Lade die Liste neu und wähle einen anderen.",
       "usernameInvalid": "Dieser Name ist als Ordnername nicht erlaubt. Er darf nicht mit einem Punkt beginnen und keine Zeichen wie / \\ : * ? @ enthalten.",
       "dataNotWritable": "Der Server kann nicht ins Datenverzeichnis schreiben. Prüfe die Berechtigungen des /data-Volumes.",
-      "invalid": "Der Server hat diese Angaben nicht akzeptiert. Prüfe die Felder und versuche es erneut."
+      "invalid": "Der Server hat diese Angaben nicht akzeptiert. Prüfe die Felder und versuche es erneut.",
+      "nameTaken": "Dieser Name ist bereits vergeben."
     },
     "users": {
       "title": "Benutzer",
@@ -840,7 +856,9 @@
           "submit": "Gerät widerrufen",
           "done": "Gerät widerrufen"
         }
-      }
+      },
+      "groups": "Gruppen",
+      "groupsEmpty": "In keiner Gruppe"
     },
     "status": {
       "title": "Serverstatus",
@@ -916,6 +934,7 @@
       "loadError": "Die Freigabelinks konnten nicht geladen werden",
       "owner": "Besitzer",
       "allUsers": "Alle Benutzer",
+      "space": "Bereich",
       "none": {
         "active": "Keine aktiven Links",
         "expired": "Keine abgelaufenen Links",
@@ -1033,6 +1052,124 @@
         "header": "Nur Buchstaben, Ziffern und Bindestriche.",
         "cidr": "„{{value}}“ ist keine IP-Adresse und kein CIDR-Bereich.",
         "proxyRequired": "Trage mindestens eine vertrauenswürdige Proxy-Adresse ein, bevor du den Auth-Proxy einschaltest."
+      }
+    },
+    "groups": {
+      "title": "Gruppen",
+      "create": "Neue Gruppe",
+      "loadError": "Gruppen konnten nicht geladen werden",
+      "empty": "Noch keine Gruppen",
+      "emptyBody": "Mit Gruppen gibst du mehreren Personen auf einmal Zugriff auf einen Bereich.",
+      "noMembers": "Keine Mitglieder",
+      "columns": {
+        "name": "Name",
+        "members": "Mitglieder"
+      },
+      "form": {
+        "createTitle": "Neue Gruppe",
+        "editTitle": "{{name}} bearbeiten",
+        "name": "Name",
+        "members": "Mitglieder",
+        "create": "Gruppe anlegen",
+        "creating": "Wird angelegt …"
+      },
+      "toast": {
+        "created": "Gruppe {{name}} angelegt",
+        "updated": "Gruppe {{name}} gespeichert"
+      },
+      "delete": {
+        "action": "Löschen",
+        "title": "{{name}} löschen?",
+        "body": "Mitglieder verlieren den Zugriff, den diese Gruppe ihnen gegeben hat. Ihre Konten und Dateien bleiben unberührt.",
+        "submit": "Gruppe löschen",
+        "submitting": "Wird gelöscht …",
+        "done": "Gruppe {{name}} gelöscht"
+      }
+    },
+    "spaces": {
+      "title": "Bereiche",
+      "create": "Team-Ordner anlegen",
+      "loadError": "Bereiche konnten nicht geladen werden",
+      "empty": "Noch keine Team-Ordner oder externen Speicher.",
+      "noMembers": "Keine Mitglieder",
+      "membersCount_one": "{{count}} Mitglied",
+      "membersCount_other": "{{count}} Mitglieder",
+      "readOnly": "nur lesen",
+      "scan": "Jetzt scannen",
+      "mountHint": "Externe Speicher erscheinen hier automatisch, sobald sie unter /storage eingehängt sind.",
+      "mountLink": "So hängst du externen Speicher ein",
+      "columns": {
+        "name": "Name",
+        "path": "Pfad",
+        "status": "Status",
+        "size": "Größe",
+        "members": "Mitglieder"
+      },
+      "kind": {
+        "team": "Team-Ordner",
+        "external": "Externer Speicher"
+      },
+      "status": {
+        "available": "verfügbar",
+        "missing": "nicht verfügbar",
+        "ignored": "ausgeblendet"
+      },
+      "watch": {
+        "auto": "Automatisch (Änderungen beobachten)",
+        "off": "Aus (nur Scan)"
+      },
+      "members": {
+        "title": "Mitglieder",
+        "empty": "Noch hat niemand Zugriff.",
+        "kind": {
+          "user": "Benutzer",
+          "group": "Gruppe"
+        },
+        "role": {
+          "read": "Lesen",
+          "write": "Schreiben"
+        },
+        "roleFor": "Zugriff für {{name}}",
+        "remove": "{{name}} entfernen",
+        "add": "Mitglied hinzufügen",
+        "addPlaceholder": "Gruppe oder Benutzer hinzufügen …",
+        "groups": "Gruppen",
+        "users": "Benutzer"
+      },
+      "form": {
+        "createTitle": "Team-Ordner anlegen",
+        "createDescription": "Legt einen Ordner unter /teams an.",
+        "editTitle": "{{name}} bearbeiten",
+        "name": "Name",
+        "nameHint": "Wird als Ordnername auf der Platte verwendet.",
+        "create": "Team-Ordner anlegen",
+        "creating": "Wird angelegt …",
+        "watch": "Beobachtungsmodus",
+        "watchHint": "Schlägt das Beobachten fehl, wird der Speicher regelmäßig gescannt.",
+        "interval": "Scan-Intervall (Sekunden)",
+        "intervalHint": "Leer lassen für den globalen Standard.",
+        "errors": {
+          "required": "Gib einen Namen ein.",
+          "invalid": "Dieser Name ist nicht zulässig. Vermeide / \\ : * ? \" < > | sowie Leerzeichen oder Punkte am Ende.",
+          "interval": "Gib eine ganze Zahl von Sekunden ein (mindestens 10)."
+        }
+      },
+      "toast": {
+        "created": "Team-Ordner {{name}} angelegt",
+        "updated": "{{name}} gespeichert",
+        "scanned": "Scan von {{name}} gestartet",
+        "restored": "{{name}} wieder aufgenommen. Füge Mitglieder neu hinzu."
+      },
+      "remove": {
+        "action": "Entfernen",
+        "title": "{{name}} entfernen?",
+        "body": "Der Bereich wird in Synclet ausgeblendet. Der Ordner bleibt auf der Platte erhalten.",
+        "submit": "Ordner entfernen",
+        "submitting": "Wird entfernt …",
+        "done": "{{name}} entfernt. Der Ordner bleibt auf der Platte erhalten."
+      },
+      "restore": {
+        "action": "Wieder aufnehmen"
       }
     }
   }

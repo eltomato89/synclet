@@ -3,10 +3,14 @@ import os
 
 /// What ``EventStream`` reports to its consumer (SYNC_API.md §5a).
 public enum StreamSignal: Sendable, Hashable {
-    /// The stream is open (`hello`); `cursor` is the user's head. Drain `/changes` now.
-    case connected(cursor: String)
-    /// New journal entries were committed (`changes`). Drain `/changes`.
+    /// The stream is open (`hello`); `cursor` is the head of the personal space, `cursors`
+    /// the head of every space (space id → cursor; empty on servers before Phase 4). Drain
+    /// `/changes` now.
+    case connected(cursor: String, cursors: [String: String] = [:])
+    /// New journal entries were committed in `space` (`changes`). Drain `/changes`.
     case changes(space: String, cursor: String)
+    /// The user's spaces or rights changed (`account`): reload `/account`.
+    case account
     /// The connection ended or could not be opened; the stream reconnects by itself.
     case disconnected(reason: StreamDisconnectReason)
 }
@@ -62,7 +66,8 @@ public struct EventStreamTiming: Sendable, Hashable {
 
 /// Client of `GET /sync/v1/events` (Server-Sent Events, SYNC_API.md §5a): a wake-up
 /// signal per account. It never carries changes; on `.connected` and `.changes` the
-/// consumer lets the File Provider extension drain `/changes`.
+/// consumer lets the File Provider extension drain `/changes`; on `.account` it reloads
+/// `/account` (the space list).
 ///
 /// - Reconnects by itself: exponential backoff 1, 2, 4 … 60 s with ±20 % jitter, reset
 ///   once a connection stayed open for 60 s; a `retry:` field of the server is a lower
@@ -337,7 +342,17 @@ public final class EventStream: Sendable {
         }
         switch event.event {
         case "hello":
-            continuation.yield(.connected(cursor: text("cursor")))
+            var cursors: [String: String] = [:]
+            for (space, value) in fields["cursors"] as? [String: Any] ?? [:] {
+                switch value {
+                case let value as String: cursors[space] = value
+                case let value as NSNumber: cursors[space] = value.stringValue
+                default: break
+                }
+            }
+            continuation.yield(.connected(cursor: text("cursor"), cursors: cursors))
+        case "account":
+            continuation.yield(.account)
         case "changes":
             // A wake-up even when the payload is unreadable.
             continuation.yield(.changes(space: text("space"), cursor: text("cursor")))

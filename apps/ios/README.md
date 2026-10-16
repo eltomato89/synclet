@@ -151,3 +151,15 @@ LAN-Adresse) mit zwei Benutzerkonten, die Web-Oberfläche im Browser eines Rechn
 17. **Share-Upload aus der App abbrechen:** Flugmodus an; in Fotos ein Foto → Teilen → „Synclet“ →
     „Hochladen“. App öffnen → „Uploads“ → beim Foto „Abbrechen“. Flugmodus aus, eine Minute warten.
     → Der Eintrag ist weg, und die Datei erscheint nicht im Zielordner (Web und App).
+18. **Spaces:** Voraussetzung: Konto A ist Mitglied eines Team-Ordners „Familie“ (Schreibrechte) und eines
+    schreibgeschützten Spaces; Konto A hat zusätzlich „Meine Dateien“.
+    - Team-Ordner: in der Dateien-App und in der App erscheint „Familie“ neben „Meine Dateien“; eine
+      Datei aus dem Web ist sichtbar.
+    - Schreibgeschützter Space: Hochladen („+“), Umbenennen, Löschen und Ablegen aus der Dateien-App
+      werden abgelehnt; „+“ ist ausgeblendet bzw. gesperrt.
+    - Verschieben zwischen Spaces: eine Datei von „Meine Dateien“ nach „Familie“ verschieben → sie ist
+      danach nur noch dort (auch im Web).
+    - Zugriff entfernen: im Web den Benutzer aus „Familie“ entfernen → „Familie“ verschwindet binnen
+      Sekunden aus App und Dateien-App.
+    - Fehlender Mount: den externen Speicher auf dem Server aushängen → der Space zeigt „Nicht
+      verfügbar“, nichts wird gelöscht; nach dem Wiederanhängen ist er wieder nutzbar.

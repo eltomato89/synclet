@@ -49,6 +49,8 @@ export function VersionsPanel({ item, open, onOpenChange, onRestored, onClosed }
   const [preview, setPreview] = useState<VersionWire | null>(null);
   const locale = i18n.language;
   const previewable = canPreviewVersion(item);
+  // Restoring writes the file: not for read-only spaces (listing, preview and download need read only).
+  const canRestore = item.capabilities.write !== false;
 
   useEffect(() => { if (!open) revokeVersionBlobs(); }, [open]);
   useEffect(() => revokeVersionBlobs, []);
@@ -100,7 +102,7 @@ export function VersionsPanel({ item, open, onOpenChange, onRestored, onClosed }
             <div className="flex shrink-0 items-center">
               {previewable && <RowButton label={t('versions.preview', { n: v.version })} onClick={() => setPreview(v)}><Eye /></RowButton>}
               <RowButton label={t('versions.download', { n: v.version })} onClick={() => download(v)}><Download /></RowButton>
-              <RowButton label={t('versions.restore', { n: v.version })} onClick={() => setConfirm(v)}><RotateCcw /></RowButton>
+              {canRestore && <RowButton label={t('versions.restore', { n: v.version })} onClick={() => setConfirm(v)}><RotateCcw /></RowButton>}
             </div>
           </li>
         ))}

@@ -13,3 +13,4 @@ openapi.yaml:
     - '#/components/schemas/EventHello'
     - '#/components/schemas/EventChanges'
     - '#/components/schemas/EventBye'
+    - '#/components/schemas/EventAccount'

@@ -5,14 +5,54 @@ import SyncletKit
 struct FolderRoute: Hashable {
     let id: String
     let title: String
+    /// Space of the folder (`nil` = unknown, e.g. an older server).
+    var spaceId: String?
+    /// Uploads and new folders are allowed here (the folder's `addChildren` capability, or the
+    /// space's write access for a space root). Read-only folders hide the „+“ menu.
+    var canAddChildren = true
+
+    init(id: String, title: String, spaceId: String? = nil, canAddChildren: Bool = true) {
+        self.id = id
+        self.title = title
+        self.spaceId = spaceId
+        self.canAddChildren = canAddChildren
+    }
+
+    /// A folder item of a list.
+    init(item: SyncItem) {
+        self.init(id: item.id, title: item.name, spaceId: item.spaceId, canAddChildren: item.capabilities.addChildren)
+    }
 }
 
-/// „Verschieben“: pick the target folder, starting at „Meine Dateien“. The moved folders are
-/// hidden (no move into itself); the current folder can't be picked.
+extension SpaceDirectory {
+    /// Whether uploads and new folders are allowed in `route` right now (the „+“ menu): a space
+    /// root follows the live space list (write access and storage present); a folder inside a
+    /// space is read-only as soon as its space is (or is gone), otherwise its reloaded
+    /// `folder` item decides, before that the route's value from navigation time.
+    func canAddChildren(to route: FolderRoute, folder: SyncItem?) -> Bool {
+        if let root = all.first(where: { $0.space.rootId == route.id }) { return root.isWritable }
+        if let spaceId = route.spaceId ?? folder?.spaceId {
+            guard let space = all.first(where: { $0.id == spaceId }), space.isWritable else { return false }
+        }
+        return folder?.capabilities.addChildren ?? route.canAddChildren
+    }
+}
+
+extension SpaceEntry {
+    /// The space's root folder.
+    var route: FolderRoute {
+        FolderRoute(id: space.rootId, title: title, spaceId: id, canAddChildren: isWritable)
+    }
+}
+
+/// „Verschieben“: pick the target folder. With spaces it starts at the list of spaces with
+/// write access („Meine Dateien“ and team folders/storages; the server moves between spaces),
+/// otherwise at „Meine Dateien“. The moved folders are hidden (no move into itself); the
+/// current folder and read-only folders can't be picked.
 struct MovePicker: View {
     let api: SyncAPIClient
     let accountKey: String
-    let root: FolderRoute
+    let spaces: SpaceDirectory
     let moving: [SyncItem]
     /// Folder the items are in now.
     let sourceFolderId: String
@@ -22,17 +62,40 @@ struct MovePicker: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            folder(root)
+            start
                 .navigationDestination(for: FolderRoute.self) { route in
                     folder(route)
                 }
         }
     }
 
+    @ViewBuilder
+    private var start: some View {
+        let targets = spaces.writable
+        if targets.count > 1 {
+            List(targets) { entry in
+                NavigationLink(value: entry.route) {
+                    SpaceLabel(entry: entry)
+                }
+                .accessibilityIdentifier("move.space.\(entry.title)")
+            }
+            .navigationTitle("Move")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        } else {
+            folder(targets.first?.route ?? spaces.personal.route)
+        }
+    }
+
     private func folder(_ route: FolderRoute) -> some View {
         MovePickerFolder(model: FolderModel(accountKey: accountKey, folderId: route.id, title: route.title,
                                             api: api, signal: { _ in }),
-                         movingIds: Set(moving.map(\.id)), canPick: route.id != sourceFolderId,
+                         movingIds: Set(moving.map(\.id)),
+                         canPick: route.id != sourceFolderId && route.canAddChildren,
                          count: moving.count) { folderId in
             onPick(folderId)
             dismiss()
@@ -63,6 +126,8 @@ private struct MovePickerFolder: View {
                 } actions: {
                     Button("Try Again") { Task { await model.load() } }
                 }
+            case .unavailable:
+                SpaceUnavailableView { Task { await model.load() } }
             case .failed(let message):
                 ContentUnavailableView {
                     Label("Can’t Load Folder", systemImage: "exclamationmark.triangle")
@@ -75,7 +140,7 @@ private struct MovePickerFolder: View {
                 ProgressView()
             case .loaded:
                 List(folders) { folder in
-                    NavigationLink(value: FolderRoute(id: folder.id, title: folder.name)) {
+                    NavigationLink(value: FolderRoute(item: folder)) {
                         Label {
                             Text(verbatim: folder.name)
                         } icon: {

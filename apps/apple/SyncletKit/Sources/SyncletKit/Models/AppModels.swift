@@ -32,12 +32,14 @@ public struct TrashEntry: Codable, Sendable, Hashable, Identifiable {
     public var deletedAt: String
     public var expiresAt: String?
     public var itemCount: Int
+    /// API id of the entry's space (Phase 4); absent on older servers (= `personal`).
+    public var spaceId: String?
 
     public init(id: String, itemId: String, type: SyncItemType, name: String, originalPath: String,
-                size: Int64, deletedAt: String, expiresAt: String?, itemCount: Int) {
+                size: Int64, deletedAt: String, expiresAt: String?, itemCount: Int, spaceId: String? = nil) {
         self.id = id; self.itemId = itemId; self.type = type; self.name = name
         self.originalPath = originalPath; self.size = size; self.deletedAt = deletedAt
-        self.expiresAt = expiresAt; self.itemCount = itemCount
+        self.expiresAt = expiresAt; self.itemCount = itemCount; self.spaceId = spaceId
     }
 }
 

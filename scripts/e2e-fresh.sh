@@ -15,13 +15,14 @@ OFFICE=${E2E_OFFICE:-0}
 PROJECT=synclet-e2e-$$
 TAG=e2e-$$
 WORK=$(mktemp -d)
-mkdir -p "$WORK/files" "$WORK/meta"
+mkdir -p "$WORK/files" "$WORK/meta" "$WORK/teams"
 # A folder without a user, for the "use an existing folder" case of the admin spec.
 mkdir -p "$WORK/files/altbestand/Projekte"
 printf 'aus dem alten Server' > "$WORK/files/altbestand/Projekte/notiz.txt"
 cat > "$WORK/.env" <<ENV
 SYNCLET_DATA=$WORK/files
 SYNCLET_META=$WORK/meta
+SYNCLET_TEAMS=$WORK/teams
 PUID=$(id -u)
 PGID=$(id -g)
 POSTGRES_PASSWORD=e2e

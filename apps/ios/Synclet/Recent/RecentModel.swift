@@ -35,7 +35,7 @@ final class RecentModel {
         } catch {
             guard generation == self.generation else { return }
             Self.log.error("recent failed: \(String(describing: error), privacy: .public)")
-            state = FolderModel.isOffline(error) ? .offline : .failed(FolderModel.describe(error))
+            state = FolderModel.loadState(for: error)
         }
     }
 }

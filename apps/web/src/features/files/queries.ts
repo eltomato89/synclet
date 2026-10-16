@@ -4,10 +4,14 @@ import { ApiError, api } from '@/lib/api';
 
 export const ROOT_ID = 'root';
 
-/** Retry network/server failures, never client errors such as 404 for a missing folder. */
-const retry = (count: number, err: unknown) => !(err instanceof ApiError && err.status < 500) && count < 3;
+/**
+ * Retry network/server failures, never client errors such as 404 for a missing folder, nor a
+ * space whose storage is missing (503 `space_unavailable` – the page explains it right away).
+ */
+const retry = (count: number, err: unknown) =>
+  !(err instanceof ApiError && (err.status < 500 || err.code === 'space_unavailable')) && count < 3;
 
-/** Route for a folder: `/files` is the root, every other folder lives at `/files/d_<uuid>`. */
+/** Route for a folder: `/files` is My files, every other folder (and space root `r_<uuid>`) lives at `/files/<id>`. */
 export function folderPath(folderId: string): string {
   return folderId === ROOT_ID ? '/files' : `/files/${folderId}`;
 }

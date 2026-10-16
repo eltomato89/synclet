@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { APP_CONFIG, AppConfig } from '../config';
-import { absPath, realpathInside, userRoot } from '../common/paths';
+import { absPath, realpathInside } from '../common/paths';
 import { PrismaService } from '../prisma/prisma.service';
 
 /** Bytes hashed per call at most (a single larger file is still hashed in full). */
@@ -38,7 +38,7 @@ export class HashBackfill {
     for (const [id, at] of this.skipped) if (now - at > RETRY_AFTER_MS) this.skipped.delete(id);
     const rows = await this.prisma.item.findMany({
       where: { type: 'file', deletedAt: null, contentHash: null, ...(this.skipped.size ? { id: { notIn: [...this.skipped.keys()] } } : {}) },
-      include: { owner: { select: { username: true } } },
+      include: { space: { select: { rootPath: true } } },
       orderBy: { updatedAt: 'asc' },
       take: limit,
     });
@@ -47,7 +47,7 @@ export class HashBackfill {
     for (const row of rows) {
       if (budget <= 0 || shouldStop()) break;
       budget -= Number(row.size);
-      const ok = await this.hashOne(row, row.owner.username).catch((e) => {
+      const ok = await this.hashOne(row, row.space.rootPath).catch((e) => {
         this.log.debug(`cannot hash ${row.id}: ${(e as Error).message}`);
         return false;
       });
@@ -67,8 +67,8 @@ export class HashBackfill {
   /** Number of files currently skipped (tests). */
   get skippedCount(): number { return this.skipped.size; }
 
-  private async hashOne(row: Item, username: string): Promise<boolean> {
-    const abs = await realpathInside(absPath(this.config.dataRoot, username, row.path), userRoot(this.config.dataRoot, username));
+  private async hashOne(row: Item, root: string): Promise<boolean> {
+    const abs = await realpathInside(absPath(root, row.path), root);
     const fh = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW);
     let sha: string;
     try {

@@ -11,18 +11,20 @@ struct TrashView: View {
     var body: some View {
         DestinationStack(environment: environment, entry: entry, accountMenu: accountMenu, embedded: embedded,
                          title: "Trash") { api, _ in
-            TrashList(environment: environment, accountKey: entry.id, api: api)
+            TrashList(environment: environment, accountKey: entry.id, spaces: entry.spaces, api: api)
         }
     }
 }
 
 private struct TrashList: View {
+    let spaces: SpaceDirectory
     @State private var model: TrashModel
     @State private var deleteCandidate: TrashEntry?
     @State private var confirmsEmpty = false
     @Environment(\.scenePhase) private var scenePhase
 
-    init(environment: AppEnvironment, accountKey: String, api: SyncAPIClient) {
+    init(environment: AppEnvironment, accountKey: String, spaces: SpaceDirectory, api: SyncAPIClient) {
+        self.spaces = spaces
         _model = State(initialValue: TrashModel(
             accountKey: accountKey, api: api,
             signal: { key in await environment.signalWorkingSet(accountKey: key) }))
@@ -40,7 +42,8 @@ private struct TrashList: View {
                     Button("Empty Trash", systemImage: "trash.slash", role: .destructive) {
                         confirmsEmpty = true
                     }
-                    .disabled(model.state != .loaded || model.entries.isEmpty)
+                    // The server empties only „Meine Dateien“: other spaces' entries stay.
+                    .disabled(!model.canEmpty)
                     .accessibilityIdentifier("trash.empty")
                 }
             }
@@ -63,7 +66,7 @@ private struct TrashList: View {
                 .accessibilityIdentifier("trash.confirmEmpty")
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("All items in the trash will be deleted forever. This can’t be undone.")
+                Text(LocalizedStringKey(TrashModel.emptyMessageKey))
             }
     }
 
@@ -71,7 +74,7 @@ private struct TrashList: View {
     private var content: some View {
         if model.state == .loaded {
             List(model.entries) { entry in
-                TrashRow(entry: entry)
+                TrashRow(entry: entry, location: spaces.location(spaceId: entry.spaceId, path: entry.originalPath))
                     .accessibilityIdentifier("trash.item.\(entry.name)")
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button("Delete Forever", systemImage: "trash", role: .destructive) {
@@ -119,6 +122,8 @@ private struct TrashList: View {
 /// A trash entry: symbol, name, original location and deletion date.
 private struct TrashRow: View {
     let entry: TrashEntry
+    /// The original path, with the space in front when the account has several.
+    let location: String
 
     var body: some View {
         HStack(spacing: 12) {
@@ -145,6 +150,6 @@ private struct TrashRow: View {
 
     private var subtitle: String {
         let date = SyncDate.parse(entry.deletedAt).map { $0.formatted(date: .abbreviated, time: .shortened) }
-        return [entry.originalPath, date].compactMap { $0 }.joined(separator: " · ")
+        return [location, date].compactMap { $0 }.joined(separator: " · ")
     }
 }

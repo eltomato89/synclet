@@ -23,7 +23,7 @@ SYNCLET_URL=… SYNCLET_TOKEN=syd_… pnpm test:contract tests/content.test.ts
 
 # lint the OpenAPI description (Redocly, config in redocly.yaml, per-operation exceptions with
 # their justification in .redocly.lint-ignore.yaml)
-pnpm --filter @synclet/sync-contract lint:openapi
+pnpm --filter @synclet/sync-contract lint   # alias: lint:openapi
 pnpm --filter @synclet/sync-contract typecheck
 ```
 
@@ -49,6 +49,15 @@ removes its trash entries (and those of items deleted inside it) for good, revok
 logs out the web session the suite's password login opened; the app-login test logs out its
 session too. Apart from the user's `lastLoginAt`, nothing else is touched; runs are independent of
 each other and can be repeated.
+
+**Team folder (spaces test):** when the suite's web token belongs to an administrator (password
+login or `SYNCLET_SETUP=1`), `tests/spaces.test.ts` creates a team folder `contract-team-<random>`
+through the admin API with the suite user as its only member, uses it with the device token
+(`?space=`, `r_<uuid>`, moves between spaces, read access, non-member `404`), deletes its content
+through the API and finally removes the space. Synclet never deletes space folders: the empty
+folder stays in the server's teams folder (`/teams`) and the space stays listed as removed in the
+admin UI. Without an admin web token, or on a server without a teams folder, those tests are
+skipped.
 
 Deliberately **not** exercised, because it would affect the account beyond the suite: re-using a
 spent refresh token (revokes all sessions of the user), journal expiry (`410` is only checked with

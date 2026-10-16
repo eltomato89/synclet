@@ -47,7 +47,7 @@ describe('ChangeNotifier', () => {
   it('LISTENs on synclet_changes', async () => {
     n.onModuleInit();
     await tick();
-    expect(clients[0].queries).toEqual(['LISTEN synclet_changes']);
+    expect(clients[0].queries).toEqual(['LISTEN synclet_changes; LISTEN synclet_account']);
   });
 
   it('coalesces a burst: 5 notifies within 100 ms → 1 callback (trailing edge)', async () => {
@@ -113,7 +113,7 @@ describe('ChangeNotifier', () => {
     jest.advanceTimersByTime(1);
     await tick();
     expect(clients).toHaveLength(3);
-    expect(clients[2].queries).toEqual(['LISTEN synclet_changes']);
+    expect(clients[2].queries).toEqual(['LISTEN synclet_changes; LISTEN synclet_account']);
     jest.advanceTimersByTime(250);
     expect(a).toHaveBeenCalledTimes(1);
     expect(b).toHaveBeenCalledTimes(1);
@@ -148,7 +148,7 @@ describe('ChangeNotifier', () => {
     n.subscribe('u1', cb);
     jest.advanceTimersByTime(30_000);
     await tick();
-    expect(clients[0].queries).toEqual(['LISTEN synclet_changes', 'SELECT 1']); // healthy: stays
+    expect(clients[0].queries).toEqual(['LISTEN synclet_changes; LISTEN synclet_account', 'SELECT 1']); // healthy: stays
     expect(clients).toHaveLength(1);
     clients[0].health = 'hang';
     jest.advanceTimersByTime(30_000);
@@ -163,7 +163,7 @@ describe('ChangeNotifier', () => {
     jest.advanceTimersByTime(1000); // backoff
     await tick();
     expect(clients).toHaveLength(2);
-    expect(clients[1].queries).toEqual(['LISTEN synclet_changes']);
+    expect(clients[1].queries).toEqual(['LISTEN synclet_changes; LISTEN synclet_account']);
     jest.advanceTimersByTime(250);
     expect(cb).toHaveBeenCalledTimes(1);
   });
@@ -197,7 +197,7 @@ describe('ChangeNotifier', () => {
     jest.advanceTimersByTime(1000);
     await tick();
     expect(calls).toBe(2);
-    expect(clients.at(-1)!.queries).toEqual(['LISTEN synclet_changes']);
+    expect(clients.at(-1)!.queries).toEqual(['LISTEN synclet_changes; LISTEN synclet_account']);
     await m.stop();
   });
 

@@ -3,10 +3,9 @@ import { Item, Prisma } from '@prisma/client';
 import type { SearchHit, SearchResponse, SyncItem } from '@synclet/shared';
 import { parentRel } from '../common/paths';
 import { SyncError } from '../common/sync-error';
-import type { IndexUser } from '../common/types';
+import type { IndexSpace } from '../common/types';
 import { PrismaService } from '../prisma/prisma.service';
-import { SerializerService } from '../sync/serializer.service';
-import { parseSyncId } from '../sync/sync-ids';
+import { SerializerService, type ItemView } from '../sync/serializer.service';
 import { SearchLanguage } from './search-language';
 
 export const MAX_QUERY_CHARS = 200;
@@ -35,6 +34,9 @@ export function capSnippet(s: string): string {
   return `${out}…`;
 }
 
+/** A space searched for the caller, with the caller's view on it (API id, role). */
+export interface SearchSpace { space: IndexSpace; view: ItemView }
+
 interface HitRow { id: string | null; name_score: number | null; content_score: number | null; total: bigint; snippet: string | null }
 
 @Injectable()
@@ -47,16 +49,21 @@ export class SearchService {
 
   /**
    * Name (trigram, accent- and case-insensitive) and content (full text over ItemText) search
-   * across the caller's live items. Every branch filters `ownerId` and `deletedAt IS NULL` on the
-   * Item row itself – ItemText is shared by content hash across users and never returned alone.
+   * across the live items of `spaces` (the caller's readable spaces, or one of them). Every branch
+   * filters `spaceId` and `deletedAt IS NULL` on the Item row itself – ItemText is shared by
+   * content hash across spaces and never returned alone. `folderPath` restricts to a subtree (its path
+   * in the single space searched).
    *
    * The name predicates use exactly the expression of `Item_name_trgm_idx`
    * (`synclet_unaccent(lower(name))`, partial on `"deletedAt" IS NULL`) so the index applies.
    */
-  async search(user: IndexUser, rawQ: string, opts: { limit: number; offset: number; folderId?: string }): Promise<SearchResponse> {
+  async search(spaces: SearchSpace[], rawQ: string, opts: { limit: number; offset: number; folderPath?: string }): Promise<SearchResponse> {
     const q = (rawQ ?? '').trim();
     if (q.length < 1 || q.length > MAX_QUERY_CHARS) throw new SyncError('invalid_request', `q must be 1..${MAX_QUERY_CHARS} characters`);
-    const scope = await this.scope(user, opts.folderId);
+    if (spaces.length === 0) return { hits: [], total: 0 };
+    const ids = spaces.map((s) => s.space.id);
+    const inSpaces = Prisma.sql`i."spaceId" = ANY(${ids}::uuid[])`;
+    const scope = opts.folderPath ? Prisma.sql`AND i.path LIKE ${`${escapeLike(opts.folderPath)}/%`}` : Prisma.empty;
     const lang = await this.lang.get();
     const nameExpr = Prisma.sql`synclet_unaccent(lower(i.name))`;
     const nq = Prisma.sql`synclet_unaccent(lower(${q}))`;
@@ -73,7 +80,7 @@ export class SearchService {
         WITH name_hits AS (
           SELECT i.id, GREATEST(similarity(${nameExpr}, ${nq}), word_similarity(${nq}, ${nameExpr})) AS score
           FROM "Item" i
-          WHERE i."ownerId" = ${user.id}::uuid AND i."deletedAt" IS NULL ${scope}
+          WHERE ${inSpaces} AND i."deletedAt" IS NULL ${scope}
             AND (${nameExpr} % ${nq} OR ${nq} <% ${nameExpr} OR ${nameExpr} LIKE ${like})
         ),
         content_hits AS (
@@ -81,7 +88,7 @@ export class SearchService {
           FROM "ItemText" t
           JOIN "Item" i ON i."contentHash" = t.sha
           WHERE t.tsv @@ ${tsq}
-            AND i."ownerId" = ${user.id}::uuid AND i."deletedAt" IS NULL AND i.type = 'file' ${scope}
+            AND ${inSpaces} AND i."deletedAt" IS NULL AND i.type = 'file' ${scope}
         ),
         hits AS (
           SELECT coalesce(n.id, c.id) AS id, n.score AS name_score, c.score AS content_score,
@@ -104,10 +111,10 @@ export class SearchService {
 
     const total = Number(rows[0]?.total ?? 0);
     const pageRows = rows.filter((r): r is HitRow & { id: string } => r.id !== null);
-    const items = await this.prisma.item.findMany({ where: { id: { in: pageRows.map((r) => r.id) }, ownerId: user.id, deletedAt: null } });
+    const items = await this.prisma.item.findMany({ where: { id: { in: pageRows.map((r) => r.id) }, spaceId: { in: ids }, deletedAt: null } });
     const byId = new Map(items.map((r) => [r.id, r]));
     const ordered = pageRows.flatMap((r) => (byId.has(r.id) ? [{ row: byId.get(r.id)!, hit: r }] : []));
-    const serialized = await this.serializer.toSyncItems(user, ordered.map((o) => o.row));
+    const serialized = await this.serializeAcross(spaces, ordered.map((o) => o.row));
     const hits: SearchHit[] = ordered.map(({ row, hit }, i) => this.hit(row, serialized[i], hit));
     return { hits, total };
   }
@@ -117,15 +124,15 @@ export class SearchService {
     return { item, path: parentRel(row.path), snippet: h.snippet === null ? null : capSnippet(h.snippet), matched };
   }
 
-  /** Path-prefix restriction to a folder subtree (root or no folder = everything). */
-  private async scope(user: IndexUser, folderId: string | undefined): Promise<Prisma.Sql> {
-    if (!folderId) return Prisma.empty;
-    const parsed = parseSyncId(folderId);
-    if (!parsed) throw new SyncError('invalid_request', 'invalid folder id');
-    if (parsed.kind === 'root') return Prisma.empty;
-    if (parsed.kind !== 'folder') throw new SyncError('invalid_request', 'not a folder');
-    const folder = await this.prisma.item.findFirst({ where: { id: parsed.uuid, ownerId: user.id, deletedAt: null, type: 'folder' } });
-    if (!folder) throw new SyncError('not_found');
-    return Prisma.sql`AND i.path LIKE ${`${escapeLike(folder.path)}/%`}`;
+  /** Serializes rows of several spaces (each with the caller's view), keeping their order. */
+  async serializeAcross(spaces: SearchSpace[], rows: Item[]): Promise<SyncItem[]> {
+    const bySpace = new Map(spaces.map((s) => [s.space.id, s]));
+    const out = new Map<string, SyncItem>();
+    for (const s of spaces) {
+      const mine = rows.filter((r) => r.spaceId === s.space.id);
+      const items = await this.serializer.toSyncItems(s.space, mine, s.view);
+      mine.forEach((r, i) => out.set(r.id, items[i]));
+    }
+    return rows.filter((r) => bySpace.has(r.spaceId)).map((r) => out.get(r.id)!);
   }
 }

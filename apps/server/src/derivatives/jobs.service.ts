@@ -3,7 +3,7 @@ import { DerivativeJob, DerivativeKind, JobStatus, Prisma } from '@prisma/client
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { APP_CONFIG, AppConfig } from '../config';
-import { absPath, realpathInside, userRoot } from '../common/paths';
+import { absPath, realpathInside } from '../common/paths';
 import { PrismaService } from '../prisma/prisma.service';
 import { extOf, TEXT_JOB_EXTS, THUMB_EXTS } from './preview-kind';
 
@@ -131,7 +131,7 @@ export class JobsService {
   async sourceFor(sha: string, kind?: DerivativeKind): Promise<{ abs: string; name: string; size: bigint } | null> {
     const rows = await this.prisma.item.findMany({
       where: { contentHash: sha, type: 'file', deletedAt: null },
-      include: { owner: { select: { username: true, disabledAt: true } } },
+      include: { space: { select: { rootPath: true } } },
       orderBy: { createdAt: 'asc' },
       take: 20,
     });
@@ -139,8 +139,8 @@ export class JobsService {
     const ranked = exts ? [...rows.filter((r) => exts.includes(extOf(r.name))), ...rows.filter((r) => !exts.includes(extOf(r.name)))] : rows;
     for (const r of ranked) {
       try {
-        const root = userRoot(this.config.dataRoot, r.owner.username);
-        const abs = await realpathInside(absPath(this.config.dataRoot, r.owner.username, r.path), root);
+        const root = r.space.rootPath;
+        const abs = await realpathInside(absPath(root, r.path), root);
         const fh = await open(abs, constants.O_RDONLY | constants.O_NOFOLLOW);
         const st = await fh.stat({ bigint: true }).finally(() => fh.close());
         if (!st.isFile() || st.size !== r.size || Number(st.mtimeMs) !== r.mtime.getTime()) continue;

@@ -3,6 +3,10 @@ export const APP_CONFIG = Symbol('APP_CONFIG');
 export interface AppConfig {
   dataRoot: string;
   metaRoot: string;
+  /** Parent of the team folders (each direct subfolder is a team space). Missing = no team spaces. */
+  teamsRoot: string;
+  /** Parent of the external storages (each direct subfolder, usually a mount, is a space). Missing = none. */
+  storageRoot: string;
   port: number;
   background: boolean;
   watch: boolean;
@@ -69,6 +73,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   return {
     dataRoot: env.SYNCLET_DATA_ROOT ?? '/data',
     metaRoot: env.SYNCLET_META_ROOT ?? '/meta',
+    teamsRoot: env.SYNCLET_TEAMS_ROOT || '/teams',
+    storageRoot: env.SYNCLET_STORAGE_ROOT || '/storage',
     port: int(env.PORT, 3000),
     background: bool(env.SYNCLET_BACKGROUND, true),
     watch: bool(env.SYNCLET_WATCH, true),

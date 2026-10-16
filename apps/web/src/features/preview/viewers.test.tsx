@@ -131,3 +131,28 @@ describe('QuickLook', () => {
     expect(screen.getByRole('button', { name: 'Next file' })).toBeDisabled();
   });
 });
+
+describe('QuickLook for read-only files', () => {
+  const entries = [{ id: 'f_1', name: 'Plan.docx', size: 10, mime: null, modifiedAt: '2026-10-15T08:00:00Z' }];
+  const resolveSource = (e: { name: string }) => Promise.resolve(src('none', e.name));
+  const renderWith = (writable: boolean) => render(
+    <TooltipProvider>
+      <QuickLook entries={entries} activeId="f_1" open onActiveChange={vi.fn()} onOpenChange={vi.fn()} resolveSource={resolveSource}
+        onShare={vi.fn()} onOpenInOffice={vi.fn()} writable={() => writable} />
+    </TooltipProvider>,
+  );
+
+  it('hides Share and offers "View in Office" when the file is read-only', async () => {
+    renderWith(false);
+    await screen.findByText('No preview available');
+    expect(screen.queryByRole('button', { name: 'Share' })).toBeNull();
+    expect(screen.getByRole('button', { name: /View in Office/ })).toBeInTheDocument();
+  });
+
+  it('keeps Share and "Open in Office" for writable files', async () => {
+    renderWith(true);
+    await screen.findByText('No preview available');
+    expect(screen.getByRole('button', { name: 'Share' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Open in Office/ })).toBeInTheDocument();
+  });
+});

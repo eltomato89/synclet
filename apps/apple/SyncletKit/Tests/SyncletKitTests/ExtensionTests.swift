@@ -403,6 +403,25 @@ final class ExtensionTests: XCTestCase {
         XCTAssertEqual(result.item.parentItemIdentifier, personal)
     }
 
+    func testCrossSpaceMovePatchesParentIdWithTheOtherSpacesRoot() async throws {
+        let team = SyncSpace(id: "6f1c0d2e-0000-4000-8000-000000000001", kind: .shared, name: "Marketing",
+                             rootId: "r_6f1c0d2e-0000-4000-8000-000000000001", canWrite: true)
+        let layout = SpaceLayout(spaces: [Fixtures.personal, team])
+        let context = SyncletReplicatedExtension.Context(client: Fixtures.client(), deviceName: "Jens' MacBook", layout: layout)
+        MockURLProtocol.reset { _ in .json(200, Fixtures.itemJSON(id: "d_1", parentId: team.rootId, type: "folder", name: "Fotos")) }
+        let local = TemplateItem(id: "d_1", parent: SpaceLayout.identifier(for: team), name: "Fotos", type: .folder)
+        let result = try await makeExtension().modify(item: local, baseVersion: NSFileProviderItemVersion(),
+                                                      changedFields: [.parentItemIdentifier],
+                                                      contents: nil, context: context, progress: nil)
+        let request = try XCTUnwrap(MockURLProtocol.requests.first)
+        XCTAssertEqual(MockURLProtocol.requests.count, 1)
+        XCTAssertEqual(request.method, "PATCH")
+        XCTAssertEqual(request.path, "/api/sync/v1/items/d_1")
+        XCTAssertEqual(request.json?["parentId"] as? String, team.rootId)
+        XCTAssertEqual(result.item.itemIdentifier.rawValue, "d_1")
+        XCTAssertEqual(result.item.parentItemIdentifier, SpaceLayout.identifier(for: team))
+    }
+
     func testModifyMoveIntoRootContainerIsRejectedWithoutRequest() async {
         assertNoRequests()
         let local = TemplateItem(id: "f_1", parent: .rootContainer, name: "A.pdf", type: .pdf)

@@ -4,6 +4,16 @@ public enum UploadStatus: String, Codable, Sendable, Hashable { case waiting, up
 
 public enum UploadFailure: String, Codable, Sendable, Hashable {
     case insufficientStorage, targetGone, signedOut, tooLarge, invalidName, network, sourceUnreadable, other
+    /// `403`: the target space is (now) read-only (Phase 4).
+    case readOnly
+    /// `503 space_unavailable`: the target space's storage is missing (Phase 4).
+    case spaceUnavailable
+
+    /// Unknown values (a queue written by a newer app) decode as ``other``.
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = UploadFailure(rawValue: raw) ?? .other
+    }
 }
 
 public struct UploadEntry: Codable, Sendable, Hashable, Identifiable {

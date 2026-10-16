@@ -3,9 +3,9 @@
 //   - extensions pg_trgm, unaccent
 //   - function synclet_unaccent(text)            (20261015150737_phase_1b_core)
 //   - index "Item_name_trgm_idx"   (GIN trigram, partial: live items)
-//   - index "Item_owner_mtime_idx" (partial: live files)
+//   - index "Item_space_mtime_idx" (partial: live files; Item_owner_mtime_idx before 20261016120000_phase_4_spaces)
 //   - index "Item_contentHash_idx" (partial: live items)
-//   - unique index "Item_owner_path_live_key"     (20261015131742_init, partial: live items)
+//   - unique index "Item_space_path_live_key"     (20261015131742_init, partial: live items; Item_owner_path_live_key before phase 4)
 // test/schema-drift.spec.ts asserts that migrations and this schema stay in sync.
 
 generator client {
@@ -41,23 +41,102 @@ model ServerConfig {
 }
 
 model User {
-  id          String       @id @default(uuid()) @db.Uuid
+  id               String        @id @default(uuid()) @db.Uuid
   /// Folder name below the data root.
-  username    String       @unique
-  email       String?      @unique
-  displayName String
-  role        Role         @default(user)
-  disabledAt  DateTime?
+  username         String        @unique
+  email            String?       @unique
+  displayName      String
+  role             Role          @default(user)
+  disabledAt       DateTime?
   /// Last successful login (password, OIDC, forward-auth, app login).
-  lastLoginAt DateTime?
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  identities  Identity[]
-  sessions    Session[]
-  devices     SyncDevice[]
-  items       Item[]
-  scope       SyncScope?
-  shareLinks  ShareLink[]
+  lastLoginAt      DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  identities       Identity[]
+  sessions         Session[]
+  devices          SyncDevice[]
+  shareLinks       ShareLink[]
+  /// Personal space (Space.id = User.id).
+  space            Space?
+  groups           GroupMember[]
+  spaceMemberships SpaceMember[]
+}
+
+enum SpaceKind {
+  personal
+  team
+  external
+}
+
+enum SpaceStatus {
+  available
+  missing
+  /// Removed by an admin: no members, no index; discovery skips its folder until restored.
+  ignored
+}
+
+enum SpaceWatch {
+  auto
+  off
+}
+
+enum SpaceRole {
+  read
+  write
+}
+
+/// Tenant key of the file index. Personal space: id = User.id.
+model Space {
+  id              String        @id @db.Uuid
+  kind            SpaceKind
+  name            String
+  /// Absolute path in the container. Personal spaces: recomputed at boot (dataRoot/username).
+  rootPath        String
+  /// Owner of a personal space.
+  userId          String?       @unique @db.Uuid
+  user            User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  readOnly        Boolean       @default(false)
+  status          SpaceStatus   @default(available)
+  watch           SpaceWatch    @default(auto)
+  scanIntervalSec Int?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  items           Item[]
+  members         SpaceMember[]
+  scope           SyncScope?
+}
+
+model Group {
+  id        String        @id @default(uuid()) @db.Uuid
+  name      String
+  nameKey   String        @unique
+  createdAt DateTime      @default(now())
+  members   GroupMember[]
+  spaces    SpaceMember[]
+}
+
+model GroupMember {
+  groupId String @db.Uuid
+  userId  String @db.Uuid
+  group   Group  @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([groupId, userId])
+}
+
+/// Exactly one of userId / groupId is set.
+model SpaceMember {
+  id      String    @id @default(uuid()) @db.Uuid
+  spaceId String    @db.Uuid
+  userId  String?   @db.Uuid
+  groupId String?   @db.Uuid
+  role    SpaceRole
+  space   Space     @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  user    User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group   Group?    @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([spaceId, userId])
+  @@unique([spaceId, groupId])
 }
 
 /// Login identities: provider 'local' (subject = username lower-case) or 'oidc:<issuer>' later.
@@ -112,12 +191,12 @@ model SyncDevice {
   @@index([userId])
 }
 
-/// Mirror of one file/folder on disk. Paths are relative to the user root, '/'-separated.
+/// Mirror of one file/folder on disk. Paths are relative to the space root, '/'-separated.
 model Item {
   id          String    @id @default(uuid()) @db.Uuid
-  ownerId     String    @db.Uuid
-  owner       User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  /// null = direct child of the user root ("root").
+  spaceId     String    @db.Uuid
+  space       Space     @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  /// null = direct child of the space root ("root").
   parentId    String?   @db.Uuid
   type        ItemType
   /// Exact on-disk name.
@@ -138,19 +217,19 @@ model Item {
   /// Key of the last office editing session that saved this file.
   officeKey   String?
 
-  @@index([ownerId, parentId])
-  @@index([ownerId, dev, ino])
-  @@index([ownerId, path])
+  @@index([spaceId, parentId])
+  @@index([spaceId, dev, ino])
+  @@index([spaceId, path])
 }
 
-/// Per-user journal head. seq is incremented inside the mutating transaction
+/// Per-space journal head. seq is incremented inside the mutating transaction
 /// (row lock => sequence numbers become visible in commit order, no gaps for readers).
 model SyncScope {
-  userId String @id @db.Uuid
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-  seq    BigInt @default(0)
+  spaceId String @id @db.Uuid
+  space   Space  @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  seq     BigInt @default(0)
   /// Watermark: entries with seq <= minSeq were trimmed; older cursors get 410.
-  minSeq BigInt @default(0)
+  minSeq  BigInt @default(0)
 }
 
 model FileChange {
@@ -168,7 +247,7 @@ model FileChange {
 
 model TrashEntry {
   id           String    @id @default(uuid()) @db.Uuid
-  ownerId      String    @db.Uuid
+  spaceId      String    @db.Uuid
   itemId       String    @db.Uuid
   type         ItemType
   name         String
@@ -180,8 +259,10 @@ model TrashEntry {
   manifest     Json
   deletedAt    DateTime  @default(now())
   expiresAt    DateTime?
+  /// User who deleted the item (null for entries created before Phase 4).
+  deletedBy    String?   @db.Uuid
 
-  @@index([ownerId, deletedAt])
+  @@index([spaceId, deletedAt])
   @@index([expiresAt])
 }
 
@@ -234,8 +315,11 @@ model ShareLink {
   /// AES-256-GCM encrypted token (base64url iv.ciphertext.tag) so the owner can re-copy the link.
   tokenEnc      String
   itemId        String    @db.Uuid
+  /// User who created the link.
   ownerId       String    @db.Uuid
   owner         User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  /// Space of the shared item.
+  spaceId       String    @db.Uuid
   passwordHash  String?
   expiresAt     DateTime?
   allowDownload Boolean   @default(true)
@@ -258,7 +342,7 @@ enum VersionSource {
 model FileVersion {
   id        String        @id @default(uuid()) @db.Uuid
   itemId    String        @db.Uuid
-  ownerId   String        @db.Uuid
+  spaceId   String        @db.Uuid
   /// Item.version this content had while it was current.
   version   Int
   sha       String
@@ -273,7 +357,7 @@ model FileVersion {
   storePath String
 
   @@index([itemId, createdAt])
-  @@index([ownerId])
+  @@index([spaceId])
   @@index([sha])
 }
 

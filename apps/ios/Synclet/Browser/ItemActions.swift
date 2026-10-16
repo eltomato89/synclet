@@ -15,7 +15,8 @@ enum ItemAction: String, Hashable, CaseIterable, Identifiable {
     static func available(for item: SyncItem) -> [ItemAction] {
         allCases.filter { action in
             switch action {
-            case .share: return item.capabilities.read
+            // Creating a link needs write access in the item's space (read-only spaces: none).
+            case .share: return item.capabilities.read && item.capabilities.write
             case .rename: return item.capabilities.rename
             case .move: return item.capabilities.move
             case .delete: return item.capabilities.delete

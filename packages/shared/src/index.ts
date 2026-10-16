@@ -6,7 +6,8 @@ export type SyncErrorCode =
   | 'invalid_move' | 'invalid_name' | 'invalid_request' | 'cursor_expired' | 'conflict'
   | 'precondition_required' | 'too_large' | 'range_not_satisfiable' | 'setup_done'
   | 'share_password_required' | 'share_expired' | 'rate_limited' | 'upload_not_allowed'
-  | 'office_disabled' | 'sso_not_allowed' | 'password_login_disabled' | 'insufficient_storage';
+  | 'office_disabled' | 'sso_not_allowed' | 'password_login_disabled' | 'insufficient_storage'
+  | 'space_unavailable';
 
 export interface SyncCapabilities {
   read: true; write: boolean; rename: boolean; move: boolean; delete: boolean; addChildren: boolean;
@@ -30,11 +31,17 @@ export interface SyncItem {
   capabilities: SyncCapabilities;
   /** Preview state derived from DerivativeJob; absent = unknown. */
   preview?: PreviewInfo;
+  /** API id of the item's space (`personal` or the space uuid); absent from older servers = personal. */
+  spaceId?: string;
 }
 
 export type SyncSpaceKind = 'personal' | 'shared' | 'external';
 /** A top-level space of the account; each has its own root folder. Clients store sync state per space. */
-export interface SyncSpace { id: string; kind: SyncSpaceKind; name: string; rootId: string; canWrite: boolean }
+export interface SyncSpace {
+  id: string; kind: SyncSpaceKind; name: string; rootId: string; canWrite: boolean;
+  /** `missing`: the storage is unreachable (content answers 503); absent from older servers = available. */
+  status?: 'available' | 'missing';
+}
 
 export interface SyncAccount {
   userId: string; email: string | null; displayName: string;
@@ -71,6 +78,10 @@ export interface TrashEntryWire {
   id: string; itemId: string; type: 'folder' | 'file'; name: string;
   originalPath: string; size: number; deletedAt: string; expiresAt: string | null;
   itemCount: number;
+  /** API id of the entry's space; absent from older servers = personal. */
+  spaceId?: string;
+  /** User id of whoever deleted it (null when unknown, e.g. deleted on disk). */
+  deletedBy?: string | null;
 }
 export interface RestoreResult { item: SyncItem; restoredTo: string; renamed: boolean }
 
@@ -86,6 +97,8 @@ export interface ShareLinkWire {
    * restoring re-activates it. Only revoking is possible meanwhile (itemName/itemType from the trash).
    */
   itemTrashed: boolean;
+  /** API id of the shared item's space (`personal` = the caller's own); absent from older servers = personal. */
+  spaceId?: string;
 }
 export interface CreateShareInput {
   itemId: string; password?: string | null; expiresAt?: string | null;
@@ -153,10 +166,28 @@ export type SsoSettingsInput = Partial<Omit<SsoSettingsWire, 'emergency' | 'oidc
 export interface AdminUserWire extends PublicUser {
   disabled: boolean; createdAt: string; lastLoginAt: string | null;
   identities: { provider: string; subject: string }[]; usedBytes: number; devices: number;
+  /** Groups the user belongs to, by name (Phase 4; older servers omit it). */
+  groups?: { id: string; name: string }[];
+}
+// Phase 4 admin API: groups and spaces (team folders, external storages).
+export interface AdminGroupWire { id: string; name: string; members: { id: string; username: string; displayName: string }[] }
+export type AdminSpaceRole = 'read' | 'write';
+export interface AdminSpaceMemberInput { kind: 'user' | 'group'; id: string; role: AdminSpaceRole }
+export interface AdminSpaceMemberWire extends AdminSpaceMemberInput { name: string }
+export interface AdminSpaceWire {
+  id: string; kind: 'team' | 'external'; name: string; rootPath: string;
+  /** `ignored`: removed from Synclet (folder kept, no members, no index) until restored. */
+  status: 'available' | 'missing' | 'ignored';
+  readOnly: boolean; watch: 'auto' | 'off'; scanIntervalSec: number | null;
+  sizeBytes: number; itemCount: number; members: AdminSpaceMemberWire[];
 }
 export interface AdminSessionWire { id: string; userAgent: string | null; createdAt: string; expiresAt: string }
 export interface AdminDeviceWire extends SyncDevice { userId: string }
-export interface AdminShareWire extends ShareLinkWire { owner: { id: string; username: string } }
+export interface AdminShareWire extends ShareLinkWire {
+  owner: { id: string; username: string };
+  /** The shared item's space (`id` = the space uuid; a personal space is named after its user). Absent from older servers. */
+  space?: { id: string; name: string; kind: SyncSpaceKind };
+}
 export interface DiskUsage { totalBytes: number; freeBytes: number }
 export interface AdminStatusWire {
   version: string; uptimeSec: number;

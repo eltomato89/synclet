@@ -1,7 +1,7 @@
 import type { SearchResponse, SyncItem } from '@synclet/shared';
 import { readFile, utimes, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { createTestApp, createTestUser, TestContext } from '../../test/context';
+import { createTestApp, createTestSpace, createTestUser, TestContext } from '../../test/context';
 import { writeOffice, writeTextPdf } from '../../test/text-fixtures';
 import { itIfTool } from '../../test/tools';
 import { AuthService } from '../auth/auth.service';
@@ -102,12 +102,12 @@ describe('search, recent and text preview', () => {
       // SearchService (expression + partial predicate of the index) must be planned on the trigram index.
       const owner = await ctx.prisma.user.findFirstOrThrow({ where: { username: 'jens' } });
       await ctx.prisma.$executeRaw`
-        INSERT INTO "Item" (id, "ownerId", type, name, "nameKey", path, mtime, "updatedAt")
+        INSERT INTO "Item" (id, "spaceId", type, name, "nameKey", path, mtime, "updatedAt")
         SELECT gen_random_uuid(), ${owner.id}::uuid, 'file', n, lower(n), n, now(), now()
         FROM (SELECT 'file-' || g || '-' || md5(g::text) || '.txt' AS n FROM generate_series(1, 5000) g) s`;
       await ctx.prisma.$executeRawUnsafe('ANALYZE "Item"');
       const plan = await ctx.prisma.$queryRawUnsafe<{ 'QUERY PLAN': string }[]>(
-        `EXPLAIN SELECT id FROM "Item" i WHERE i."ownerId" = $1::uuid AND i."deletedAt" IS NULL
+        `EXPLAIN SELECT id FROM "Item" i WHERE i."spaceId" = $1::uuid AND i."deletedAt" IS NULL
            AND (synclet_unaccent(lower(i.name)) % synclet_unaccent(lower($2))
              OR synclet_unaccent(lower($2)) <% synclet_unaccent(lower(i.name))
              OR synclet_unaccent(lower(i.name)) LIKE '%' || synclet_unaccent(lower($2)) || '%')`,
@@ -330,6 +330,73 @@ describe('search, recent and text preview', () => {
       }
       const dir = await folder('F');
       expect((await api('GET', `/items/${dir.id}/preview-text`)).statusCode).toBe(400);
+    });
+  });
+
+  describe('spaces', () => {
+    let team: { id: string }; let other: { id: string }; let bobToken: string;
+    beforeEach(async () => {
+      const jens = await ctx.prisma.user.findFirstOrThrow({ where: { username: 'jens' } });
+      const bob = await createTestUser(ctx, 'bob');
+      bobToken = await ctx.app.get(AuthService).signAccess(await ctx.prisma.user.findUniqueOrThrow({ where: { id: bob.id } }));
+      team = await createTestSpace(ctx, 'Team');
+      other = await createTestSpace(ctx, 'Other');
+      await ctx.prisma.spaceMember.createMany({ data: [
+        { spaceId: team.id, userId: jens.id, role: 'write' },
+        { spaceId: team.id, userId: bob.id, role: 'read' },
+        { spaceId: other.id, userId: jens.id, role: 'write' },
+      ] });
+    });
+
+    it('finds team files for members (with spaceId and role capabilities), not for others', async () => {
+      const docs = await folder('Docs', `r_${team.id}`);
+      await upload('Budget team.txt', 'x', { parentId: docs.id });
+      await upload('Budget mine.txt', 'x');
+      await upload('Budget other.txt', 'x', { parentId: `r_${other.id}` });
+      const mine = await search('Budget');
+      expect(names(mine).sort()).toEqual(['Budget mine.txt', 'Budget other.txt', 'Budget team.txt']);
+      const hit = mine.hits.find((h) => h.item.name === 'Budget team.txt')!;
+      expect(hit).toMatchObject({ path: 'Docs', item: { spaceId: team.id, parentId: docs.id, capabilities: { write: true } } });
+      expect(mine.hits.find((h) => h.item.name === 'Budget mine.txt')!.item.spaceId).toBe('personal');
+      // bob (read member of Team): team hits only, read-only capabilities
+      const bob = await search('Budget', '', bobToken);
+      expect(names(bob)).toEqual(['Budget team.txt']);
+      expect(bob.hits[0].item).toMatchObject({ spaceId: team.id, capabilities: { write: false, delete: false } });
+      // eve (no membership): nothing
+      expect(await search('Budget', '', eveToken)).toEqual({ hits: [], total: 0 });
+    });
+
+    it('space filter: personal, a team space, 404 without access; folder scope in a team space', async () => {
+      const docs = await folder('Docs', `r_${team.id}`);
+      await upload('Plan a.txt', 'x', { parentId: docs.id });
+      await upload('Plan b.txt', 'x', { parentId: `r_${team.id}` });
+      await upload('Plan c.txt', 'x');
+      expect(names(await search('Plan', `&space=${team.id}`)).sort()).toEqual(['Plan a.txt', 'Plan b.txt']);
+      expect(names(await search('Plan', '&space=personal'))).toEqual(['Plan c.txt']);
+      expect(names(await search('Plan', `&folder=${docs.id}`))).toEqual(['Plan a.txt']);
+      expect(names(await search('Plan', `&folder=r_${team.id}`)).sort()).toEqual(['Plan a.txt', 'Plan b.txt']);
+      expect(names(await search('Plan', '&folder=root'))).toEqual(['Plan c.txt']);
+      expect((await api('GET', `/search?q=Plan&space=${team.id}`, { as: eveToken })).statusCode).toBe(404);
+      expect((await api('GET', `/search?q=Plan&folder=${docs.id}`, { as: eveToken })).statusCode).toBe(404);
+      expect((await api('GET', '/search?q=Plan&space=nope')).statusCode).toBe(404);
+      // a missing space answers 503 when asked for, and is skipped otherwise
+      await ctx.prisma.space.update({ where: { id: team.id }, data: { status: 'missing' } });
+      expect((await api('GET', `/search?q=Plan&space=${team.id}`)).json().code).toBe('space_unavailable');
+      expect(names(await search('Plan'))).toEqual(['Plan c.txt']);
+    });
+
+    it('recent includes team files, honours the space filter and hides foreign spaces', async () => {
+      await upload('old.txt', 'x');
+      const t = await upload('team.txt', 'x', { parentId: `r_${team.id}` });
+      const recent = (await api('GET', '/recent')).json() as SyncItem[];
+      expect(recent.map((i) => i.name).sort()).toEqual(['old.txt', 'team.txt']);
+      expect(recent.find((i) => i.name === 'team.txt')).toMatchObject({ id: t.id, spaceId: team.id });
+      expect(recent.find((i) => i.name === 'old.txt')!.spaceId).toBe('personal');
+      expect(((await api('GET', `/recent?space=${team.id}`)).json() as SyncItem[]).map((i) => i.name)).toEqual(['team.txt']);
+      expect(((await api('GET', '/recent?space=personal')).json() as SyncItem[]).map((i) => i.name)).toEqual(['old.txt']);
+      expect(((await api('GET', '/recent', { as: bobToken })).json() as SyncItem[]).map((i) => i.name)).toEqual(['team.txt']);
+      expect((await api('GET', '/recent', { as: eveToken })).json()).toEqual([]);
+      expect((await api('GET', `/recent?space=${team.id}`, { as: eveToken })).statusCode).toBe(404);
     });
   });
 

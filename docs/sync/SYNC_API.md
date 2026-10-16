@@ -21,8 +21,12 @@ DocumentsProvider, Linux). All clients build on this document; change it only by
   (local: `http://localhost:8080/api/sync/v1`). There is no tenant and no subdomain: one server, one
   set of users; the account is determined by the token alone. Other routes in this document live
   under `<origin>/api` (`/api/auth/…`, `/api/setup…`, `/api/trash…`).
-- **Every user owns exactly one tree:** the folder `/data/<username>/` on the server. There is no
-  sharing between users yet; a user never sees another user's items (404).
+- **Spaces (Phase 4):** every user owns a **personal space**, the folder `/data/<username>/` on the
+  server. Administrators can additionally grant users (directly or through groups) `read` or
+  `write` access to **team folders** (`/teams/<name>`) and **external storages**
+  (`/storage/<name>`). Each space is a separate tree with its own root, its own change cursor and
+  its own trash (§3, §5). A user never sees items of a space they have no access to (`404`, the
+  existence is never revealed); administrators have no implicit access either.
 - **JSON** in UTF-8. Timestamps are ISO 8601 in UTC with milliseconds (`2026-10-15T07:08:09.123Z`).
   Large or opaque numbers (cursors) are **strings**. Sizes are JSON numbers (exact up to 2^53).
 - **Unknown fields:** clients **must** ignore response fields they do not know. Within v1 the server
@@ -41,8 +45,8 @@ DocumentsProvider, Linux). All clients build on this document; change it only by
 |---|---|---|
 | `unauthorized` | 401 | Token missing, invalid or expired; user disabled; download token bound to another item |
 | `device_revoked` | 401 | The device token was revoked → the client signs out (drops its token and local state) |
-| `forbidden` | 403 | Action not allowed on this item (root) or with this kind of token |
-| `not_found` | 404 | Item does not exist (any more), is in the trash, or belongs to another user; versions disabled (§10) |
+| `forbidden` | 403 | Action not allowed on this item (a space root), with this kind of token, or a write in a space the user can only read |
+| `not_found` | 404 | Item or space does not exist (any more), is in the trash, or the user has no access to its space; versions disabled (§10) |
 | `name_conflict` | 409 | Name taken in the target folder (`item` = the existing sibling, when indexed) |
 | `invalid_move` | 400 | Move not possible (folder into itself or into its own subtree) |
 | `invalid_name` | 400 | Name violates the naming rules (§4.3) |
@@ -53,6 +57,7 @@ DocumentsProvider, Linux). All clients build on this document; change it only by
 | `too_large` | 413 | Body above `maxUploadBytes` (a 413 from a reverse proxy with the same limit may have no JSON body; treat any 413 as too large) |
 | `range_not_satisfiable` | 416 | `Range` outside the file (`Content-Range: bytes */<size>`) |
 | `insufficient_storage` | 507 | The server's disk (or the user's quota) is full; see below. Retry later and show the problem to the user |
+| `space_unavailable` | 503 | The item's space is unavailable: its storage is not mounted (`status: "missing"` in `/account`, §3). Nothing was changed; retry later and show the space as unavailable |
 | `rate_limited` | 429 | Too many attempts on a public auth route; wait `Retry-After` seconds |
 | `password_login_disabled` | 403 | Password login is disabled for non-admin users (SSO only) → use the browser login (§2.1) |
 | `setup_done` | 409 | `POST /api/setup` after the first user exists |
@@ -184,29 +189,52 @@ SyncAccount = {
   organizationName: "Synclet",
   slug: string,                // the username (= the user's folder name on the server)
   canWrite: true,
-  spaces: SyncSpace[],         // top-level spaces, see below
+  spaces: SyncSpace[],         // top-level spaces the user can read, see below
   areas: { personal: true, shared: false, customers: false, projects: false },
   quotaBytes: number,          // 0 = no quota
-  usedBytes: number,           // sum of the sizes of the user's live files
+  usedBytes: number,           // sum of the sizes of the live files of the personal space
   maxUploadBytes: number,      // per file (upload, replace, tus)
-  cursor: string               // current change cursor
+  cursor: string               // current change cursor of the personal space
 }
 
 SyncSpace = {
-  id: string,                  // stable per account; "personal" for the user's own files
-  kind: "personal" | "shared" | "external",
-  name: string,                // display name; the server has no UI language, so "Meine Dateien" – localize by `kind`
-  rootId: string,              // the space's root folder id; use as `parentId` / `children` id ("root" for personal)
-  canWrite: boolean
+  id: string,                  // API space id: "personal" for the user's own files, else the space uuid
+  kind: "personal" | "shared" | "external",   // shared = team folder, external = external storage
+  name: string,                // personal: "Meine Dateien" (the server has no UI language – localize by `kind`);
+                               // others: the folder name on the server
+  rootId: string,              // the space's root folder id; use as `parentId` / `children` id
+                               // ("root" for personal, "r_<uuid>" otherwise)
+  canWrite: boolean,           // false with read access only, on a read-only mount, or while missing
+  status?: "available" | "missing"  // missing: storage not mounted (content → 503); absent = available
 }
 ```
 
-Spaces (Phase 2):
+Spaces (Phase 4):
 
-- Currently every account has exactly one space: `[{ id: "personal", kind: "personal", name: "Meine Dateien", rootId: "root", canWrite: true }]`.
-  Future servers may add `shared` and `external` spaces.
+- `spaces` lists every space the user can read, in this order: the personal space, then team
+  folders (`shared`), then external storages, each group by name. Example:
+  ```json
+  [{ "id": "personal", "kind": "personal", "name": "Meine Dateien", "rootId": "root", "canWrite": true, "status": "available" },
+   { "id": "6f1c…", "kind": "shared", "name": "Familie", "rootId": "r_6f1c…", "canWrite": true, "status": "available" },
+   { "id": "93ab…", "kind": "external", "name": "NAS", "rootId": "r_93ab…", "canWrite": false, "status": "missing" }]
+  ```
+  Phase 2 servers return exactly the personal space (without `status`).
+- **Space ids** are stable: `personal` always means the caller's own space; other spaces use their
+  uuid. The same id appears as `?space=` (§5), `SyncItem.spaceId` (§4) and in SSE events (§5a).
+- **Roles:** `write` (everything `canWrite` allows) or `read` (list, download, previews, versions,
+  search – every write answers `403 forbidden`). The highest role from direct and group membership
+  counts; a read-only mount limits it to `read`.
+- **Missing spaces** (`status: "missing"`, the storage is not mounted) stay in the list with
+  `canWrite: false`; every content route of the space (items, children, changes, downloads,
+  uploads) answers `503 space_unavailable` until it is back. The server keeps its index: no
+  deletes are reported for a missing space. Clients show it as unavailable and retry later.
+- **The list changes** when an administrator grants or revokes access, renames a team folder,
+  removes or restores a space, or a storage goes missing or comes back. Open event streams receive
+  `account` (§5a); reload `/account` then. A space that disappeared from the list is gone for this
+  user (its ids answer `404`): drop its local state. A new space starts with its own enumeration
+  (`children` of its `rootId`, §4.6) and cursor.
 - The virtual top level that lists the spaces is client-side and read-only: a client never creates, moves or
-  renames anything into or out of it, only inside a space.
+  renames anything into or out of it, only inside a space (moves *between* spaces are allowed, §8.2).
 - A client that meets an unknown `kind` shows the space as an ordinary folder.
 - Clients store sync state (cursor, pins) per space.
 - `areas` stays for Buro compatibility; new clients use `spaces`.
@@ -228,8 +256,8 @@ Document Server URL and its shared secret are both configured (`url` is `null` o
 
 ```ts
 SyncItem = {
-  id: string,                // "root" | "d_<uuid>" (folder) | "f_<uuid>" (file)
-  parentId: string | null,   // null only for root; top-level items: "root"
+  id: string,                // "root" | "r_<uuid>" (space root) | "d_<uuid>" (folder) | "f_<uuid>" (file)
+  parentId: string | null,   // null only for space roots; top-level items: their space's rootId
   type: "folder" | "file",
   kind: "root" | "folder" | "file",
   name: string,              // display name (§4.3), unique per parent
@@ -245,7 +273,9 @@ SyncItem = {
   capabilities: { read: true, write: boolean, rename: boolean, move: boolean,
                   delete: boolean, addChildren: boolean },
   preview?: { kind: "image"|"pdf"|"text"|"markdown"|"code"|"video"|"audio"|"none",
-              thumbnail: boolean, language?: string }   // files only (§9)
+              thumbnail: boolean, language?: string },  // files only (§9)
+  spaceId?: string           // API id of the item's space ("personal" or the space uuid);
+                             // absent from older servers = personal
 }
 ```
 
@@ -253,15 +283,17 @@ SyncItem = {
 
 | id | kind | Meaning | parentId |
 |---|---|---|---|
-| `root` | root | The user's folder; `name` = username; `etag` = `t0`, `createdAt`/`modifiedAt` = epoch | `null` |
-| `d_<uuid>` | folder | A directory below the user's folder | `root` or `d_…` |
-| `f_<uuid>` | file | A regular file | `root` or `d_…` |
+| `root` | root | Root of the personal space (the user's folder); `name` = username; `etag` = `t0`, `createdAt`/`modifiedAt` = epoch | `null` |
+| `r_<uuid>` | root | Root of the team folder or external storage `<uuid>` (= its space id); `name` = space name; never renamed, moved or deleted; `addChildren` only with write access | `null` |
+| `d_<uuid>` | folder | A directory below a space root | `root`, `r_…` or `d_…` |
+| `f_<uuid>` | file | A regular file | `root`, `r_…` or `d_…` |
 
 - `<uuid>` is lowercase, canonical form. Ids are **stable**: renames and moves through the API keep
   them; so do renames/moves made directly on the server's disk when the server can pair them
   (same path, or same inode within a short window). Otherwise a host-side move appears as delete
   + create (new id). Restoring from the trash brings the original ids back.
-- A malformed id (anything but `root`, `d_<uuid>`, `f_<uuid>`) → `400 invalid_request`.
+- Item ids are unique across spaces and stay the same when an item is moved to another space (§8.2).
+- A malformed id (anything but `root`, `r_<uuid>`, `d_<uuid>`, `f_<uuid>`) → `400 invalid_request`.
   A well-formed id of the wrong type (`d_` of a file, `f_` of a folder) → `404`.
 - Symlinks, sockets and other special entries on disk are never items.
 
@@ -322,40 +354,56 @@ contain them (a case-sensitive file system with `a.txt` and `A.txt`, or NFC and 
 
 ### 4.5 Capabilities
 
-Every user can write their whole tree: `root` → `write: true, addChildren: true, rename/move/delete: false`;
-folders → all `true`; files → all `true` except `addChildren: false`. Clients **should** still
-honor the flags (future shared folders will use them).
+Capabilities follow the user's role in the item's space (§3):
+
+- **Space roots:** `root` (the personal space, always writable) → `write: true, addChildren: true,
+  rename/move/delete: false` – `write: true` on `root` is historical (Phase 1) and kept for
+  compatibility. `r_…` (team folders, external storages) → `write: false` and `rename/move/delete:
+  false` regardless of the role; only `addChildren` follows the role (`true` with write, `false`
+  with read). Clients decide whether they may create items in a space root by `addChildren`, never
+  by `write`.
+- **Folders and files, write:** folders → all `true`; files → all `true` except `addChildren: false`.
+- **Folders and files, read:** everything `false` except `read`.
+
+Clients **must** honor the flags: a write the flags do not allow answers `403 forbidden`.
 
 ### 4.6 Endpoints
 
-- `GET /sync/v1/items/:id` → `SyncItem`. `404` when unknown, trashed or foreign.
+- `GET /sync/v1/items/:id` → `SyncItem`. `404` when unknown, trashed or in a space without access;
+  `503 space_unavailable` while its space is missing.
 - `GET /sync/v1/items/:id/children?pageToken=&limit=` → `{ items: SyncItem[], nextPageToken: string | null, cursor: string }`
   - `limit`: `floor(limit)`; missing, non-numeric or `0` (also `0.x`) → the default 500; then
     clamped to 1..1000 (negative → 1, above 1000 → 1000).
   - Order: all folders, then all files; within each group by id. `pageToken` is an opaque keyset
     marker (not an offset): items created or deleted between pages never cause duplicates or
     skipped survivors. `nextPageToken` is `null` on the last page.
-  - `cursor` is the change cursor **before** the first page was read: start `/changes` from it
-    after the enumeration and nothing is missed (use the cursor of the first page).
+  - `cursor` is the change cursor of the folder's **space** **before** the first page was read: start
+    `/changes?space=<that space>` from it after the enumeration and nothing is missed (use the
+    cursor of the first page).
   - Children of a file, a malformed `pageToken` → `400 invalid_request`; unknown folder → `404`.
 
 ---
 
 ## 5. Changes
 
-- `GET /sync/v1/cursor` → `{ cursor: string }` (current head).
-- `GET /sync/v1/changes?cursor=<c>&limit=<n>` →
+- `GET /sync/v1/cursor?space=<id>` → `{ cursor: string }` (current head of that space).
+- `GET /sync/v1/changes?space=<id>&cursor=<c>&limit=<n>` →
   ```ts
   { changes: ({ op: "upsert", item: SyncItem } | { op: "delete", id: string })[],
     cursor: string, hasMore: boolean }
   ```
   `limit`: same rule as for `children` (missing, non-numeric or `0` → 500; then clamped to 1..1000).
 
-**Cursor.** Opaque string. Clients store it and send it back; they must not parse it, compare it
-by order or compute with it. A cursor is per user, not per device.
+**Spaces.** Every space has its own journal and cursor. `space` is an API space id from
+`/account` (`personal` or the space uuid) and defaults to `personal`, so clients without space
+support keep working unchanged. A space without access (or a malformed id) → `404 not_found`;
+a missing space → `503 space_unavailable`. A cursor is only valid for the space it came from.
+
+**Cursor.** Opaque string. Clients store it (per space) and send it back; they must not parse it,
+compare it by order or compute with it. A cursor is per space, not per device.
 
 **Semantics.**
-- The page contains every item of the user that changed after `<c>`, **coalesced**: each id at most
+- The page contains every item of the space that changed after `<c>`, **coalesced**: each id at most
   once, ordered by the time of its latest change. Every `upsert` carries the item's state at the
   time of the request (not the state of the change); an item that no longer exists is a `delete`.
   An item created and deleted after `<c>` is reported as `delete` – clients must ignore deletes of
@@ -372,6 +420,9 @@ by order or compute with it. A cursor is per user, not per device.
     change implicitly, §4.2);
   - delete (to the trash, §8.3) → `delete` for the item **and every descendant**;
   - restore from the trash → `upsert` for every restored item, with the original ids;
+  - move to another space (§8.2) → `delete` for the item and every descendant in the **old**
+    space, `upsert` for each of them (same ids) in the **new** space. Apply the delete only after
+    draining the new space too, or match by id, if you want to keep local content;
   - siblings whose display name changes (§4.3) → `upsert`;
   - changes made directly on the server's disk, once the server noticed them (file watcher, best
     effort, plus a periodic rescan, by default every 15 minutes): create/delete/rename/move as above,
@@ -380,12 +431,13 @@ by order or compute with it. A cursor is per user, not per device.
   after hashing, `preview.thumbnail` becoming `true`.
 - `410 cursor_expired` when `<c>` is older than the journal retention (`SYNCLET_JOURNAL_RETENTION_DAYS`,
   default 30) or ahead of the server's head (e.g. after a server restore). The client then
-  re-enumerates from `root` (keeping ids it already knows: ids are stable) and continues with the
-  enumeration's cursor.
+  re-enumerates the space from its `rootId` (keeping ids it already knows: ids are stable) and
+  continues with the enumeration's cursor. (A space an administrator removed and restored is
+  re-indexed with new ids; clients dropped its state when it left `/account`, §3, and start over.)
 - Missing or malformed `cursor` (anything but 1–19 decimal digits) → `400 invalid_request`.
 
-**Recommended client loop:** on first sync take `account.cursor` (or the first `children` page's
-cursor), enumerate, then poll `/changes` (File Provider: on `enumerateChanges`; Windows: on a timer,
+**Recommended client loop:** per space, on first sync take the first `children` page's cursor of
+its `rootId` (for the personal space also `account.cursor`), enumerate, then poll `/changes?space=` (File Provider: on `enumerateChanges`; Windows: on a timer,
 e.g. every 30 s, and after local writes). To learn about remote changes without delay, keep the
 event stream open (§5a) and drain `/changes` on each event; poll only while it is disconnected.
 APNs pushes follow in Phase 3.
@@ -395,7 +447,8 @@ APNs pushes follow in Phase 3.
 ## 5a. Events
 
 `GET /sync/v1/events` is a long-lived [Server-Sent Events](https://html.spec.whatwg.org/multipage/server-sent-events.html)
-stream that tells a client **that** its journal advanced. It never carries the changes themselves.
+stream that tells a client **that** the journal of one of its spaces advanced, or that its space
+list changed. It never carries the changes themselves.
 
 - **Authentication:** device token (`Authorization: Bearer syd_…`) or web access token.
   `401 unauthorized` / `401 device_revoked` as for every other route.
@@ -404,10 +457,16 @@ stream that tells a client **that** its journal advanced. It never carries the c
 
   ```
   event: hello
-  data: {"cursor":"1234"}
+  data: {"cursor":"1234","cursors":{"personal":"1234","6f1c…":"87"}}
 
   event: changes
   data: {"space":"personal","cursor":"1240"}
+
+  event: changes
+  data: {"space":"6f1c…","cursor":"90"}
+
+  event: account
+  data: {}
 
   : ping
 
@@ -417,18 +476,21 @@ stream that tells a client **that** its journal advanced. It never carries the c
 
 | Event | `data` | Meaning |
 |---|---|---|
-| `hello` | `{ cursor }` | First event of every stream; `cursor` is the user's current head (as in `GET /account`). |
-| `changes` | `{ space, cursor }` | New journal entries of the user were committed. `space` is currently always `"personal"`; `cursor` is the head at the time of the event. Bursts are coalesced: at most one event per 250 ms. |
+| `hello` | `{ cursor, cursors }` | First event of every stream. `cursor` is the personal space's head (as in `GET /account`); `cursors` maps the API id of every readable space to its head (`personal` included). |
+| `changes` | `{ space, cursor }` | New journal entries of the space `space` (its API id: `personal` or the uuid) were committed; `cursor` is that space's head at the time of the event. Bursts are coalesced per space: at most one event per 250 ms. |
+| `account` | `{}` | The user's space list or rights changed (access granted or revoked, directly or through a group; a space renamed, created, removed, restored, gone missing or back). Reload `GET /account` (§3). The stream already follows the new set of spaces: `changes` arrive for added spaces and stop for removed ones. The `data` line is always `{}`; ignore its content. |
 | `bye` | `{ reason }` | The server ends the stream right after this event. `too_many_streams`: the user opened another stream (see limits). `unauthorized`: the token is no longer valid (device revoked, user disabled, access token expired); reconnecting returns the matching `401`. `server_shutdown`: the server is stopping; reconnect after a short delay (with backoff). Clients must accept unknown reasons. |
 
 - **Ping:** a comment line `: ping` every 25 s (`SYNCLET_EVENTS_PING_SECONDS` on the server).
   Before each ping the server re-checks the token; a revoked device or disabled user's stream ends
-  at the latest at the next ping. It also compares the user's cursor with the last one it sent on
-  the stream and sends `changes` first if they differ, so a change whose notification was lost
-  inside the server is signalled at the latest with the next ping. A client that has seen nothing (no event, no ping) for about
+  at the latest at the next ping. It also compares each space's cursor with the last one it sent on
+  the stream and sends `changes` first if they differ, and sends `account` when the set of readable
+  spaces changed, so a notification lost inside the server is signalled at the latest with the
+  next ping. A client that has seen nothing (no event, no ping) for about
   60 s should treat the connection as dead and reconnect.
-- **Wake-up only.** An event is a hint, never data: on `hello` and on every `changes`, drain
-  `GET /sync/v1/changes?cursor=<stored cursor>` as usual (§5) and store the resulting cursor. The
+- **Wake-up only.** An event is a hint, never data: on `hello` drain every space, on `changes`
+  drain `GET /sync/v1/changes?space=<space>&cursor=<stored cursor of that space>` as usual (§5) and
+  store the resulting cursor; on `account` reload `/account` and start or drop spaces accordingly. The
   event's `cursor` may only be used to skip a drain when it equals the stored cursor. Events can be
   lost (proxy restarts, server restarts, network changes); because the client drains once after
   every (re)connect, a lost event only delays a change, it never loses one. Changes made directly
@@ -600,9 +662,16 @@ covered by this contract). Authentication: `Authorization: Bearer`
 `PATCH /sync/v1/items/:id` `{ "name"?: "…", "parentId"?: "<folder id or root>" }`, optional
 `If-Match: "<etag>"` (or `*`) → `200 SyncItem`.
 
-- Files and folders can be renamed and moved anywhere in the user's tree. Moving a folder into
+- Files and folders can be renamed and moved anywhere within their space. Moving a folder into
   itself or its own subtree → `400 invalid_move`. A file as target → `400 invalid_request`; unknown
-  target → `404`.
+  target (or one in a space without access) → `404`.
+- **Moving to another space:** a `parentId` in another space (a folder there or its root, e.g.
+  `r_<uuid>` or `root`) moves the item with its whole subtree into that space. It needs write
+  access to **both** spaces (`403 forbidden` otherwise) and both must be available (`503`). The
+  server moves the entry on disk (a rename, or copy + delete when the spaces are on different file
+  systems); the item and every descendant **keep their ids**, versions and share links move along.
+  The response carries the new `spaceId`. `/changes` reports `delete` for the subtree in the old
+  space and `upsert` for it in the new one (§5). Copying is not offered by the API.
 - `If-Match` is compared with the item's `etag` as served (§4.4); mismatch → `412 conflict` with
   `item`.
 - Name collision at the target (name key equal to a sibling other than the item itself) →
@@ -611,26 +680,36 @@ covered by this contract). Authentication: `Authorization: Bearer`
   move this is a no-op (`200` with the unchanged item). On a move the stored name is replaced by
   the display name only if the stored name is taken at the target and the display name is free.
   Any other `name` is set as given.
-- `root` → `403 forbidden`.
+- Space roots (`root`, `r_…`) → `403 forbidden`.
 
 ### 8.3 Delete
 
-`DELETE /sync/v1/items/:id` → `204`. Files and folders (with their subtree) move to the user's
-**trash**; `/changes` reports a `delete` for each of them. `root` → `403 forbidden`; unknown or
-already deleted → `404`. Deletions made directly on the server's disk do not go to the trash.
+`DELETE /sync/v1/items/:id` → `204`. Files and folders (with their subtree) move to the **trash of
+their space**; `/changes` reports a `delete` for each of them. Space roots (`root`, `r_…`) →
+`403 forbidden`; unknown or already deleted → `404`; read access only → `403`; space missing → `503`. Deletions made directly on the server's disk do
+not go to the trash.
 
 ### 8.4 Trash (`/api/trash`)
 
 Not needed for syncing; offered for clients with a trash UI. Same tokens as the Sync API.
 
-- `GET /api/trash` → `TrashEntry[]`, most recently deleted first:
-  `{ id (uuid), itemId (sync id of the deleted item), type, name, originalPath, size, deletedAt,
-  expiresAt | null, itemCount }`. Entries expire after `SYNCLET_TRASH_RETENTION_DAYS` (default 30).
+- `GET /api/trash` → `TrashEntry[]` of every available space the user can **write** (spaces with
+  read access only and missing spaces are left out), most recently deleted first: `{ id (uuid), itemId (sync id of the deleted item), type, name, originalPath, size,
+  deletedAt, expiresAt | null, itemCount, spaceId?, deletedBy? }`. `originalPath` is relative to
+  the root of the entry's space `spaceId` (API id; absent = personal); `deletedBy` is the user id of
+  whoever deleted it (`null` when unknown, e.g. deleted on the server's disk). Entries expire after
+  `SYNCLET_TRASH_RETENTION_DAYS` (default 30).
 - `POST /api/trash/:id/restore` → `200 { item: SyncItem, restoredTo: string, renamed: boolean }` –
-  back to the original folder (or `root` if it is gone), under a free name if the original is
-  taken, with the original ids.
-- `DELETE /api/trash/:id` → `204` (delete forever, including versions). `DELETE /api/trash` →
-  `200 { removed: number }`.
+  back to the original folder of its space (or the space root if it is gone), under a free name if
+  the original is taken, with the original ids. Needs write access to the entry's space.
+- `DELETE /api/trash/:id` → `204` (delete forever, including versions; needs write access to the
+  entry's space).
+- Restore and delete forever: unknown entry, or an entry in a space without access → `404`; read
+  access only → `403 forbidden`; space missing → `503 space_unavailable`.
+- `DELETE /api/trash` → `200 { removed: number }` empties the trash of the **personal space only**;
+  `DELETE /api/trash?space=<id>` (`personal` or a space uuid) empties that space's trash instead.
+  Needs write access (read only → `403`, no access → `404`, missing → `503`). There is no "empty
+  every space" call.
 - `409 conflict` while an entry is being processed (e.g. right after the delete, while its content
   is still being moved into the trash store): retry after a moment.
 
@@ -667,6 +746,10 @@ highlight.js language for `kind = "code"`.
 
 ## 10. Versions (Phase 1c, optional)
 
+Versions exist in every space; listing and downloading need read access, restoring needs write
+(read access only → `403 forbidden`; no access to the item's space → `404`; space missing → `503`).
+A download token (`?dt=`) is only valid for the space the item was in when it was minted.
+
 Only when `GET /capabilities` reports `versions: true` (server setting `SYNCLET_VERSIONS=on`, off by
 default). When off, every route below answers `404 { code: "not_found", message: "versions disabled" }`
 for a well-formed file id, and no versions are created. Id validation comes first: a malformed id or
@@ -698,13 +781,19 @@ a folder id is `400 invalid_request` whether versions are on or off.
 
 ## 11. Search and recent files
 
-- `GET /sync/v1/search?q=<1..200 chars>&limit=<1..50, default 20>&offset=<0..10000>&folder=<folder id>`
+- `GET /sync/v1/search?q=<1..200 chars>&limit=<1..50, default 20>&offset=<0..10000>&folder=<folder id>&space=<id>`
   → `{ hits: { item: SyncItem, path: string, snippet: string | null, matched: "name"|"content"|"both" }[], total: number }`.
-  Names (case- and accent-insensitive, typo-tolerant) and extracted text (full text) of the user's
-  live items. `path` is the parent folder path relative to the user's folder (`""` = top level).
-  `snippet` highlights matches with `«…»`. `folder` restricts to a subtree. Empty `q` → `400`.
-- `GET /sync/v1/recent?limit=<1..200, default 50>` → `SyncItem[]`: live files, newest `modifiedAt`
-  first.
+  Names (case- and accent-insensitive, typo-tolerant) and extracted text (full text) of the live
+  items of every **available** space the user can read (missing spaces are skipped, not an error).
+  `item.spaceId` names the hit's space and `item.capabilities` follow the role there; `path` is the
+  parent folder path relative to that space's root (`""` = top level). `snippet` highlights
+  matches with `«…»`. Empty `q` → `400`.
+  - `space=<id>` (`personal` or a space uuid) restricts to one space: no access → `404`, missing → `503`.
+  - `folder=<id>` restricts to a subtree; a space root (`root`, `r_<uuid>`) means that whole space.
+    The folder must be readable (`404` otherwise); a file id → `400`. With both `folder` and `space`,
+    the folder must lie in that space (`400 invalid_request` otherwise).
+- `GET /sync/v1/recent?limit=<1..200, default 50>&space=<id>` → `SyncItem[]`: live files of every
+  readable, available space (or of `space`, same rules as for search), newest `modifiedAt` first.
 
 ---
 
@@ -720,8 +809,16 @@ route and not part of this contract. Item ids are Sync ids (`d_<uuid>` / `f_<uui
 { "id": "<uuid>", "itemId": "d_…", "itemName": "Photos", "itemType": "folder",
   "url": "/s/<token>", "hasPassword": true, "expiresAt": "2026-10-17T08:00:00.000Z",
   "allowDownload": true, "allowUpload": false, "createdAt": "…", "revokedAt": null,
-  "hits": 0, "itemTrashed": false }
+  "hits": 0, "itemTrashed": false, "spaceId": "personal" }
 ```
+
+- `spaceId` is the API id of the shared item's space (absent from older servers = personal).
+  Links can be created in any space the user can **write** (read access only → `403 forbidden`).
+- A link is only valid while its creator is enabled, the space is available and the creator still
+  has **write** access there; otherwise it answers `404` publicly like a revoked link. Regaining
+  write access re-activates it (unless it was revoked or expired meanwhile).
+- The list (`GET /shares`) holds only the caller's own links – other writers of the same space do
+  not see them – including links that are currently inactive because write access was lost.
 
 - `url` is relative (`/s/<token>`, resolve it against the server origin) unless the server has
   `SYNCLET_PUBLIC_URL` set, in which case it is absolute. It is always present for the owner and
@@ -736,26 +833,33 @@ Routes:
   (default true), allowUpload?: boolean (default false) }` → `201 ShareLink`. `password` is 1..1024
   characters; `expiresAt` is ISO 8601 with offset and must be in the future. Unknown fields,
   `allowUpload` on a file, an invalid `itemId` or a past `expiresAt` → `400 invalid_request`;
-  unknown or trashed item → `404 not_found`.
+  unknown or trashed item, or an item in a space without access → `404 not_found`; read access
+  only → `403 forbidden`; space missing → `503 space_unavailable`.
 - `GET /shares?itemId=<id>` → `ShareLink[]`, newest first: the user's links that are not revoked
   (`revokedAt` is therefore always `null`), including links of trashed items. `itemId` filters.
 - `PATCH /shares/:id` `{ password?, expiresAt?, allowDownload?, allowUpload? }` (same rules; omitted
   = unchanged, `null` removes password / expiry) → `200 ShareLink`. Unknown, foreign or revoked id,
   or a trashed item → `404 not_found`.
 - `POST /shares/:id/rotate` → `200 ShareLink` with a new `url`; the old link stops working at once.
-- `DELETE /shares/:id` → `204`, idempotent. The link is revoked: it disappears from the list and
-  from then on `PATCH`/rotate answer `404`. Unknown or foreign id → `404 not_found`.
+- `PATCH` and rotate need write access to the link's space now (read only → `403`, no access →
+  `404`, missing → `503`).
+- `DELETE /shares/:id` → `204`, idempotent, and always possible for the creator (also after losing
+  access to the space). The link is revoked: it disappears from the list and from then on
+  `PATCH`/rotate answer `404`. Unknown or foreign id → `404 not_found`.
 
 ---
 
 ## 12. Not part of this contract (yet)
 
 - APNs pushes – Phase 3 (`PUT /devices/current/push` is already accepted).
-- Office editing (`GET /sync/v1/items/:id/office`, `POST /sync/v1/items/new-office`), public share
+- Office editing (`GET /sync/v1/items/:id/office`, `POST /sync/v1/items/new-office`; works in every
+  space: write access opens an editing session, read access a view-only session whose saves are
+  rejected; creating a document needs write in the target folder's space), public share
   routes (`/api/public/shares`; the owner side is §11a), admin routes (`/api/admin/*`) and SSO (`/api/auth/oidc/*`,
   `/api/auth/forward`) are web-app routes and may change without notice to native clients.
 - Pinning ("always keep offline") is purely client-side.
-- Shared folders between users (Phase 5) will introduce capabilities other than all-`true`.
+- Administration of groups, team folders and external storages (`/api/admin/groups`,
+  `/api/admin/spaces`) is a web-app route; native clients only see its effects (`/account`, `account` events).
 
 ---
 
@@ -764,13 +868,14 @@ Routes:
 | Topic | Buro | Synclet |
 |---|---|---|
 | Base URL | `https://<slug>.<BASE_DOMAIN>/api/sync/v1`, tenant from subdomain/token | `<origin>/api/sync/v1`, no tenant |
-| Module/permission checks | `files.storage`, `documents:read/write`, `403 feature_disabled` | none; `canWrite` always true |
+| Module/permission checks | `files.storage`, `documents:read/write`, `403 feature_disabled` | per space: role `read`/`write` (capabilities, `SyncSpace.canWrite`); account `canWrite` always true |
 | Login | `POST /api/auth/login {email, password, subdomain?}`; app token response has `slug`, `organizationName` | `{login, password}`; app token response `{accessToken, refreshToken, user}`, then register the device against the same origin |
 | App login redirect | `buroapp://oauth`; windows loopback | `synclet://oauth` (`ios`, `android`, `macos`); loopback for `windows` **and** `linux`; `code_challenge_method=S256` must be sent |
 | Device token prefix | `bsd_` | `syd_` |
 | Device platforms | ios, android, macos, windows | + `linux`, `web` |
-| Account | real organization, areas by module | `organizationId = "<serverId>:<userId>"`, `organizationName = "Synclet"`, `slug` = username, only `personal` area, `quotaBytes = 0` |
-| Ids / kinds | `root`, areas (`personal`, `shared`, …), `c_`, `p_`, `o_`, `d_`, `f_`, `l_` | only `root`, `d_<uuid>`, `f_<uuid>`; `kind` ∈ root, folder, file; top-level items have `parentId: "root"` |
+| Account | real organization, areas by module | `organizationId = "<serverId>:<userId>"`, `organizationName = "Synclet"`, `slug` = username, only `personal` area, `quotaBytes = 0`; top-level `spaces` (personal, team folders as `shared`, `external`) with `status` |
+| Ids / kinds | `root`, areas (`personal`, `shared`, …), `c_`, `p_`, `o_`, `d_`, `f_`, `l_` | only `root`, `r_<uuid>` (space roots), `d_<uuid>`, `f_<uuid>`; `kind` ∈ root, folder, file; top-level items have their space's `rootId` as `parentId`; `SyncItem.spaceId` |
+| Spaces | areas, one journal per organization | one journal and cursor per space: `?space=` on `/cursor` and `/changes`, `hello.cursors`, `changes.space`, SSE `account`; moves between spaces keep ids; `503 space_unavailable` for unmounted storages |
 | Links | `l_…` items | none; share links are separate objects, §11a |
 | Folder etag | `t<updatedAtMs>` | opaque `t…`, stable across ancestor moves |
 | Version counting | API writes only | also counts edits made on the server's disk |
@@ -781,10 +886,10 @@ Routes:
 | Versions, capabilities | – | §10, §3 |
 | Search, recent | – | §11 |
 | Share links | – | §11a |
-| Changes | trigger-based journal, BIGSERIAL cursor | journal written in the same transaction as the change; per-user sequence; same `410` semantics |
+| Changes | trigger-based journal, BIGSERIAL cursor | journal written in the same transaction as the change; per-space sequence; same `410` semantics |
 | Subtree delete in `/changes` | folder only | folder **and** every descendant |
 | Name validation | Buro rules | Windows-safe rules of §4.3 (reserved names, trailing dot/space, 255 bytes), ignored names |
-| Error codes | – | adds `rate_limited`, `password_login_disabled`, `setup_done`, `insufficient_storage` (507) and web-only codes; drops `feature_disabled` |
+| Error codes | – | adds `rate_limited`, `password_login_disabled`, `setup_done`, `insufficient_storage` (507), `space_unavailable` (503) and web-only codes; drops `feature_disabled` |
 | Conflict copy name | `(Konflikt <device> …)` | `(Conflict <device> …)` (translatable) |
 
 ---
@@ -795,7 +900,9 @@ Routes:
 against a **live** server. Every test creates its data below one top-level folder
 `contract-<random>`, which the suite deletes at the end (and removes from the trash); the suite
 also revokes the device it registered and logs out the sessions it opened. It never touches
-anything else of the account.
+anything else of the account, with one exception: with an administrator's web token the spaces test
+creates and finally removes a team folder `contract-team-<random>` (the empty folder stays on the
+server's disk, see the suite's README).
 
 ```bash
 # against a running server, with an existing account

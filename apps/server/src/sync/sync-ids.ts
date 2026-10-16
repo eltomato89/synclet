@@ -1,7 +1,23 @@
 import type { ItemType } from '@prisma/client';
 
-export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+import { UUID } from '../common/ids';
+
+export { UUID };
 export const ROOT_ID = 'root';
+const SPACE_ROOT_PREFIX = 'r_';
+
+/** Sync id of the virtual root folder of a (non-personal) space. */
+export function spaceRootId(spaceId: string): string {
+  return SPACE_ROOT_PREFIX + spaceId;
+}
+
+/** The space uuid of a space root id `r_<uuid>`, else null. */
+export function parseRootId(raw: string | undefined | null): string | null {
+  const id = (raw ?? '').trim();
+  if (!id.startsWith(SPACE_ROOT_PREFIX)) return null;
+  const uuid = id.slice(SPACE_ROOT_PREFIX.length);
+  return UUID.test(uuid) ? uuid : null;
+}
 
 export type ParsedSyncId = { kind: 'root' } | { kind: 'folder' | 'file'; uuid: string };
 
