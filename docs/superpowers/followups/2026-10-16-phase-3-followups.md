@@ -96,3 +96,12 @@ Stand: 2026-10-16, Branch phase-3 (T1–T10).
   - Die Item-Anzahl der Share-Extension zählt übersprungene Links mit.
   - Die Aktivierungsregel erlaubt 50 Anhänge pro Extension-Item.
   - Ausgewählte Videos werden zweimal kopiert.
+
+## Re-Review der Final-Fixwelle (offen, bewusst nicht mehr behoben)
+
+- **N1 – Abbrechen hält die Share-Session:** Bricht man in der App einen Share-Upload ab, während andere Share-Aufgaben noch laufen, bleibt die App bis zu deren Ende (bis 6 h) an die Share-Session gebunden. Teilt man in diesem Fenster erneut, können beide Prozesse dieselbe Session-Kennung halten; im ungünstigsten Fall entsteht ein Duplikat „(2)“. Alternative für später: `invalidateAndCancel` im Abbruchpfad und Fortsetzen der übrigen Einträge durch den App-Uploader.
+- **N2 – verwaiste Chunk-Dateien:** Übernimmt ein Prozess einen Eintrag nach abgelaufener Lease, bleibt die Chunk-Datei des alten Besitzers (bis 16 MiB) in `uploads/chunks/` liegen. Ein Aufräumen alter Chunk-Dateien beim Start fehlt.
+- **N3/O1 – Share-Einträge ohne Aufgabe blockieren bis 6 h 10 min:** Wird die Share-Extension zwischen Claim und Start beendet oder wurde eine fertige Rückmeldung nie zugestellt (App aus dem App-Umschalter beendet), wartet der Eintrag bis zum Lease-Ende; danach kann ein bereits veröffentlichter Upload ein „(2)“ erzeugen. Verbesserung: beim App-Start drain-only an die Share-Session hängen, `allTasks` prüfen und ausstehende Rückmeldungen abholen.
+- **N4 – Cache nach Abmelden:** Ein Download, der beim Abmelden noch läuft, kann danach noch eine Datei in den Cache schreiben (kurzes Fenster).
+- **O2 – verspätete eigene Rückmeldung nach Neustart:** Wird eine fertige Aufgabe erst nach der Wiederherstellung zugestellt, kann sie als veraltet verworfen werden. Bei Checklisten-Schritt 9 beobachten.
+- **O3:** `handleBackgroundEvents` überschreibt einen noch offenen Completion-Handler, wenn ein zweiter vor Abschluss des ersten kommt.
