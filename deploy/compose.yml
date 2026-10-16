@@ -117,7 +117,7 @@ services:
       interval: 15s
       timeout: 5s
       retries: 20
-      start_period: 120s
+      start_period: 600s # first start builds fonts and themes and can take several minutes
     restart: unless-stopped
   postgres:
     image: postgres:16-alpine
