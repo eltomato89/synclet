@@ -1,4 +1,4 @@
-// Wire types of the Synclet Sync API v1 (compatible with Buro SYNC_API v1).
+// Wire types of the Synclet Sync API v1.
 // Types only – consumers use `import type`.
 
 export type SyncErrorCode =

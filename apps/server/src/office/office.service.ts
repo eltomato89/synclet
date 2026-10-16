@@ -15,7 +15,7 @@ import { SpaceAccess, type Role } from '../spaces/space-access.service';
 import { SpacesRepo } from '../spaces/spaces.repo';
 import { toSyncId, UUID } from '../sync/sync-ids';
 
-// Euro-Office (ONLYOFFICE-compatible Document Server) integration, ported from Buro:
+// Euro-Office (ONLYOFFICE-compatible Document Server) integration:
 // a signed editor config for the browser, plus file download and save callback for the
 // Document Server. The latter two have no user login; they carry short-lived file tokens signed
 // with OFFICE_JWT_SECRET, and the callback body must additionally be signed by the Document Server.

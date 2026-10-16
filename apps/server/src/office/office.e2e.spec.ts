@@ -526,7 +526,7 @@ describe('Office (Euro-Office) integration', () => {
 });
 
 describe('conflictName', () => {
-  it('formats the Buro conflict pattern in local time and keeps names short', () => {
+  it('formats the conflict pattern in local time and keeps names short', () => {
     expect(conflictName('Offer.docx', new Date(2026, 9, 4, 9, 30))).toBe('Offer (Konflikt Office 2026-10-04 09-30).docx');
     expect(conflictName('README', new Date(2026, 0, 1, 0, 5))).toBe('README (Konflikt Office 2026-01-01 00-05)');
     const long = conflictName(`${'ä'.repeat(200)}.xlsx`, new Date(2026, 0, 1));

@@ -3,7 +3,7 @@
 Portable core of the native Synclet clients: the macOS menu bar app and File Provider
 extension (`apps/macos`, Phase 2) and later iOS (Phase 3).
 
-Origin: ported from Buro's `BuroFileProviderKit` (`buro/apps/apple-shared/BuroFileProviderKit`) and adapted to the Synclet Sync API (`docs/sync/SYNC_API.md`, §13 lists the differences).
+Implements the Synclet Sync API (`docs/sync/SYNC_API.md`).
 
 ## Layout
 

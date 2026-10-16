@@ -409,4 +409,3 @@ Open Settings → Offline, or start the app with `-SyncletShowOffline`.
   - resume across `createItem` retries
   - whether macOS inherits pin policies
 
-  The follow-ups document lists them: [docs/superpowers/followups/2026-10-15-phase-2-followups.md](../../docs/superpowers/followups/2026-10-15-phase-2-followups.md).

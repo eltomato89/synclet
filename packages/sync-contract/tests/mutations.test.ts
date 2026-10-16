@@ -85,8 +85,8 @@ describe('PUT content (replace)', () => {
     const at = '2024-05-06T07:08:09.000Z';
     const res = await api.replace(f.id, '', '"v1"', { 'x-synclet-modified-at': at });
     expect(res.json()).toMatchObject({ size: 0, version: 2, modifiedAt: at });
-    const buro = await api.upload(box.id, 'buro.txt', 'b', { headers: { 'x-buro-modified-at': '2023-01-02T03:04:05.000Z' } });
-    expect(buro.json().modifiedAt).toBe('2023-01-02T03:04:05.000Z');
+    const legacy = await api.upload(box.id, 'legacy.txt', 'b', { headers: { 'x-buro-modified-at': '2023-01-02T03:04:05.000Z' } });
+    expect(legacy.json().modifiedAt).toBe('2023-01-02T03:04:05.000Z');
   });
 
   it('raw bodies must be application/octet-stream (400 invalid_request otherwise)', async () => {

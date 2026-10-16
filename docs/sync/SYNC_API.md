@@ -4,9 +4,7 @@ Binding contract between the Synclet server (`apps/server/src/sync/`, `uploads/`
 native clients (macOS File Provider, Windows Cloud Files, iOS File Provider, Android
 DocumentsProvider, Linux). All clients build on this document; change it only by agreement.
 
-- **Origin:** a port of Buro's `docs/sync/SYNC_API.md` (Sync API v1). Request and response shapes
-  are kept compatible so Buro's clients (`BuroFileProviderKit`, `Buro.Sync.*`) can be ported with
-  the changes listed in [§13](#13-differences-from-buro-sync_api-v1-porting-checklist).
+- **Compatibility:** a few legacy aliases are still accepted, see [§13](#13-compatibility-aliases).
 - **Machine-readable form:** [`packages/sync-contract/openapi.yaml`](../../packages/sync-contract/openapi.yaml)
   (OpenAPI 3.1). This prose document is normative; where the two disagree, the OpenAPI file is wrong.
 - **Executable form:** the conformance suite in [`packages/sync-contract`](../../packages/sync-contract)
@@ -74,7 +72,7 @@ tus upload whose completion hits `507` stays resumable: the uploaded bytes are k
 retryable with backoff, do not mark the item as failed for good, and tell the user that the server
 is out of space.
 
-Codes Buro had and Synclet never returns: `feature_disabled` (no modules).
+Code Synclet never returns: `feature_disabled` (no modules).
 
 ---
 
@@ -237,7 +235,7 @@ Spaces (Phase 4):
   renames anything into or out of it, only inside a space (moves *between* spaces are allowed, §8.2).
 - A client that meets an unknown `kind` shows the space as an ordinary folder.
 - Clients store sync state (cursor, pins) per space.
-- `areas` stays for Buro compatibility; new clients use `spaces`.
+- `areas` stays for backwards compatibility; new clients use `spaces`.
 
 - The client's domain / sync-root identifier is `organizationId`. `serverId` is generated once per
   installation, so two Synclet servers (or a reinstalled one) never share a domain.
@@ -269,7 +267,7 @@ SyncItem = {
   contentEtag: string | null,// "v<version>" for files; null for folders
   createdAt: string,         // when Synclet first indexed the item
   modifiedAt: string,        // content mtime on disk (files); folders: mtime when indexed/moved
-  documentId: string | null, // files: equal to id (Buro compatibility); null for folders
+  documentId: string | null, // files: equal to id (legacy compatibility); null for folders
   capabilities: { read: true, write: boolean, rename: boolean, move: boolean,
                   delete: boolean, addChildren: boolean },
   preview?: { kind: "image"|"pdf"|"text"|"markdown"|"code"|"video"|"audio"|"none",
@@ -557,7 +555,7 @@ list changed. It never carries the changes themselves.
 - Headers: `If-Match: "v<version>"` (**required**; quoted or bare; `W/` is stripped) or `If-Match: *`,
   `Content-Type: application/octet-stream` (**always**; anything else → `400 invalid_request`),
   `Content-Length` (above `maxUploadBytes` → `413 too_large` before any byte is read), optional
-  `X-Synclet-Modified-At: <ISO 8601>` (alias `X-Buro-Modified-At`; `X-Synclet-…` wins; invalid
+  `X-Synclet-Modified-At: <ISO 8601>` (legacy alias `X-Buro-Modified-At`; `X-Synclet-…` wins; invalid
   values are ignored). Empty bodies (0 bytes) are allowed.
 - Missing `If-Match` → `428 precondition_required`.
 - Success → `200 SyncItem` with `version + 1`, new `contentEtag`, `size`, `sha256`, and
@@ -574,7 +572,7 @@ list changed. It never carries the changes themselves.
 **Conflict handling (client):** on `412` the client keeps its local content as a **conflict copy**
 uploaded with `POST /items/upload?onConflict=rename` into the same folder, named
 `"<base> (Conflict <device name> <YYYY-MM-DD HH-mm>).<ext>"` (localized clients may translate
-"Conflict"; Buro used "Konflikt"), and then downloads the server state for the original item.
+"Conflict"; older clients used "Konflikt"), and then downloads the server state for the original item.
 
 ### 6.4 Upload (new file)
 
@@ -863,34 +861,15 @@ Routes:
 
 ---
 
-## 13. Differences from Buro SYNC_API v1 (porting checklist)
+## 13. Compatibility aliases
 
-| Topic | Buro | Synclet |
+Still accepted for older clients; new clients should use the primary form.
+
+| Primary | Legacy alias | Notes |
 |---|---|---|
-| Base URL | `https://<slug>.<BASE_DOMAIN>/api/sync/v1`, tenant from subdomain/token | `<origin>/api/sync/v1`, no tenant |
-| Module/permission checks | `files.storage`, `documents:read/write`, `403 feature_disabled` | per space: role `read`/`write` (capabilities, `SyncSpace.canWrite`); account `canWrite` always true |
-| Login | `POST /api/auth/login {email, password, subdomain?}`; app token response has `slug`, `organizationName` | `{login, password}`; app token response `{accessToken, refreshToken, user}`, then register the device against the same origin |
-| App login redirect | `buroapp://oauth`; windows loopback | `synclet://oauth` (`ios`, `android`, `macos`); loopback for `windows` **and** `linux`; `code_challenge_method=S256` must be sent |
-| Device token prefix | `bsd_` | `syd_` |
-| Device platforms | ios, android, macos, windows | + `linux`, `web` |
-| Account | real organization, areas by module | `organizationId = "<serverId>:<userId>"`, `organizationName = "Synclet"`, `slug` = username, only `personal` area, `quotaBytes = 0`; top-level `spaces` (personal, team folders as `shared`, `external`) with `status` |
-| Ids / kinds | `root`, areas (`personal`, `shared`, …), `c_`, `p_`, `o_`, `d_`, `f_`, `l_` | only `root`, `r_<uuid>` (space roots), `d_<uuid>`, `f_<uuid>`; `kind` ∈ root, folder, file; top-level items have their space's `rootId` as `parentId`; `SyncItem.spaceId` |
-| Spaces | areas, one journal per organization | one journal and cursor per space: `?space=` on `/cursor` and `/changes`, `hello.cursors`, `changes.space`, SSE `account`; moves between spaces keep ids; `503 space_unavailable` for unmounted storages |
-| Links | `l_…` items | none; share links are separate objects, §11a |
-| Folder etag | `t<updatedAtMs>` | opaque `t…`, stable across ancestor moves |
-| Version counting | API writes only | also counts edits made on the server's disk |
-| Modified-at header | `X-Buro-Modified-At` accepted, not evaluated | `X-Synclet-Modified-At` (alias `X-Buro-Modified-At`) **sets** the file's mtime / `modifiedAt` |
-| `If-Match: *` on PUT | – | allowed (never overwrites an unindexed host edit) |
-| Resumable upload | – | tus 1.0 at `/api/sync/v1/uploads` |
-| Thumbnails, text previews, download tokens | – | §6.2, §9; `SyncItem.preview` |
-| Versions, capabilities | – | §10, §3 |
-| Search, recent | – | §11 |
-| Share links | – | §11a |
-| Changes | trigger-based journal, BIGSERIAL cursor | journal written in the same transaction as the change; per-space sequence; same `410` semantics |
-| Subtree delete in `/changes` | folder only | folder **and** every descendant |
-| Name validation | Buro rules | Windows-safe rules of §4.3 (reserved names, trailing dot/space, 255 bytes), ignored names |
-| Error codes | – | adds `rate_limited`, `password_login_disabled`, `setup_done`, `insufficient_storage` (507), `space_unavailable` (503) and web-only codes; drops `feature_disabled` |
-| Conflict copy name | `(Konflikt <device> …)` | `(Conflict <device> …)` (translatable) |
+| `X-Synclet-Modified-At` header | `X-Buro-Modified-At` | the primary wins when both are sent |
+| `spaces` in `/account` | `areas` | `areas` is kept for backwards compatibility |
+| `documentId` on file items | equals `id` | `null` for folders |
 
 ---
 

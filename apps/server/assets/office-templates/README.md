@@ -8,4 +8,3 @@ Templates for "New -> Word/Excel/PowerPoint/..." in the file browser.
   image.
 - `new.txt`, `new.csv`: only a UTF-8 BOM (so that umlauts are detected correctly).
 
-Copied from the Buro project (same author).

@@ -112,7 +112,7 @@ describe('Sync API v1', () => {
     expect((await api('GET', `/items/${f.id}/children`)).json().code).toBe('invalid_request');
   });
 
-  it('accepts X-Buro-Modified-At as alias', async () => {
+  it('accepts X-Buro-Modified-At as legacy alias', async () => {
     const f = (await api('POST', '/items/upload?parentId=root&name=t.txt', { body: '1', headers: { 'x-buro-modified-at': '2023-01-02T03:04:05.000Z' } })).json();
     expect(f.modifiedAt).toBe('2023-01-02T03:04:05.000Z');
   });

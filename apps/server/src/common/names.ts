@@ -1,5 +1,5 @@
 // Name rules shared by API writes, the indexer and the serializer.
-// Display names follow Buro SYNC_API §4: unique per parent, case-insensitive, NFC.
+// Display names follow SYNC_API §4: unique per parent, case-insensitive, NFC.
 
 const FORBIDDEN = /[<>:"/\\|?*\u0000-\u001f]/;
 const RESERVED = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\..*)?$/i;

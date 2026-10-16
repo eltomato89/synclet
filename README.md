@@ -383,8 +383,12 @@ pnpm test
 
 ## Roadmap
 
-See the design spec: [docs/superpowers/specs/2026-10-15-synclet-design.md](docs/superpowers/specs/2026-10-15-synclet-design.md).
+Planned work is tracked in the issue tracker.
 
 ## License
 
-TBD by the maintainer before the first public release.
+[MIT](LICENSE) © 2026 Jens Köhler
+
+## Built with AI assistance
+
+This project was developed with the help of AI coding assistants (Anthropic's Claude) under human direction and review. Contributions and issues are welcome.
