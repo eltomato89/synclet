@@ -5,8 +5,9 @@ import { APP_CONFIG, AppConfig } from '../config';
 import { AppEvents } from '../common/events';
 import { isIgnored } from '../common/names';
 import { parentRel } from '../common/paths';
-import type { IndexUser } from '../common/types';
+import type { IndexSpace } from '../common/types';
 import { PrismaService } from '../prisma/prisma.service';
+import { SpacesRepo } from '../spaces/spaces.repo';
 import { DirDebouncer } from './debounce';
 import { IndexerService } from './indexer.service';
 
@@ -16,32 +17,38 @@ export interface RawEvent { type: 'create' | 'update' | 'delete'; path: string }
 export class WatcherService implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly log = new Logger(WatcherService.name);
   mode: 'active' | 'scan-only' | 'off' = 'off';
-  private users = new Map<string, IndexUser>(); // username -> user
+  private users = new Map<string, IndexSpace>(); // username -> personal space
   private sub?: AsyncSubscription;
   private readonly debouncer: DirDebouncer;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly indexer: IndexerService,
+    private readonly spaces: SpacesRepo,
     private readonly events: AppEvents,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {
     this.debouncer = new DirDebouncer(async (key, recursive) => {
       const [username, dir] = key.split('\u0000');
-      const user = this.users.get(username);
-      if (!user) return;
+      const space = this.users.get(username);
+      if (!space) return;
       try {
-        await this.indexer.reconcileDir(user, dir, { recursive });
+        await this.indexer.reconcileDir(space, dir, { recursive });
       } catch (e) {
         this.log.warn(`reconcile ${username}/${dir} failed: ${(e as Error).message}`);
       }
     });
-    this.events.on('user.created', (u) => { this.users.set(u.username, u); });
+    this.events.on('user.created', (u) => {
+      void this.spaces.personalFor(u.id).then((space) => { this.users.set(u.username, space); }, () => {});
+    });
   }
 
   async refreshUsers(): Promise<void> {
-    const rows = await this.prisma.user.findMany({ where: { disabledAt: null }, select: { id: true, username: true } });
-    this.users = new Map(rows.map((u) => [u.username, u]));
+    const rows = await this.prisma.space.findMany({
+      where: { kind: 'personal', user: { disabledAt: null } },
+      select: { id: true, kind: true, rootPath: true, name: true },
+    });
+    this.users = new Map(rows.map((r) => [r.name, this.spaces.toIndexSpace(r)]));
   }
 
   async onApplicationBootstrap() {

@@ -5,6 +5,7 @@ import { AuthGuard } from '../auth/auth.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthUser } from '../common/types';
 import { PrismaService } from '../prisma/prisma.service';
+import { SpacesRepo } from '../spaces/spaces.repo';
 import { SerializerService } from '../sync/serializer.service';
 import { SearchService } from './search.service';
 
@@ -20,31 +21,33 @@ export class SearchController {
     private readonly search: SearchService,
     private readonly prisma: PrismaService,
     private readonly serializer: SerializerService,
+    private readonly spaces: SpacesRepo,
   ) {}
 
   @Get('search')
-  find(
+  async find(
     @CurrentUser() user: AuthUser,
     @Query('q') q: string | undefined,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
     @Query('folder') folder?: string,
   ): Promise<SearchResponse> {
-    return this.search.search(user, typeof q === 'string' ? q : '', {
+    return this.search.search(await this.spaces.personalFor(user.id), typeof q === 'string' ? q : '', {
       limit: clamp(limit, 20, 1, 50),
       offset: clamp(offset, 0, 0, 10_000),
       folderId: typeof folder === 'string' && folder !== '' ? folder : undefined,
     });
   }
 
-  /** The caller's live files, most recently modified first (served by `Item_owner_mtime_idx`). */
+  /** The caller's live files, most recently modified first (served by `Item_space_mtime_idx`). */
   @Get('recent')
   async recent(@CurrentUser() user: AuthUser, @Query('limit') limit?: string): Promise<SyncItem[]> {
+    const space = await this.spaces.personalFor(user.id);
     const rows = await this.prisma.$queryRaw<Item[]>`
       SELECT * FROM "Item"
-      WHERE "ownerId" = ${user.id}::uuid AND "deletedAt" IS NULL AND type = 'file'
+      WHERE "spaceId" = ${space.id}::uuid AND "deletedAt" IS NULL AND type = 'file'
       ORDER BY mtime DESC, id
       LIMIT ${clamp(limit, 50, 1, 200)}`;
-    return this.serializer.toSyncItems(user, rows);
+    return this.serializer.toSyncItems(space, rows);
   }
 }

@@ -8,6 +8,7 @@ import type { AuthUser } from '../common/types';
 import { ZodPipe } from '../common/zod.pipe';
 import { FilesService } from '../files/files.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { SpacesRepo } from '../spaces/spaces.repo';
 import { SerializerService } from '../sync/serializer.service';
 import { parseSyncId } from '../sync/sync-ids';
 import { NEW_FORMATS, OfficeService } from './office.service';
@@ -27,6 +28,7 @@ export class OfficeController {
     private readonly files: FilesService,
     private readonly prisma: PrismaService,
     private readonly serializer: SerializerService,
+    private readonly spaces: SpacesRepo,
   ) {}
 
   /** Signed Document Server config for opening file `id` in the office editor. */
@@ -36,7 +38,8 @@ export class OfficeController {
     const parsed = parseSyncId(id);
     if (!parsed || parsed.kind === 'root') throw new SyncError('invalid_request', 'invalid id');
     if (parsed.kind !== 'file') throw new SyncError('invalid_request', 'not a file');
-    const item = await this.prisma.item.findFirst({ where: { id: parsed.uuid, ownerId: user.id, deletedAt: null, type: 'file' } });
+    const space = await this.spaces.personalFor(user.id);
+    const item = await this.prisma.item.findFirst({ where: { id: parsed.uuid, spaceId: space.id, deletedAt: null, type: 'file' } });
     if (!item) throw new SyncError('not_found');
     return this.office.editorConfig(user, item, lang);
   }
@@ -50,7 +53,8 @@ export class OfficeController {
     if (!parsed) throw new SyncError('invalid_request', 'invalid parentId');
     if (parsed.kind === 'file') throw new SyncError('invalid_request', 'parent is not a folder');
     const parentId = parsed.kind === 'root' ? null : parsed.uuid;
-    const row = await this.files.createFromTemplate(user, parentId, OfficeService.newFileName(body.name, format), this.office.templatePath(format));
-    return (await this.serializer.toSyncItems(user, [row]))[0];
+    const space = await this.spaces.personalFor(user.id);
+    const row = await this.files.createFromTemplate(space, parentId, OfficeService.newFileName(body.name, format), this.office.templatePath(format));
+    return (await this.serializer.toSyncItems(space, [row]))[0];
   }
 }

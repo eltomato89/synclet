@@ -40,13 +40,13 @@ export class SerializerService {
     };
   }
 
-  /** Serializes rows; display names are computed against all live siblings of each parent. */
-  async toSyncItems(user: IndexUser, rows: Item[]): Promise<SyncItem[]> {
+  /** Serializes rows of `space`; display names are computed against all live siblings of each parent. */
+  async toSyncItems(space: { id: string }, rows: Item[]): Promise<SyncItem[]> {
     const parents = [...new Set(rows.map((r) => r.parentId))];
     const display = new Map<string, string>();
     for (const parentId of parents) {
       const sibs = await this.prisma.item.findMany({
-        where: { ownerId: user.id, parentId, deletedAt: null },
+        where: { spaceId: space.id, parentId, deletedAt: null },
         select: { id: true, name: true, type: true, createdAt: true },
       });
       for (const [id, name] of assignDisplayNames(sibs)) display.set(id, name);

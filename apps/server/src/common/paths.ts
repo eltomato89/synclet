@@ -1,6 +1,7 @@
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
 
+/** Root folder of a personal space (only used to create and locate personal roots). */
 export function userRoot(dataRoot: string, username: string): string {
   return path.join(dataRoot, username);
 }
@@ -18,9 +19,8 @@ export function baseName(rel: string): string {
   return rel.slice(rel.lastIndexOf('/') + 1);
 }
 
-/** Absolute path of `rel` below the user root. Throws on traversal attempts. */
-export function absPath(dataRoot: string, username: string, rel: string): string {
-  const root = userRoot(dataRoot, username);
+/** Absolute path of `rel` below the space root `root`. Throws on traversal attempts. */
+export function absPath(root: string, rel: string): string {
   if (rel === '') return root;
   const segments = rel.split('/');
   if (rel.startsWith('/') || segments.some((s) => s === '' || s === '.' || s === '..')) {

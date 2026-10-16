@@ -6,12 +6,12 @@ import { APP_CONFIG, AppConfig } from '../config';
 import { AppEvents } from '../common/events';
 import { isTempName } from '../common/names';
 import { DerivativesGc } from '../derivatives/derivatives-gc';
-import { userRoot } from '../common/paths';
-import type { IndexUser } from '../common/types';
+import type { IndexSpace, IndexUser } from '../common/types';
 import { FilesService } from '../files/files.service';
 import { ItemStore } from '../journal/item-store';
 import { JournalService } from '../journal/journal.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { SpacesRepo } from '../spaces/spaces.repo';
 import { TrashService } from '../trash/trash.service';
 import { TusService } from '../uploads/tus';
 import { VersionsService } from '../versions/versions.service';
@@ -39,6 +39,7 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     private readonly uploads: TusService,
     private readonly derivativesGc: DerivativesGc,
     private readonly versions: VersionsService,
+    private readonly spaces: SpacesRepo,
     events: AppEvents,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {
@@ -68,8 +69,13 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
 
   onModuleDestroy() { this.timers.forEach(clearInterval); }
 
-  private users() {
-    return this.prisma.user.findMany({ where: { disabledAt: null }, select: { id: true, username: true } });
+  /** Personal spaces of enabled users, with their name (= username) for logs. */
+  private async personalSpaces(): Promise<Array<{ space: IndexSpace; name: string }>> {
+    const rows = await this.prisma.space.findMany({
+      where: { kind: 'personal', user: { disabledAt: null } },
+      select: { id: true, kind: true, rootPath: true, name: true },
+    });
+    return rows.map((r) => ({ space: this.spaces.toIndexSpace(r), name: r.name }));
   }
 
   /**
@@ -106,7 +112,7 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
         }
       }
     };
-    for (const u of await this.users().catch(() => [])) await walk(userRoot(this.config.dataRoot, u.username), u.username);
+    for (const { space, name } of await this.personalSpaces().catch(() => [])) await walk(space.rootPath, name);
     return removed;
   }
 
@@ -116,10 +122,10 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     try {
       await this.watcher.refreshUsers().catch((e) => this.log.warn(`user refresh failed: ${(e as Error).message}`));
       let allScanned = true;
-      for (const u of await this.users()) {
-        const stats = await this.indexer.fullScan(u).catch((e) => { this.log.error(`scan ${u.username}: ${(e as Error).message}`); return null; });
+      for (const { space, name } of await this.personalSpaces()) {
+        const stats = await this.indexer.fullScan(space).catch((e) => { this.log.error(`scan ${name}: ${(e as Error).message}`); return null; });
         if (!stats) { allScanned = false; continue; }
-        if (stats.created || stats.updated || stats.moved || stats.deleted) this.log.log(`scan ${u.username}: ${JSON.stringify(stats)}`);
+        if (stats.created || stats.updated || stats.moved || stats.deleted) this.log.log(`scan ${name}: ${JSON.stringify(stats)}`);
       }
       // A refused or failed scan (e.g. unmounted volume) must not count as a completed one.
       if (allScanned) this.lastFullScanAt = new Date();
@@ -131,13 +137,13 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
   }
 
   async scanUser(u: IndexUser): Promise<void> {
-    const stats = await this.indexer.fullScan(u).catch((e) => { this.log.error(`scan ${u.username}: ${(e as Error).message}`); return null; });
+    const stats = await this.spaces.personalFor(u.id).then((space) => this.indexer.fullScan(space)).catch((e) => { this.log.error(`scan ${u.username}: ${(e as Error).message}`); return null; });
     if (stats && (stats.created || stats.updated || stats.moved || stats.deleted)) this.log.log(`scan ${u.username}: ${JSON.stringify(stats)}`);
   }
 
   async maintenance(): Promise<void> {
     const before = new Date(Date.now() - this.config.journalRetentionDays * DAY);
-    for (const u of await this.users()) await this.journal.trim(u.id, before);
+    for (const { space } of await this.personalSpaces()) await this.journal.trim(space.id, before);
     await this.store.purgeTombstones(new Date(Date.now() - Math.max(this.config.tombstoneWindowSec * 1000, DAY)));
     // Expired or revoked web sessions are kept for a while (refresh-token reuse detection), then dropped.
     const sessionCutoff = new Date(Date.now() - SESSION_RETENTION_DAYS * DAY);

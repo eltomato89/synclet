@@ -44,7 +44,7 @@ describe('derivative worker (DB)', () => {
     const st = await statEntry(abs);
     return ctx.prisma.item.create({
       data: {
-        ownerId: owner.id, parentId: null, type: 'file', name, nameKey: nameKey(name), path: name,
+        spaceId: owner.id, parentId: null, type: 'file', name, nameKey: nameKey(name), path: name,
         size: st.size, mtime: st.mtime, ino: st.ino, dev: st.dev,
         contentHash: opts.hash ? sha256(await readFile(abs)) : null,
       },
@@ -57,13 +57,13 @@ describe('derivative worker (DB)', () => {
     it('sets missing hashes without bumping versions or journaling', async () => {
       const a = await addFile('a.txt', 'alpha');
       const b = await addFile('b.bin', Buffer.alloc(300_000, 1));
-      const scope = await ctx.prisma.syncScope.findUniqueOrThrow({ where: { userId: user.id } });
+      const scope = await ctx.prisma.syncScope.findUniqueOrThrow({ where: { spaceId: user.id } });
       expect(await hash.hashMissing()).toBe(2);
       const rows = await ctx.prisma.item.findMany({ orderBy: { name: 'asc' } });
       expect(rows.map((r) => r.contentHash)).toEqual([sha256('alpha'), sha256(Buffer.alloc(300_000, 1))]);
       expect(rows.map((r) => r.version)).toEqual([a.version, b.version]);
       expect(rows.map((r) => r.updatedAt)).toEqual([a.updatedAt, b.updatedAt]);
-      expect(await ctx.prisma.syncScope.findUniqueOrThrow({ where: { userId: user.id } })).toEqual(scope);
+      expect(await ctx.prisma.syncScope.findUniqueOrThrow({ where: { spaceId: user.id } })).toEqual(scope);
       expect(await ctx.prisma.fileChange.count()).toBe(0);
       expect(await hash.hashMissing()).toBe(0);
     });
@@ -105,7 +105,7 @@ describe('derivative worker (DB)', () => {
       await writeFile(path.join(ctx.config.dataRoot, 'alice', 'a.txt'), 'changed on the host');
       await writeFile(path.join(ctx.config.dataRoot, 'secret.txt'), 'outside');
       await symlink(path.join(ctx.config.dataRoot, 'secret.txt'), path.join(ctx.config.dataRoot, 'alice', 'link.txt'));
-      await ctx.prisma.item.create({ data: { ownerId: user.id, type: 'file', name: 'link.txt', nameKey: 'link.txt', path: 'link.txt', size: 7n, mtime: new Date() } });
+      await ctx.prisma.item.create({ data: { spaceId: user.id, type: 'file', name: 'link.txt', nameKey: 'link.txt', path: 'link.txt', size: 7n, mtime: new Date() } });
       expect(await hash.hashMissing()).toBe(0);
       expect((await ctx.prisma.item.findUniqueOrThrow({ where: { id: a.id } })).contentHash).toBeNull();
       expect(await ctx.prisma.item.count({ where: { contentHash: { not: null } } })).toBe(0);
@@ -202,7 +202,7 @@ describe('derivative worker (DB)', () => {
       await copyFile(path.join(FIXTURES, 'sample.png'), path.join(ctx.config.dataRoot, 'outside.png'));
       await symlink(path.join(ctx.config.dataRoot, 'outside.png'), path.join(ctx.config.dataRoot, 'alice', 'link.png'));
       const st = await statEntry(path.join(ctx.config.dataRoot, 'outside.png'));
-      await ctx.prisma.item.create({ data: { ownerId: user.id, type: 'file', name: 'link.png', nameKey: 'link.png', path: 'link.png', size: st.size, mtime: st.mtime, contentHash: fakeSha('e') } });
+      await ctx.prisma.item.create({ data: { spaceId: user.id, type: 'file', name: 'link.png', nameKey: 'link.png', path: 'link.png', size: st.size, mtime: st.mtime, contentHash: fakeSha('e') } });
       expect(await jobs.sourceFor(fakeSha('e'), 'thumb')).toBeNull();
     });
   });
@@ -226,7 +226,7 @@ describe('derivative worker (DB)', () => {
         .png({ palette: true, colours: 2, compressionLevel: 9 }).toFile(abs);
       const st = await statEntry(abs);
       const sha = fakeSha('f');
-      await ctx.prisma.item.create({ data: { ownerId: user.id, type: 'file', name: 'bomb.png', nameKey: 'bomb.png', path: 'bomb.png', size: st.size, mtime: st.mtime, ino: st.ino, dev: st.dev, contentHash: sha } });
+      await ctx.prisma.item.create({ data: { spaceId: user.id, type: 'file', name: 'bomb.png', nameKey: 'bomb.png', path: 'bomb.png', size: st.size, mtime: st.mtime, ino: st.ino, dev: st.dev, contentHash: sha } });
       await addFile('ok.png', { fixture: 'sample.png' }, { hash: true });
       await runner.tick();
       expect(await job(sha)).toMatchObject({ status: 'failed', attempts: 1 });
@@ -281,7 +281,7 @@ describe('derivative worker (DB)', () => {
       clock += 60_000;
       await runner.tick();
       expect(enqueue).toHaveBeenCalledTimes(2); // 5 min elapsed
-      await ctx.prisma.syncScope.update({ where: { userId: user.id }, data: { seq: { increment: 1 } } }); // server journaled a change
+      await ctx.prisma.syncScope.update({ where: { spaceId: user.id }, data: { seq: { increment: 1 } } }); // server journaled a change
       await runner.tick();
       expect(enqueue).toHaveBeenCalledTimes(3);
       await runner.tick();
@@ -333,7 +333,7 @@ describe('derivative worker (DB)', () => {
       for (const size of [256, 1024] as const) await store.writeAtomic(store.pathFor(intact.contentHash!, 'thumb', size), Buffer.from('x'));
       await store.writeAtomic(store.pathFor(half, 'thumb', 256), Buffer.from('x')); // 1024 missing
       await ctx.prisma.trashEntry.create({ // keeps `half` referenced
-        data: { ownerId: user.id, itemId: '00000000-0000-4000-8000-000000000003', type: 'file', name: 'h.png', originalPath: 'h.png', size: 1n, storePath: '/z',
+        data: { spaceId: user.id, itemId: '00000000-0000-4000-8000-000000000003', type: 'file', name: 'h.png', originalPath: 'h.png', size: 1n, storePath: '/z',
           manifest: [{ id: 'h', type: 'file', path: 'h.png', name: 'h.png', mtime: new Date().toISOString(), size: 1, contentHash: half }] },
       });
       const res = await ctx.app.get(DerivativesGc).run();
@@ -349,12 +349,12 @@ describe('derivative worker (DB)', () => {
       const trashed = fakeSha('b'); const inFlight = fakeSha('c'); const dead = fakeSha('d'); const oldFormat = fakeSha('e');
       await ctx.prisma.trashEntry.create({
         data: {
-          ownerId: user.id, itemId: '00000000-0000-4000-8000-000000000001', type: 'folder', name: 'Old', originalPath: 'Old', size: 1n, storePath: '/x',
+          spaceId: user.id, itemId: '00000000-0000-4000-8000-000000000001', type: 'folder', name: 'Old', originalPath: 'Old', size: 1n, storePath: '/x',
           manifest: [{ id: 'x', type: 'folder', path: 'Old' }, { id: 'y', type: 'file', path: 'Old/a.png', name: 'a.png', mtime: new Date().toISOString(), size: 1, contentHash: trashed }],
         },
       });
       await ctx.prisma.trashEntry.create({
-        data: { ownerId: user.id, itemId: '00000000-0000-4000-8000-000000000002', type: 'file', name: 'o', originalPath: 'o', size: 1n, storePath: '/y', manifest: [{ id: 'z', type: 'file', path: oldFormat }] },
+        data: { spaceId: user.id, itemId: '00000000-0000-4000-8000-000000000002', type: 'file', name: 'o', originalPath: 'o', size: 1n, storePath: '/y', manifest: [{ id: 'z', type: 'file', path: oldFormat }] },
       });
       await ctx.prisma.derivativeJob.createMany({
         data: [

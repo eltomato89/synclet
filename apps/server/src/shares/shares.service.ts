@@ -7,12 +7,13 @@ import type { Readable } from 'node:stream';
 import { hashToken, randomToken } from '../auth/crypto';
 import { assignDisplayNames } from '../common/names';
 import { SyncError } from '../common/sync-error';
-import type { IndexUser } from '../common/types';
+import type { IndexSpace, IndexUser } from '../common/types';
 import { APP_CONFIG, AppConfig } from '../config';
 import { DerivativesGc } from '../derivatives/derivatives-gc';
 import { DerivedStore } from '../derivatives/derived-store';
 import { FilesService } from '../files/files.service';
 import { ItemStore } from '../journal/item-store';
+import { SpacesRepo } from '../spaces/spaces.repo';
 import { PrismaService } from '../prisma/prisma.service';
 import { openNoFollow } from '../sync/http-content';
 import { mimeFor } from '../sync/serializer.service';
@@ -44,6 +45,7 @@ export class SharesService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly spaces: SpacesRepo,
     private readonly auth: ShareAuth,
     private readonly files: FilesService,
     private readonly store: ItemStore,
@@ -71,8 +73,8 @@ export class SharesService {
     };
   }
 
-  private async liveItem(user: IndexUser, id: string): Promise<Item> {
-    const item = await this.prisma.item.findFirst({ where: { id, ownerId: user.id, deletedAt: null } });
+  private async liveItem(space: { id: string }, id: string): Promise<Item> {
+    const item = await this.prisma.item.findFirst({ where: { id, spaceId: space.id, deletedAt: null } });
     if (!item) throw new SyncError('not_found');
     return item;
   }
@@ -82,7 +84,7 @@ export class SharesService {
     if (!UUID.test(id)) throw new SyncError('not_found');
     const share = await this.prisma.shareLink.findFirst({ where: { id, ownerId: user.id, revokedAt: null } });
     if (!share) throw new SyncError('not_found');
-    return { share, item: await this.liveItem(user, share.itemId) };
+    return { share, item: await this.liveItem({ id: share.spaceId }, share.itemId) };
   }
 
   private static checkUpload(item: Item, allowUpload: boolean | undefined) {
@@ -96,13 +98,14 @@ export class SharesService {
   async create(user: IndexUser, input: CreateShareInput): Promise<ShareLinkWire> {
     const itemId = parseItemId(input.itemId);
     if (!itemId) throw new SyncError('invalid_request', 'invalid itemId');
-    const item = await this.liveItem(user, itemId);
+    const space: IndexSpace = await this.spaces.personalFor(user.id);
+    const item = await this.liveItem(space, itemId);
     SharesService.checkUpload(item, input.allowUpload);
     const id = randomUUID();
     const token = newToken();
     const share = await this.prisma.shareLink.create({
       data: {
-        id, ownerId: user.id, itemId: item.id, tokenHash: hashToken(token), tokenEnc: await this.auth.sealToken(token, id),
+        id, ownerId: user.id, spaceId: item.spaceId, itemId: item.id, tokenHash: hashToken(token), tokenEnc: await this.auth.sealToken(token, id),
         passwordHash: input.password ? await SharesService.hashPassword(input.password) : null,
         expiresAt: futureDate(input.expiresAt) ?? null,
         allowDownload: input.allowDownload ?? true, allowUpload: input.allowUpload ?? false,
@@ -112,19 +115,19 @@ export class SharesService {
   }
 
   /**
-   * Items of `ids` (owned by `ownerId`) that are in the trash: the root of a trash entry or any
+   * Items of `ids` (in space `spaceId`) that are in the trash: the root of a trash entry or any
    * node of its manifest. Name and type as recorded at delete time.
    */
-  private async trashedItems(ownerId: string, ids: string[]): Promise<Map<string, Pick<Item, 'id' | 'name' | 'type'>>> {
+  private async trashedItems(spaceId: string, ids: string[]): Promise<Map<string, Pick<Item, 'id' | 'name' | 'type'>>> {
     if (!ids.length) return new Map();
     const rows = await this.prisma.$queryRaw<{ id: string; name: string | null; path: string | null; type: string }[]>`
       SELECT t."itemId"::text AS id, t.name, NULL AS path, t.type::text AS type
-      FROM "TrashEntry" t WHERE t."ownerId" = ${ownerId}::uuid AND t."itemId"::text = ANY(${ids}::text[])
+      FROM "TrashEntry" t WHERE t."spaceId" = ${spaceId}::uuid AND t."itemId"::text = ANY(${ids}::text[])
       UNION ALL
       SELECT e->>'id' AS id, e->>'name' AS name, e->>'path' AS path, e->>'type' AS type
       FROM "TrashEntry" t
       CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(t.manifest) = 'array' THEN t.manifest ELSE '[]'::jsonb END) e
-      WHERE t."ownerId" = ${ownerId}::uuid AND jsonb_typeof(e) = 'object' AND e->>'id' = ANY(${ids}::text[])`;
+      WHERE t."spaceId" = ${spaceId}::uuid AND jsonb_typeof(e) = 'object' AND e->>'id' = ANY(${ids}::text[])`;
     const out = new Map<string, Pick<Item, 'id' | 'name' | 'type'>>();
     for (const r of rows) {
       if (out.has(r.id) || (r.type !== 'file' && r.type !== 'folder')) continue;
@@ -149,20 +152,26 @@ export class SharesService {
       where: { ownerId: user.id, revokedAt: null, ...(itemId ? { itemId } : {}) },
       orderBy: { createdAt: 'desc' },
     });
-    return this.wires(user.id, shares, true);
+    return this.wires(shares, true);
   }
 
-  /** Wire form of shares of one owner; shares of items deleted for good are left out. */
-  private async wires(ownerId: string, shares: ShareLink[], withUrl: boolean): Promise<ShareLinkWire[]> {
-    const items = await this.prisma.item.findMany({ where: { id: { in: [...new Set(shares.map((s) => s.itemId))] }, ownerId, deletedAt: null } });
-    const byId = new Map(items.map((i) => [i.id, i]));
-    const trashed = await this.trashedItems(ownerId, [...new Set(shares.filter((s) => !byId.has(s.itemId)).map((s) => s.itemId))]);
+  /** Wire form of shares; shares of items deleted for good are left out. Items are looked up in each share's space. */
+  private async wires(shares: ShareLink[], withUrl: boolean): Promise<ShareLinkWire[]> {
+    const key = (spaceId: string, itemId: string) => `${spaceId}\u0000${itemId}`;
+    const items = await this.prisma.item.findMany({
+      where: { id: { in: [...new Set(shares.map((s) => s.itemId))] }, spaceId: { in: [...new Set(shares.map((s) => s.spaceId))] }, deletedAt: null },
+    });
+    const live = new Map(items.map((i) => [key(i.spaceId, i.id), i]));
+    const missing = new Map<string, string[]>(); // spaceId -> item ids not live
+    for (const s of shares) if (!live.has(key(s.spaceId, s.itemId))) missing.set(s.spaceId, [...new Set([...(missing.get(s.spaceId) ?? []), s.itemId])]);
+    const trashed = new Map<string, Pick<Item, 'id' | 'name' | 'type'>>();
+    for (const [spaceId, ids] of missing) for (const [id, t] of await this.trashedItems(spaceId, ids)) trashed.set(key(spaceId, id), t);
     const out: ShareLinkWire[] = [];
     for (const s of shares) {
-      const item = byId.get(s.itemId);
+      const item = live.get(key(s.spaceId, s.itemId));
       if (item) out.push(await this.toWire(s, item, false, withUrl));
       else {
-        const t = trashed.get(s.itemId);
+        const t = trashed.get(key(s.spaceId, s.itemId));
         if (t) out.push(await this.toWire(s, t, true, withUrl));
       }
     }
@@ -189,7 +198,7 @@ export class SharesService {
     const byOwner = new Map<string, ShareLink[]>();
     for (const s of shares) byOwner.set(s.ownerId, [...(byOwner.get(s.ownerId) ?? []), s]);
     const wire = new Map<string, ShareLinkWire>();
-    for (const [ownerId, list] of byOwner) for (const w of await this.wires(ownerId, list, ownerId === admin.id)) wire.set(w.id, w);
+    for (const [ownerId, list] of byOwner) for (const w of await this.wires(list, ownerId === admin.id)) wire.set(w.id, w);
     const out: AdminShareWire[] = [];
     for (const s of shares) {
       const w = wire.get(s.id);
@@ -244,7 +253,7 @@ export class SharesService {
     if (root.type === 'folder') {
       const [row] = await this.prisma.$queryRaw<{ total: bigint | null }[]>`
         SELECT SUM(size)::bigint AS total FROM "Item"
-        WHERE "ownerId" = ${share.ownerId}::uuid AND "deletedAt" IS NULL AND type = 'file'
+        WHERE "spaceId" = ${share.spaceId}::uuid AND "deletedAt" IS NULL AND type = 'file'
         AND left(path, char_length(${root.path}) + 1) = ${root.path} || '/'`;
       size = Number(row?.total ?? 0n);
     }
@@ -282,7 +291,7 @@ export class SharesService {
     if (rs.root.type !== 'folder') throw new SyncError('invalid_request', 'not a folder share');
     const folder = await this.auth.target(rs, rawFolder, 'folder');
     await this.auth.realPathOf(rs, folder); // a folder replaced by a symlink on disk is not browsable
-    const rows = await this.prisma.item.findMany({ where: { ownerId: rs.share.ownerId, parentId: folder.id, deletedAt: null } });
+    const rows = await this.prisma.item.findMany({ where: { spaceId: rs.share.spaceId, parentId: folder.id, deletedAt: null } });
     const names = assignDisplayNames(rows);
     const thumbs = await this.thumbShas(rows);
     return rows
@@ -290,9 +299,9 @@ export class SharesService {
       .sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'folder' ? -1 : 1));
   }
 
-  /** Real path of an in-scope file, opened through FilesService (owner, live, realpath in the user root). */
+  /** Real path of an in-scope file, opened through FilesService (share's space, live, realpath in the space root). */
   async fileForRead(rs: ResolvedShare, item: Item): Promise<{ item: Item; abs: string }> {
-    const { item: row, abs } = await this.files.openRead(rs.owner, item.id);
+    const { item: row, abs } = await this.files.openRead(rs.space, item.id);
     const inside = await this.auth.realPathOf(rs, row);
     if (inside !== abs) throw new SyncError('not_found');
     return { item: row, abs };
@@ -317,7 +326,7 @@ export class SharesService {
   async zipEntries(rs: ResolvedShare, folder: Item): Promise<ZipEntrySource[]> {
     const realRoot = await this.auth.realRoot(rs);
     await this.auth.realPathOf(rs, folder, realRoot);
-    const rows = (await this.store.liveDescendants(this.prisma, rs.share.ownerId, folder.path))
+    const rows = (await this.store.liveDescendants(this.prisma, rs.share.spaceId, folder.path))
       .filter((r) => ShareAuth.inScope(rs, r)) // re-checked per row, defense in depth
       .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
     const base = folder.path.length + 1;
@@ -335,7 +344,7 @@ export class SharesService {
 
   /** External upload into a folder of an upload-enabled folder share; never overwrites. */
   async upload(rs: ResolvedShare, folder: Item, name: string, body: Readable): Promise<PublicShareEntry> {
-    const row = await this.files.upload(rs.owner, folder.id, name, body, { onConflict: 'rename' });
+    const row = await this.files.upload(rs.space, folder.id, name, body, { onConflict: 'rename' });
     return this.entry(row, row.name, new Set());
   }
 

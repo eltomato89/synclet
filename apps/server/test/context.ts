@@ -7,7 +7,7 @@ import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/bootstrap';
 import { AppConfig, loadConfig } from '../src/config';
 import { PrismaService } from '../src/prisma/prisma.service';
-import type { IndexUser } from '../src/common/types';
+import type { IndexSpace, IndexUser } from '../src/common/types';
 
 export interface TestContext {
   app: NestFastifyApplication;
@@ -18,7 +18,7 @@ export interface TestContext {
 
 export async function resetDb(prisma: PrismaService) {
   await prisma.$executeRawUnsafe(
-    'TRUNCATE "FileVersion","AppAuthCode","AuthSettings","DerivativeJob","ItemText","ShareLink","FileChange","SyncScope","TrashEntry","Item","SyncDevice","Session","Identity","User","ServerConfig" CASCADE',
+    'TRUNCATE "FileVersion","AppAuthCode","AuthSettings","DerivativeJob","ItemText","ShareLink","FileChange","SyncScope","TrashEntry","Item","SpaceMember","GroupMember","Group","Space","SyncDevice","Session","Identity","User","ServerConfig" CASCADE',
   );
 }
 
@@ -43,12 +43,19 @@ export async function createTestApp(overrides: Partial<AppConfig> = {}): Promise
   };
 }
 
-/** Inserts a user directly (no auth module needed) and creates its folder. */
+/** Inserts a user directly (no auth module needed) with its personal space, and creates its folder. */
 export async function createTestUser(ctx: TestContext, username = 'alice'): Promise<IndexUser> {
   const user = await ctx.prisma.user.create({ data: { username, displayName: username } });
-  await ctx.prisma.syncScope.create({ data: { userId: user.id } });
-  await mkdir(path.join(ctx.config.dataRoot, username), { recursive: true });
+  const space = personalSpace(ctx, { id: user.id, username });
+  await ctx.prisma.space.create({ data: { id: user.id, kind: 'personal', name: username, rootPath: space.rootPath, userId: user.id } });
+  await ctx.prisma.syncScope.create({ data: { spaceId: user.id } });
+  await mkdir(space.rootPath, { recursive: true });
   return { id: user.id, username };
+}
+
+/** The personal space of a test user (id = user id, root = <dataRoot>/<username>). */
+export function personalSpace(ctx: TestContext, user: IndexUser): IndexSpace {
+  return { id: user.id, kind: 'personal', rootPath: path.join(ctx.config.dataRoot, user.username) };
 }
 
 let caseSensitive: boolean | undefined;

@@ -1,6 +1,6 @@
 import { symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { createTestApp, itIfCaseSensitive, TestContext } from '../../test/context';
+import { createTestApp, itIfCaseSensitive, personalSpace, TestContext } from '../../test/context';
 import { FilesService } from '../files/files.service';
 import { ItemStore } from '../journal/item-store';
 import { IndexerService } from '../indexer/indexer.service';
@@ -96,7 +96,7 @@ describe('Sync API v1', () => {
   it('changes include external edits picked up by the indexer', async () => {
     const c0 = (await api('GET', '/cursor')).json().cursor;
     await writeFile(path.join(ctx.config.dataRoot, 'jens', 'external.md'), '# hi');
-    await ctx.app.get(IndexerService).fullScan({ id: userId, username: 'jens' });
+    await ctx.app.get(IndexerService).fullScan(personalSpace(ctx, { id: userId, username: 'jens' }));
     const page = (await api('GET', `/changes?cursor=${c0}`)).json();
     expect(page.changes).toEqual([expect.objectContaining({ op: 'upsert', item: expect.objectContaining({ name: 'external.md', parentId: 'root' }) })]);
   });
@@ -176,7 +176,7 @@ describe('Sync API v1', () => {
   itIfCaseSensitive('PATCH with the display name keeps the stored name, unless only the display name is free at the target', async () => {
     await writeFile(path.join(ctx.config.dataRoot, 'jens', 'a.txt'), '1');
     await writeFile(path.join(ctx.config.dataRoot, 'jens', 'A.txt'), '2');
-    await ctx.app.get(IndexerService).fullScan({ id: userId, username: 'jens' });
+    await ctx.app.get(IndexerService).fullScan(personalSpace(ctx, { id: userId, username: 'jens' }));
     const kids = (await api('GET', '/items/root/children')).json().items as { id: string; name: string }[];
     const dup = kids.find((k) => / \(2\)\.txt$/.test(k.name))!;
     const storedName = (await ctx.prisma.item.findUniqueOrThrow({ where: { id: dup.id.slice(2) } })).name;

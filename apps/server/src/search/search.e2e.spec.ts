@@ -102,12 +102,12 @@ describe('search, recent and text preview', () => {
       // SearchService (expression + partial predicate of the index) must be planned on the trigram index.
       const owner = await ctx.prisma.user.findFirstOrThrow({ where: { username: 'jens' } });
       await ctx.prisma.$executeRaw`
-        INSERT INTO "Item" (id, "ownerId", type, name, "nameKey", path, mtime, "updatedAt")
+        INSERT INTO "Item" (id, "spaceId", type, name, "nameKey", path, mtime, "updatedAt")
         SELECT gen_random_uuid(), ${owner.id}::uuid, 'file', n, lower(n), n, now(), now()
         FROM (SELECT 'file-' || g || '-' || md5(g::text) || '.txt' AS n FROM generate_series(1, 5000) g) s`;
       await ctx.prisma.$executeRawUnsafe('ANALYZE "Item"');
       const plan = await ctx.prisma.$queryRawUnsafe<{ 'QUERY PLAN': string }[]>(
-        `EXPLAIN SELECT id FROM "Item" i WHERE i."ownerId" = $1::uuid AND i."deletedAt" IS NULL
+        `EXPLAIN SELECT id FROM "Item" i WHERE i."spaceId" = $1::uuid AND i."deletedAt" IS NULL
            AND (synclet_unaccent(lower(i.name)) % synclet_unaccent(lower($2))
              OR synclet_unaccent(lower($2)) <% synclet_unaccent(lower(i.name))
              OR synclet_unaccent(lower(i.name)) LIKE '%' || synclet_unaccent(lower($2)) || '%')`,

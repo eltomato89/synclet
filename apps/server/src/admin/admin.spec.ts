@@ -56,8 +56,8 @@ describe('admin backend', () => {
 
   it('lists users with usage, devices, identities, lastLoginAt', async () => {
     const { user } = await mkUser('anna');
-    await ctx.prisma.item.create({ data: { ownerId: user.id, type: 'file', name: 'a', nameKey: 'a', path: 'a', size: 1500n, mtime: new Date() } });
-    await ctx.prisma.item.create({ data: { ownerId: user.id, type: 'file', name: 'b', nameKey: 'b', path: 'b', size: 99n, mtime: new Date(), deletedAt: new Date() } });
+    await ctx.prisma.item.create({ data: { spaceId: user.id, type: 'file', name: 'a', nameKey: 'a', path: 'a', size: 1500n, mtime: new Date() } });
+    await ctx.prisma.item.create({ data: { spaceId: user.id, type: 'file', name: 'b', nameKey: 'b', path: 'b', size: 99n, mtime: new Date(), deletedAt: new Date() } });
     await ctx.app.get(DevicesService).register({ id: user.id, username: 'anna', role: 'user', deviceId: null }, { name: 'Mac', platform: 'macos', appVersion: '1' });
     const list = (await call('GET', '/admin/users')).json();
     const anna = list.find((u: { username: string }) => u.username === 'anna');
@@ -109,7 +109,7 @@ describe('admin backend', () => {
   it('delete keeps the folder and revokes sessions, devices and shares', async () => {
     const { user, token } = await mkUser('anna');
     await writeFile(path.join(ctx.config.dataRoot, 'anna', 'keep.txt'), 'x');
-    const item = await ctx.prisma.item.create({ data: { ownerId: user.id, type: 'file', name: 'k', nameKey: 'k', path: 'k', mtime: new Date() } });
+    const item = await ctx.prisma.item.create({ data: { spaceId: user.id, type: 'file', name: 'k', nameKey: 'k', path: 'k', mtime: new Date() } });
     const share = await ctx.app.get(SharesService).create({ id: user.id, username: 'anna' }, { itemId: item.id });
     const { device, token: dtoken } = await ctx.app.get(DevicesService).register({ id: user.id, username: 'anna', role: 'user', deviceId: null }, { name: 'Mac', platform: 'macos', appVersion: '1' });
     expect((await call('GET', '/auth/me', token)).statusCode).toBe(200);
@@ -200,7 +200,7 @@ describe('admin backend', () => {
 
   describe('shares', () => {
     async function mkShare(userId: string, username: string, name: string, expiresAt?: Date) {
-      const item = await ctx.prisma.item.create({ data: { ownerId: userId, type: 'file', name, nameKey: name, path: name, mtime: new Date() } });
+      const item = await ctx.prisma.item.create({ data: { spaceId: userId, type: 'file', name, nameKey: name, path: name, mtime: new Date() } });
       const share = await ctx.app.get(SharesService).create({ id: userId, username }, { itemId: item.id });
       if (expiresAt) await ctx.prisma.shareLink.update({ where: { id: share.id }, data: { expiresAt } });
       return share;

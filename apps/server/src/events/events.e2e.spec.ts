@@ -137,7 +137,7 @@ describe('GET /api/sync/v1/events (SSE)', () => {
     const journal = ctx.app.get(JournalService);
     for (let i = 0; i < 5; i++) {
       await ctx.prisma.$transaction(async (tx) => {
-        await journal.lockUser(tx, userId);
+        await journal.lockSpace(tx, userId);
         await journal.record(tx, userId, [{ id: `00000000-0000-4000-8000-00000000000${i}`, type: 'folder' }], 'upsert');
       });
     }
@@ -169,7 +169,7 @@ describe('GET /api/sync/v1/events (SSE)', () => {
     const s = await opened();
     const journal = ctx.app.get(JournalService);
     await expect(ctx.prisma.$transaction(async (tx) => {
-      await journal.lockUser(tx, userId);
+      await journal.lockSpace(tx, userId);
       await journal.record(tx, userId, [{ id: '00000000-0000-4000-8000-000000000001', type: 'folder' }], 'upsert');
       throw new Error('rollback');
     })).rejects.toThrow('rollback');
