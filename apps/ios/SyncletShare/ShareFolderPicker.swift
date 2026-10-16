@@ -1,12 +1,12 @@
 import SwiftUI
 import SyncletKit
 
-/// Folder choice of the Share extension over the Sync API: starts at „Meine Dateien“ – or,
+/// Folder choice of the Share extension over the Sync API: starts at "My Files" – or,
 /// when the account has team folders or storages with write access, at the list of those
-/// spaces („Bereiche“). „Hier hochladen“ picks the folder shown.
+/// spaces ("Spaces"). "Upload Here" picks the folder shown.
 struct ShareFolderPicker: View {
     let api: SyncAPIClient
-    /// „Meine Dateien“ first, then the writable spaces (``ShareTarget/spaceTargets(of:)``).
+    /// "My Files" first, then the writable spaces (``ShareTarget/spaceTargets(of:)``).
     let roots: [ShareTarget]
     /// The account's spaces (symbols of the roots).
     let spaces: SpaceDirectory

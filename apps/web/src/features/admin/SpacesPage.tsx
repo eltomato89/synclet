@@ -17,7 +17,7 @@ import { useAdminSpaces, useSpaceMutations } from './queries';
 import { SpaceDialog } from './SpaceDialog';
 import type { SpaceWire } from './types';
 
-export const MOUNT_DOCS = 'https://github.com/eltomato89/synclet/blob/main/deploy/README.md#team-ordner-und-externe-speicher';
+export const MOUNT_DOCS = 'https://github.com/eltomato89/synclet/blob/main/deploy/README.md#team-folders-and-external-storage';
 
 function MembersSummary({ space }: { space: SpaceWire }) {
   const { t } = useTranslation();

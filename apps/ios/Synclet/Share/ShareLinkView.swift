@@ -7,8 +7,8 @@ private struct SharedURL: Identifiable {
     var id: String { url.absoluteString }
 }
 
-/// „Link teilen“: the item's active link (or a new one) with password, expiry, download and
-/// (folders) upload; „Teilen“ opens the system share sheet with the URL; „Link widerrufen“
+/// "Share Link": the item's active link (or a new one) with password, expiry, download and
+/// (folders) upload; "Share" opens the system share sheet with the URL; "Revoke Link"
 /// (confirmed) revokes it.
 struct ShareLinkView: View {
     @State private var model: ShareLinkModel

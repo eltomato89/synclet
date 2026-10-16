@@ -1,7 +1,7 @@
 import SwiftUI
 import SyncletKit
 
-/// „Papierkorb“: deleted items with restore, delete forever and empty (both confirmed).
+/// "Trash": deleted items with restore, delete forever and empty (both confirmed).
 struct TrashView: View {
     let environment: AppEnvironment
     let entry: AccountEntry
@@ -42,7 +42,7 @@ private struct TrashList: View {
                     Button("Empty Trash", systemImage: "trash.slash", role: .destructive) {
                         confirmsEmpty = true
                     }
-                    // The server empties only „Meine Dateien“: other spaces' entries stay.
+                    // The server empties only "My Files": other spaces' entries stay.
                     .disabled(!model.canEmpty)
                     .accessibilityIdentifier("trash.empty")
                 }

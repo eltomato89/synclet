@@ -10,7 +10,7 @@ import SyncletKit
 final class SearchModel {
     /// The text in the search field. Call ``queryChanged()`` after changing it.
     var query = ""
-    /// Limits the search to this folder („Im Ordner suchen“, iPad); `nil` searches everything.
+    /// Limits the search to this folder ("Search in Folder", iPad); `nil` searches everything.
     var scopeFolderId: String? {
         didSet { if scopeFolderId != oldValue { queryChanged() } }
     }

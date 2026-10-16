@@ -5,7 +5,7 @@ import SyncletKit
 struct ItemRow: View {
     let item: SyncItem
     let api: SyncAPIClient
-    /// The item's space in lists across spaces („Zuletzt“); `nil` in a folder.
+    /// The item's space in lists across spaces ("Recent"); `nil` in a folder.
     var space: String?
 
     var body: some View {
@@ -83,7 +83,7 @@ enum ItemFormatting {
         }
     }
 
-    /// Files: „12 KB · 3. Okt. 2026“; folders: the date.
+    /// Files: "12 KB · Oct 3, 2026"; folders: the date.
     static func subtitle(for item: SyncItem) -> String {
         let date = item.modifiedDate.map { $0.formatted(date: .abbreviated, time: .shortened) }
         if item.isFolder { return date ?? "" }

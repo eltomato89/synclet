@@ -86,7 +86,7 @@ function TaskRow({ task, queue }: { task: UploadTask; queue: UploadQueue }) {
   );
 }
 
-/** One folder upload: „Ordner „Urlaub“: 37 von 120 Dateien“, folder errors, failed files below. */
+/** One folder upload: "Folder "Holiday": 37 of 120 files", folder errors, failed files below. */
 function GroupRow({ group, tasks, queue }: { group: UploadGroup; tasks: UploadTask[]; queue: UploadQueue }) {
   const { t, i18n } = useTranslation();
   const locale = i18n.language;

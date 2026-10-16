@@ -36,9 +36,9 @@ final class FolderModel {
     var sort: BrowserSort = .name {
         didSet { if sort != oldValue { items = Self.sorted(items, by: sort) } }
     }
-    /// Transient message for the user („Wurde inzwischen geändert“, „Nicht mehr vorhanden“ …).
+    /// Transient message for the user ("Changed in the meantime", "No longer exists" …).
     var notice: String?
-    /// Inline error of the name sheet (pre-check, „Name bereits vergeben“, server `invalid_name`).
+    /// Inline error of the name sheet (pre-check, "Name already taken", server `invalid_name`).
     var fieldError: String?
     /// Outcome of the last mutation.
     private(set) var lastOutcome: MutationOutcome?

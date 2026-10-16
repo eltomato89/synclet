@@ -2,7 +2,7 @@ import SwiftUI
 import SyncletKit
 
 /// Actions on an item in the browser (context menu, swipe actions). Later tasks add cases
-/// (Task 8: „Link teilen“) – add the case, its label and its place in ``available(for:)``.
+/// (Task 8: "Share Link") – add the case, its label and its place in ``available(for:)``.
 enum ItemAction: String, Hashable, CaseIterable, Identifiable {
     case share
     case rename

@@ -2,7 +2,7 @@ import SwiftUI
 import SyncletKit
 
 /// A space in a list: its symbol (team = people, storage = drive), its name, a lock for read
-/// only and „Nicht verfügbar“ / „Nur lesen“ below the name.
+/// only and "Not Available" / "Read Only" below the name.
 struct SpaceLabel: View {
     let entry: SpaceEntry
 
@@ -32,8 +32,8 @@ struct SpaceLabel: View {
     }
 }
 
-/// The iPhone „Dateien“ root of an account with spaces: „Meine Dateien“, then the section
-/// „Bereiche“ with the team folders and external storages.
+/// The iPhone "Files" root of an account with spaces: "My Files", then the section
+/// "Spaces" with the team folders and external storages.
 struct SpaceList: View {
     let directory: SpaceDirectory
 
@@ -59,7 +59,7 @@ struct SpaceList: View {
     }
 }
 
-/// „Nicht verfügbar“: the storage of the space is missing on the server (`503 space_unavailable`).
+/// "Not Available": the storage of the space is missing on the server (`503 space_unavailable`).
 struct SpaceUnavailableView: View {
     var retry: (() -> Void)?
 
@@ -78,7 +78,7 @@ struct SpaceUnavailableView: View {
     }
 }
 
-/// „Nur lesen“ above a folder without write access.
+/// "Read Only" above a folder without write access.
 struct ReadOnlyBar: View {
     var body: some View {
         Label("Read Only", systemImage: "lock.fill")

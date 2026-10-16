@@ -1,15 +1,15 @@
 # ADR 0001: Stack – NestJS + PostgreSQL, React + Tailwind + shadcn/ui
 
-- Status: akzeptiert (2026-10-15)
+- Status: accepted (2026-10-15)
 
-## Kontext
-Synclet braucht einen Server, der als Docker-Compose-Stack self-hosted läuft, und ein hochwertiges Web-Frontend. Ein erprobter Stack (NestJS/Fastify, Prisma, PostgreSQL) samt Euro-Office-Integration steht zur Verfügung.
+## Context
+Synclet needs a server that runs self-hosted as a Docker Compose stack, and a high-quality web frontend. A proven stack (NestJS/Fastify, Prisma, PostgreSQL) including the Euro-Office integration is available.
 
-## Entscheidung
-- Server: NestJS (Fastify) + Prisma + PostgreSQL 16, Job-Queue pg-boss (kein Redis).
+## Decision
+- Server: NestJS (Fastify) + Prisma + PostgreSQL 16, pg-boss job queue (no Redis).
 - Web: React + Vite + Tailwind + shadcn/ui.
-- Monorepo mit pnpm-Workspaces; native Clients (Swift, .NET, Kotlin) liegen unter `apps/`, sind aber nicht Teil des pnpm-Workspace.
+- Monorepo with pnpm workspaces; native clients (Swift, .NET, Kotlin) live under `apps/` but are not part of the pnpm workspace.
 
-## Konsequenzen
-- Sync-, Office- und Auth-Logik sind mit diesem Stack gut umsetzbar; der Sync-Vertrag ist in docs/sync/SYNC_API.md beschrieben.
-- Mehr RAM/Image-Größe als ein Go-Binary mit SQLite; zusätzlicher Postgres-Container.
+## Consequences
+- Sync, office and auth logic can be implemented well with this stack; the sync contract is described in docs/sync/SYNC_API.md.
+- More RAM/image size than a Go binary with SQLite; an additional Postgres container.

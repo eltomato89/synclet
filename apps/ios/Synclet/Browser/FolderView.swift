@@ -14,7 +14,7 @@ private enum NameRequest: Identifiable {
     }
 }
 
-/// One folder: list or grid, sorting, „+“ menu, multi-select, rename/move/delete, opening
+/// One folder: list or grid, sorting, "+" menu, multi-select, rename/move/delete, opening
 /// files (download, then QuickLook). Reloads on pull-to-refresh, on change events of its
 /// account (debounced), when it appears again and when the scene becomes active.
 struct FolderView: View {
@@ -48,7 +48,7 @@ struct FolderView: View {
     }
 
     /// Uploads and new folders are allowed (hidden in read-only folders and spaces). Live: follows
-    /// the account's spaces and the reloaded folder, so the „+“ menu goes when the space turns
+    /// the account's spaces and the reloaded folder, so the "+" menu goes when the space turns
     /// read-only or missing while the folder is open.
     private var canAddChildren: Bool { spaces.canAddChildren(to: route, folder: model.folder) }
 
@@ -286,7 +286,7 @@ struct FolderView: View {
         }
     }
 
-    /// The „+“ menu: uploads (photos, files) and „Neuer Ordner“.
+    /// The "+" menu: uploads (photos, files) and "New Folder".
     private var addMenu: some View {
         Menu {
             UploadMenu(showsPhotos: $showsPhotoPicker, showsFiles: $showsFileImporter,
@@ -358,7 +358,7 @@ struct FolderView: View {
     }
 }
 
-/// Name input for „Neuer Ordner“ and „Umbenennen“: live pre-check, inline server errors; the
+/// Name input for "New Folder" and "Rename": live pre-check, inline server errors; the
 /// sheet stays open while the name is rejected.
 struct NameSheet: View {
     let title: LocalizedStringKey
