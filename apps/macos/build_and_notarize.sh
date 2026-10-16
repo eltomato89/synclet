@@ -155,13 +155,24 @@ hdiutil detach "$MOUNT" -quiet
 MOUNT=""
 hdiutil convert "$RW" -format UDZO -imagekey zlib-level=9 -o "$DMG" -quiet
 
-codesign --sign "$AUTHORITY" --timestamp "$DMG"
+# Xcode's cloud signing only signs the exported app; a disk image can only be signed with a local
+# identity. Without one the DMG stays unsigned – the app inside is Developer ID signed and the
+# DMG's notarization ticket is stapled, which is what Gatekeeper checks for downloaded images.
+DMG_SIGNED=0
+if security find-identity -v -p codesigning | grep -qF "$AUTHORITY"; then
+  codesign --sign "$AUTHORITY" --timestamp "$DMG"
+  DMG_SIGNED=1
+else
+  echo "NOTE: no local '$AUTHORITY' identity – the DMG itself stays unsigned (the app inside is signed)" >&2
+fi
 if [ "$SKIP_NOTARIZE" != 1 ]; then
   step "notarize the DMG"
   notarize "$DMG"
   xcrun stapler staple "$DMG"
   xcrun stapler validate "$DMG"
-  spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
+  if [ "$DMG_SIGNED" = 1 ]; then
+    spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
+  fi
 fi
 step "done"
 echo "$DMG"
