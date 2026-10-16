@@ -205,7 +205,10 @@
     "versions": "Versionen …",
     "folderUpload": {
       "readFailed": "Der Ordner konnte nicht gelesen werden.",
-      "failed": "„{{name}}“ konnte nicht hochgeladen werden: {{error}}"
+      "failed": "„{{name}}“ konnte nicht hochgeladen werden: {{error}}",
+      "unreadable_one": "{{count}} Element konnte nicht gelesen werden und wurde ausgelassen.",
+      "unreadable_other": "{{count}} Elemente konnten nicht gelesen werden und wurden ausgelassen.",
+      "emptyFolder": "Der Ordner ist leer. Leere Ordner lassen sich nur per Drag & Drop hochladen."
     }
   },
   "preview": {

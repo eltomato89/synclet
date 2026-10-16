@@ -11,6 +11,8 @@ export interface Picked {
   files: { path: string; file: File }[];
   /** Every folder seen, including empty ones (`Urlaub`, `Urlaub/Bilder`). */
   folders: string[];
+  /** Dropped files or folders that could not be read (left out). */
+  unreadable?: number;
 }
 
 /** One top-level folder to upload. Paths are relative to it; `''` is the folder itself. */
@@ -44,21 +46,44 @@ const isDir = (e: FileSystemEntry): e is FileSystemDirectoryEntry => e.isDirecto
 const isFile = (e: FileSystemEntry): e is FileSystemFileEntry => e.isFile;
 
 /** Walks dropped entries (from `DataTransferItem.webkitGetAsEntry`) recursively. */
+const READ_PARALLEL = 8;
+
+/**
+ * Walks dropped entries (from `DataTransferItem.webkitGetAsEntry`) recursively, reading up to
+ * {@link READ_PARALLEL} siblings at a time; the result keeps the drop's order. A file or folder
+ * that cannot be read (permissions, vanished) is counted in `unreadable` and left out.
+ */
 export async function pickedFromEntries(entries: FileSystemEntry[]): Promise<Picked> {
-  const picked: Picked = { files: [], folders: [] };
-  async function walk(entry: FileSystemEntry, prefix: string): Promise<void> {
+  let unreadable = 0;
+  async function walk(entry: FileSystemEntry, prefix: string): Promise<Picked> {
     const path = prefix + entry.name;
-    if (isDir(entry)) {
-      picked.folders.push(path);
-      const children = await readAllEntries(entry.createReader());
-      for (const child of children) await walk(child, `${path}/`);
-    } else if (isFile(entry)) {
-      const file = await new Promise<File>((ok, fail) => entry.file(ok, fail));
-      picked.files.push({ path, file });
+    try {
+      if (isDir(entry)) {
+        const children = await readAllEntries(entry.createReader());
+        return merge([{ files: [], folders: [path] }, ...await walkAll(children, `${path}/`)]);
+      }
+      if (isFile(entry)) {
+        const file = await new Promise<File>((ok, fail) => entry.file(ok, fail));
+        return { files: [{ path, file }], folders: [] };
+      }
+    } catch {
+      unreadable++;
     }
+    return { files: [], folders: [] };
   }
-  for (const e of entries) await walk(e, '');
-  return picked;
+  async function walkAll(list: FileSystemEntry[], prefix: string): Promise<Picked[]> {
+    const out: Picked[] = [];
+    for (let i = 0; i < list.length; i += READ_PARALLEL) {
+      out.push(...await Promise.all(list.slice(i, i + READ_PARALLEL).map((e) => walk(e, prefix))));
+    }
+    return out;
+  }
+  const picked = merge(await walkAll(entries, ''));
+  return { ...picked, unreadable };
+}
+
+function merge(parts: Picked[]): Picked {
+  return { files: parts.flatMap((p) => p.files), folders: parts.flatMap((p) => p.folders) };
 }
 
 /**
@@ -160,7 +185,12 @@ export interface ConflictQuestion {
   remaining: number;
 }
 export interface ConflictAnswer { choice: ConflictChoice; applyAll: boolean }
-export interface TreeTarget { tree: FolderTree; mergeInto?: string }
+export interface TreeTarget {
+  tree: FolderTree;
+  /** Id and real name of the existing folder to merge into (its case may differ from the tree's). */
+  mergeInto?: string;
+  mergeName?: string;
+}
 
 /** The first free `"<name> (n)"` among `siblings`, n ≥ 2 (folder rule of SYNC_API §4.3). */
 export function keepName(name: string, siblings: SyncItem[]): string {
@@ -197,7 +227,7 @@ export async function resolveChoices(
       if (answer.applyAll) all = answer.choice;
     }
     if (choice === 'cancel') continue;
-    out.push(choice === 'merge' ? { tree, mergeInto: existing.id } : { tree });
+    out.push(choice === 'merge' ? { tree, mergeInto: existing.id, mergeName: existing.name } : { tree });
   }
   return out;
 }
@@ -251,7 +281,7 @@ async function ensureFolder(deps: FolderUploadDeps, parentId: string, name: stri
  * number of files below it; its subtree is skipped, everything else continues.
  */
 export async function uploadTree(
-  tree: FolderTree, target: { parentId: string; mergeInto?: string }, deps: FolderUploadDeps, hooks: FolderUploadHooks = {},
+  tree: FolderTree, target: { parentId: string; mergeInto?: string; mergeName?: string }, deps: FolderUploadDeps, hooks: FolderUploadHooks = {},
 ): Promise<FolderUploadResult> {
   const filesBelow = (dir: string) => tree.files.filter((f) => f.dir === dir || dir === '' || f.dir.startsWith(`${dir}/`)).length;
   const errors: FolderError[] = [];
@@ -260,7 +290,7 @@ export async function uploadTree(
   let root: { id: string; name: string };
   try {
     root = target.mergeInto
-      ? { id: target.mergeInto, name: tree.name }
+      ? { id: target.mergeInto, name: target.mergeName ?? tree.name }
       : await deps.createFolder(target.parentId, tree.name, 'rename');
   } catch (e) {
     return { rootName: tree.name, errors: [{ path: tree.name, code: codeOf(e), files: filesBelow('') }] };

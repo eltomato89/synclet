@@ -114,6 +114,19 @@ describe('tree traversal', () => {
     expect(picked).toEqual({ files: [{ path: 'a.txt', file: f }], folders: [] });
   });
 
+  it('skips unreadable files and folders, counts them and keeps the rest in order', async () => {
+    const broken = { ...fileEntry('kaputt.jpg'), file: (_ok: unknown, fail: (e: Error) => void) => fail(new Error('NotReadableError')) } as unknown as FileSystemFileEntry;
+    const lockedDir = {
+      isFile: false, isDirectory: true, name: 'Gesperrt', fullPath: '',
+      createReader: () => ({ readEntries: (_ok: unknown, fail: (e: Error) => void) => fail(new Error('SecurityError')) }),
+    } as unknown as FileSystemDirectoryEntry;
+    const many = Array.from({ length: 20 }, (_, i) => fileEntry(`f${String(i).padStart(2, '0')}.txt`));
+    const picked = await pickedFromEntries([dirEntry('Urlaub', [broken, lockedDir, ...many])]);
+    expect(picked.unreadable).toBe(2);
+    expect(picked.files.map((f) => f.path)).toEqual(many.map((e) => `Urlaub/${e.name}`));
+    expect(picked.folders).toEqual(['Urlaub']);
+  });
+
   it('uses webkitRelativePath of a folder selection', () => {
     const f = (rel: string) => {
       const file = new File(['x'], rel.split('/').pop()!);
@@ -174,6 +187,8 @@ describe('resolveChoices', () => {
     expect(ask.mock.calls[0][0]).toEqual({ name: 'Urlaub', existingType: 'folder', keepName: 'Urlaub (2)', remaining: 1 });
     expect(ask.mock.calls[1][0]).toMatchObject({ name: 'bericht', existingType: 'file', remaining: 0 });
     expect(out.map((o) => [o.tree.name, o.mergeInto ?? null])).toEqual([['Urlaub', 'd_urlaub'], ['Neu', null], ['bericht', null]]);
+    // Merging keeps the existing folder's real name.
+    expect(out[0].mergeName).toBe('urlaub');
     const nfd = await resolveChoices([tree('Ärger')], siblings, vi.fn().mockResolvedValue({ choice: 'merge', applyAll: false }));
     expect(nfd[0].mergeInto).toBe('d_Ärger');
   });
@@ -257,6 +272,14 @@ describe('uploadTree', () => {
       { names: ['a.jpg'], parentId: 'd_old' },
       { names: ['b.jpg', 'c.jpg'], parentId: 'd_oldB' },
     ]));
+  });
+
+  it('a merge reports the existing folder\'s real name', async () => {
+    const { deps } = fakeDeps({ d_old: [] });
+    const onRoot = vi.fn();
+    const out = await uploadTree(urlaub(), { parentId: 'root', mergeInto: 'd_old', mergeName: 'URLAUB' }, deps, { onRoot });
+    expect(out.rootName).toBe('URLAUB');
+    expect(onRoot).toHaveBeenCalledWith({ id: 'd_old', name: 'URLAUB' });
   });
 
   it('a 409 without an item looks the folder up by name', async () => {

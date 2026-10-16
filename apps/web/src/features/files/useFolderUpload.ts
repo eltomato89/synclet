@@ -25,6 +25,8 @@ export function useFolderUpload({ queue, folderId, siblings, onFoldersChanged }:
   const { t } = useTranslation();
   const [question, setQuestion] = useState<ConflictQuestion | null>(null);
   const resolver = useRef<((a: ConflictAnswer) => void) | null>(null);
+  /** Conflict questions of one pick at a time: a later pick waits until the dialog is done. */
+  const turn = useRef<Promise<unknown>>(Promise.resolve());
   const latest = useRef({ siblings, onFoldersChanged, t });
   latest.current = { siblings, onFoldersChanged, t };
 
@@ -39,10 +41,10 @@ export function useFolderUpload({ queue, folderId, siblings, onFoldersChanged }:
     r?.(a);
   };
 
-  async function runTree({ tree, mergeInto }: TreeTarget, g: number) {
+  async function runTree({ tree, mergeInto, mergeName }: TreeTarget, g: number) {
     const deps: FolderUploadDeps = { createFolder, listChildren: fetchAllChildren, enqueue: (files, parentId) => queue.enqueue(files, parentId, g) };
     try {
-      const res = await uploadTree(tree, { parentId: folderId, mergeInto }, deps, {
+      const res = await uploadTree(tree, { parentId: folderId, mergeInto, mergeName }, deps, {
         onRoot: (root) => { queue.updateGroup(g, { name: root.name }); if (!mergeInto) latest.current.onFoldersChanged(); },
         cancelled: () => !queue.hasGroup(g),
       });
@@ -60,13 +62,19 @@ export function useFolderUpload({ queue, folderId, siblings, onFoldersChanged }:
   }
 
   async function upload(picked: Picked) {
+    if (picked.unreadable) {
+      toast.error(latest.current.t('files.folderUpload.unreadable', { count: picked.unreadable }), { position: 'bottom-center' });
+    }
     const plan = buildPlan(picked);
     if (plan.looseFiles.length) queue.enqueue(plan.looseFiles, folderId);
     if (plan.trees.length === 0) return;
-    const targets = await resolveChoices(plan.trees, latest.current.siblings, ask);
+    // Siblings are read when this pick's turn comes, so an earlier pick's new folders count.
+    const choices = turn.current.then(() => resolveChoices(plan.trees, latest.current.siblings, ask));
+    turn.current = choices.catch(() => undefined);
+    const targets = await choices;
     // Every folder shows up in the panel right away; they are created one after the other (many
     // small requests), their files then upload in parallel anyway.
-    const groups = targets.map((target) => [target, queue.addGroup(target.tree.name)] as const);
+    const groups = targets.map((target) => [target, queue.addGroup(target.mergeName ?? target.tree.name)] as const);
     for (const [target, g] of groups) {
       if (queue.hasGroup(g)) await runTree(target, g);
     }

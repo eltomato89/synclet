@@ -436,7 +436,9 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
         onChange={(e) => {
           const files = Array.from(e.target.files ?? []);
           e.target.value = '';
+          // The picker never lists folders, only files: an empty selection was an empty folder.
           if (files.length) void uploadPicked(pickedFromInputFiles(files));
+          else toast.info(t('files.folderUpload.emptyFolder'), { position: 'bottom-center' });
         }}
       />
       <FolderConflictDialog question={folderUpload.question} onAnswer={folderUpload.answer} />

@@ -103,7 +103,7 @@
     "drop": {
       "title": "Drop to upload",
       "target": "Files go into “{{folder}}”.",
-      "foldersUnsupported": "Folders can’t be uploaded here. Drag the files inside them here instead."
+      "foldersUnsupported": "Folders can't be uploaded here. Drag the files inside them here instead."
     },
     "newFolderDialog": {
       "title": "New folder",
@@ -205,7 +205,10 @@
     "versions": "Versions …",
     "folderUpload": {
       "readFailed": "The folder could not be read.",
-      "failed": "“{{name}}” could not be uploaded: {{error}}"
+      "failed": "“{{name}}” could not be uploaded: {{error}}",
+      "unreadable_one": "{{count}} item could not be read and was left out.",
+      "unreadable_other": "{{count}} items could not be read and were left out.",
+      "emptyFolder": "The folder is empty. Empty folders can only be uploaded by drag and drop."
     }
   },
   "preview": {
