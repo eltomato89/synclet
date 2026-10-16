@@ -23,7 +23,8 @@ export function useTrashMutations() {
   const qc = useQueryClient();
   const drop = (ids: string[] | 'all') => qc.setQueryData<TrashEntryWire[]>(
     TRASH_KEY,
-    (list) => (ids === 'all' ? [] : list?.filter((e) => !ids.includes(e.id))),
+    // Emptying removes only the personal space's entries; other spaces' entries stay listed.
+    (list) => list?.filter((e) => (ids === 'all' ? (e.spaceId ?? 'personal') !== 'personal' : !ids.includes(e.id))),
   );
   const settled = () => invalidateAfterTrashChange(qc);
   return {

@@ -1,8 +1,8 @@
 import type { SyncAccount } from '@synclet/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronsUpDown, Clock, Folder, LogOut, Share2, ShieldCheck, Trash2, type LucideIcon } from 'lucide-react';
+import { ChevronsUpDown, Clock, Folder, Lock, LogOut, Share2, ShieldCheck, Trash2, type LucideIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { NavLink, useNavigate } from 'react-router';
+import { Link, NavLink, useNavigate } from 'react-router';
 import { Wordmark } from '@/components/brand/Logo';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
@@ -11,6 +11,10 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SpaceIcon } from '@/features/spaces/SpaceIcon';
+import {
+  isUnavailable, PERSONAL, useCurrentSpaceId, useSpaces, useUnavailableSpaces,
+} from '@/features/spaces/useSpaces';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { formatBytes } from '@/lib/format';
@@ -28,10 +32,18 @@ const NAV: NavEntry[] = [
 const ADMIN_NAV: NavEntry = { to: '/admin', label: 'shell.administration', icon: ShieldCheck };
 
 const itemBase = 'flex h-8 items-center gap-2.5 rounded-md px-2.5 text-sm font-medium outline-none focus-visible:ring-3 focus-visible:ring-ring/50';
+const itemState = (active: boolean) => cn(
+  itemBase,
+  'transition-colors duration-150',
+  active
+    ? 'bg-background text-foreground ring-1 ring-border [&_svg]:text-primary'
+    : 'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+);
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { t } = useTranslation();
   const { user } = useAuth();
+  const currentSpace = useCurrentSpaceId();
   const entries = user?.role === 'admin' ? [...NAV, ADMIN_NAV] : NAV;
   return (
     <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
@@ -42,29 +54,71 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         <ul className="flex flex-col gap-0.5">
           {entries.map(({ to, label, icon: Icon }) => (
             <li key={label} className={cn(to === ADMIN_NAV.to && 'mt-3 border-t border-sidebar-border pt-3')}>
-              <NavLink
-                to={to}
-                onClick={onNavigate}
-                className={({ isActive }) => cn(
-                  itemBase,
-                  'transition-colors duration-150',
-                  isActive
-                    ? 'bg-background text-foreground ring-1 ring-border [&_svg]:text-primary'
-                    : 'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-                )}
-              >
-                <Icon className="size-4 shrink-0" />
-                <span className="truncate">{t(label)}</span>
-              </NavLink>
+              {to === '/files' ? (
+                // Every space lives under /files: "My files" is active only inside the personal space.
+                <Link
+                  to={to}
+                  onClick={onNavigate}
+                  aria-current={currentSpace === PERSONAL ? 'page' : undefined}
+                  className={itemState(currentSpace === PERSONAL)}
+                >
+                  <Icon className="size-4 shrink-0" />
+                  <span className="truncate">{t(label)}</span>
+                </Link>
+              ) : (
+                <NavLink to={to} onClick={onNavigate} className={({ isActive }) => itemState(isActive)}>
+                  <Icon className="size-4 shrink-0" />
+                  <span className="truncate">{t(label)}</span>
+                </NavLink>
+              )}
             </li>
           ))}
         </ul>
       </nav>
+      <SpacesNav current={currentSpace} onNavigate={onNavigate} />
       <div className="mt-auto flex flex-col gap-3 p-2 pb-3">
         <StorageMeter />
         <UserMenu />
       </div>
     </div>
+  );
+}
+
+/** "Spaces": one entry per team folder and external storage the user can access. */
+function SpacesNav({ current, onNavigate }: { current: string | null; onNavigate?: () => void }) {
+  const { t } = useTranslation();
+  const { spaces } = useSpaces();
+  const unavailable = useUnavailableSpaces();
+  const others = spaces.filter((s) => s.kind !== 'personal');
+  if (others.length === 0) return null;
+  return (
+    <nav aria-labelledby="sidebar-spaces" className="min-h-0 overflow-y-auto px-2 pt-4">
+      <h2 id="sidebar-spaces" className="px-2.5 pb-1 text-xs font-medium text-muted-foreground">{t('spaces.section')}</h2>
+      <ul className="flex flex-col gap-0.5">
+        {others.map((s) => {
+          const active = current === s.id;
+          const off = isUnavailable(unavailable, s.id);
+          return (
+            <li key={s.id}>
+              <Link
+                to={`/files/${s.rootId}`}
+                onClick={onNavigate}
+                aria-current={active ? 'page' : undefined}
+                title={s.name}
+                className={cn(itemState(active), off && 'text-muted-foreground')}
+              >
+                <SpaceIcon kind={s.kind} />
+                <span className="min-w-0 flex-1 truncate">{s.name}</span>
+                {off && <span className="shrink-0 text-[11px] font-normal text-muted-foreground">{t('spaces.unavailable')}</span>}
+                {!s.canWrite && !off && (
+                  <Lock role="img" aria-label={t('spaces.readOnly')} className="size-3 shrink-0 text-muted-foreground" />
+                )}
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
   );
 }
 

@@ -151,3 +151,29 @@ describe('CommandPalette', () => {
     await waitFor(() => expect(api).toHaveBeenCalledWith('/sync/v1/search?q=urlaub&limit=30&folder=d_cur', expect.anything()));
   });
 });
+
+describe('CommandPalette in spaces', () => {
+  it('shows the space name as the location of hits outside "My files"', async () => {
+    const { SPACES, TEAM } = await import('@/test/spaces');
+    vi.spyOn(apiMod, 'api').mockImplementation(async (path) => {
+      if (path === '/sync/v1/account') return { spaces: SPACES };
+      if (path.startsWith('/sync/v1/search?')) {
+        return { hits: [hit({ ...item('f_team', 'Rechnung-2025.pdf', 'file', `r_${TEAM}`), spaceId: TEAM }, 'name', 'Belege')], total: 1 };
+      }
+      throw new Error(`unexpected ${path}`);
+    });
+    const { wrapper: Wrapper } = testQueryClient();
+    render(
+      <Wrapper>
+        <MemoryRouter initialEntries={['/files']}>
+          <CommandPalette open onOpenChange={() => {}} scope={null} userId="u1" />
+        </MemoryRouter>
+      </Wrapper>,
+    );
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'rechnung' } });
+    const option = await screen.findByRole('option', { name: /Rechnung-2025/ });
+    await waitFor(() => expect(option).toHaveTextContent('Familie'));
+    expect(option).toHaveTextContent('Belege');
+    expect(option).not.toHaveTextContent('My files');
+  });
+});

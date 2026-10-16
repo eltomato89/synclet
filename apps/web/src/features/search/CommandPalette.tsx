@@ -12,6 +12,7 @@ import { errorKey } from '@/features/files/errors';
 import { ROOT_ID } from '@/features/files/queries';
 import { revealUrl } from '@/features/files/reveal';
 import { Thumbnail } from '@/features/preview/Thumbnail';
+import { useSpaceLabel } from '@/features/spaces/useSpaces';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
@@ -45,7 +46,7 @@ export function SearchLauncher() {
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const match = useMatch('/files/:folderId');
-  const folderId = match?.params.folderId && match.params.folderId !== ROOT_ID && /^d_/.test(match.params.folderId) ? match.params.folderId : null;
+  const folderId = match?.params.folderId && match.params.folderId !== ROOT_ID && /^[dr]_/.test(match.params.folderId) ? match.params.folderId : null;
   const folder = useQuery({
     queryKey: ['item', folderId],
     queryFn: () => api<SyncItem>(`/sync/v1/items/${folderId}`),
@@ -370,9 +371,10 @@ function RecentRow({ query }: { query: string }) {
 }
 
 function HitRow({ hit, query }: { hit: SearchHit; query: string }) {
-  const { t } = useTranslation();
   const { item } = hit;
-  const folders = pathSegments(hit.path);
+  const spaceLabel = useSpaceLabel();
+  // The path is relative to the hit's space root: "My files" or the space name comes first.
+  const location = [spaceLabel(item.spaceId) ?? '…', ...pathSegments(hit.path)];
   const kind = fileKind(item);
   return (
     <>
@@ -389,8 +391,8 @@ function HitRow({ hit, query }: { hit: SearchHit; query: string }) {
         <span className="block truncate text-sm font-medium text-foreground" title={item.name}>
           <Highlighted segments={nameSegments(item.name, query)} />
         </span>
-        <span className="flex min-w-0 items-center gap-0.5 text-xs text-muted-foreground" title={[t('shell.myFiles'), ...folders].join(' / ')}>
-          {[t('shell.myFiles'), ...folders].map((seg, i, all) => (
+        <span className="flex min-w-0 items-center gap-0.5 text-xs text-muted-foreground" title={location.join(' / ')}>
+          {location.map((seg, i, all) => (
             <span key={i} className={cn('flex min-w-0 items-center gap-0.5', i < all.length - 1 && i > 0 && 'max-w-[10rem] shrink')}>
               {i > 0 && <ChevronRight className="size-3 shrink-0 opacity-60" aria-hidden />}
               <span className="truncate">{seg}</span>

@@ -1,6 +1,7 @@
 import type { SearchHit, SearchResponse } from '@synclet/shared';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
+import { PERSONAL, spaceIdOfRoot } from '@/features/spaces/useSpaces';
 import { api } from '@/lib/api';
 
 export const SEARCH_DEBOUNCE_MS = 200;
@@ -18,9 +19,12 @@ export function useDebounced<T>(value: T, ms: number): T {
   return v;
 }
 
+/** `folderId` limits the search to that subtree; a space root (`r_<uuid>`) to that whole space. */
 export function searchUrl(q: string, folderId: string | null): string {
   const qs = new URLSearchParams({ q, limit: String(PAGE) });
-  if (folderId) qs.set('folder', folderId);
+  const space = folderId ? spaceIdOfRoot(folderId) : null;
+  if (space && space !== PERSONAL) qs.set('space', space);
+  else if (folderId) qs.set('folder', folderId);
   return `/sync/v1/search?${qs.toString()}`;
 }
 

@@ -61,6 +61,16 @@
     "skipToContent": "Zum Inhalt springen",
     "administration": "Administration"
   },
+  "spaces": {
+    "section": "Bereiche",
+    "readOnly": "Nur lesen",
+    "readOnlyBody": "In diesem Bereich kannst du Dateien ansehen und herunterladen, aber nichts ändern.",
+    "unavailable": "Nicht verfügbar",
+    "unavailableTitle": "Dieser Bereich ist nicht verfügbar",
+    "unavailableBody": "Der Speicherort ist gerade nicht erreichbar. Bitte versuche es später noch einmal oder wende dich an die Administration.",
+    "space": "Bereich",
+    "readOnlyMenu": "Nur lesen – hier kannst du nichts ablegen"
+  },
   "files": {
     "newMenu": "Neu",
     "newFolder": "Ordner",
@@ -89,7 +99,8 @@
     "empty": {
       "title": "Dieser Ordner ist leer",
       "rootTitle": "Noch keine Dateien",
-      "body": "Zieh Dateien hierher oder lade sie hoch. Alles, was du ablegst, liegt als normale Datei auf deinem Server."
+      "body": "Zieh Dateien hierher oder lade sie hoch. Alles, was du ablegst, liegt als normale Datei auf deinem Server.",
+      "readOnlyBody": "Hier liegt noch nichts. In diesem Bereich kannst du nur lesen."
     },
     "loadError": {
       "title": "Der Ordner konnte nicht geladen werden",
@@ -171,7 +182,8 @@
       "server_error": "Der Server hat unerwartet geantwortet.",
       "network": "Keine Verbindung zum Server.",
       "unknown": "Das hat nicht geklappt. Versuch es noch einmal.",
-      "upload_expired": "Der unterbrochene Upload ist abgelaufen. Lade die Datei noch einmal hoch."
+      "upload_expired": "Der unterbrochene Upload ist abgelaufen. Lade die Datei noch einmal hoch.",
+      "space_unavailable": "Der Bereich ist gerade nicht verfügbar."
     },
     "uploads": {
       "region": "Uploads",

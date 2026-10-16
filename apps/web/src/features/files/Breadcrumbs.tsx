@@ -8,13 +8,14 @@ import {
 } from '@/components/ui/breadcrumb';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
+import { PERSONAL, spaceOfItem } from '@/features/spaces/useSpaces';
 import { cn } from '@/lib/utils';
 import { folderPath } from './queries';
 
 const MAX_VISIBLE = 4;
 
 /**
- * Folder path, root first. With more than four segments the middle ones collapse into a menu;
+ * Folder path, root first ("My files" or the space name). With more than four segments the middle ones collapse into a menu;
  * on small screens only the current folder stays visible and every parent moves into the menu.
  */
 export function Breadcrumbs({ chain }: { chain: SyncItem[] | undefined }) {
@@ -22,7 +23,8 @@ export function Breadcrumbs({ chain }: { chain: SyncItem[] | undefined }) {
   if (!chain) return <Skeleton className="h-4 w-40" />;
   if (chain.length === 0) return null;
 
-  const label = (item: SyncItem) => (item.kind === 'root' ? t('shell.myFiles') : item.name);
+  // The personal root reads "My files"; the root of any other space carries the space name.
+  const label = (item: SyncItem) => (item.kind === 'root' && spaceOfItem(item) === PERSONAL ? t('shell.myFiles') : item.name);
   const n = chain.length;
   const collapsed = n > MAX_VISIBLE ? chain.slice(1, n - 2) : [];
   const parents = chain.slice(0, n - 1);

@@ -10,12 +10,13 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { SkeletonRows, StatusMessage } from '@/features/files/EmptyState';
 import { errorKey } from '@/features/files/errors';
-import type { ItemActions } from '@/features/files/FileActions';
+import { canShare, type ItemActions } from '@/features/files/FileActions';
 import { openOfficeTab } from '@/features/office/office';
 import { useCapabilities } from '@/features/office/queries';
 import { FileList } from '@/features/files/FileList';
 import { type SortDir, type SortKey, sortItems, useFileMutations } from '@/features/files/queries';
 import { revealUrl } from '@/features/files/reveal';
+import { useSpaceLabel } from '@/features/spaces/useSpaces';
 import { ApiError, api } from '@/lib/api';
 
 const RenameDialog = lazy(() => import('@/features/files/RenameDialog').then((m) => ({ default: m.RenameDialog })));
@@ -91,13 +92,14 @@ export function RecentPage() {
   };
   const capabilities = useCapabilities();
   const office = capabilities.office.enabled;
+  const spaceLabel = useSpaceLabel();
   const actions: ItemActions = {
     open: download,
     openInOffice: office ? (item) => openOfficeTab(item.id) : undefined,
     rename: (item) => { if (item.capabilities.rename) openDialog({ kind: 'rename', item }); },
     move: (item) => { if (item.capabilities.move) openDialog({ kind: 'move', item }); },
     remove: (item) => { if (item.capabilities.delete) openDialog({ kind: 'delete', item }); },
-    share: (item) => openDialog({ kind: 'share', item }),
+    share: (item) => { if (canShare(item)) openDialog({ kind: 'share', item }); },
     versions: capabilities.versions ? (item) => openDialog({ kind: 'versions', item }) : undefined,
   };
 
@@ -179,6 +181,7 @@ export function RecentPage() {
           actions={actions}
           sort={sort}
           onSort={onSort}
+          spaceOf={(item) => spaceLabel(item.spaceId, true)}
         />
         <p className="px-4 pt-4 text-xs text-muted-foreground tabular-nums md:px-6">
           {items.length >= RECENT_LIMIT ? t('recent.limitNote', { count: RECENT_LIMIT }) : t('files.fileCount', { count: items.length })}

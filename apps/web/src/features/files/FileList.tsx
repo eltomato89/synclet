@@ -63,7 +63,9 @@ function SortHeader({ k, label, sort, onSort, className }: {
   );
 }
 
-export function FileList({ items, label, selectedId, onSelect, onOpen, actions, sort, onSort }: ViewProps & {
+export function FileList({ items, label, selectedId, onSelect, onOpen, actions, sort, onSort, spaceOf }: ViewProps & {
+  /** Lists across spaces (recent files): the space name shown next to an item, or null for none. */
+  spaceOf?(item: SyncItem): string | null;
   sort: { key: SortKey; dir: SortDir }; onSort(k: SortKey): void;
 }) {
   const { t, i18n } = useTranslation();
@@ -109,7 +111,12 @@ export function FileList({ items, label, selectedId, onSelect, onOpen, actions, 
                     <FileIcon item={item} className="size-5" />
                   </Thumbnail>
                   <div className="min-w-0">
-                    <div className="truncate font-medium text-foreground" title={item.name}>{item.name}</div>
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="truncate font-medium text-foreground" title={item.name}>{item.name}</span>
+                      {spaceOf?.(item) && (
+                        <span className="shrink-0 truncate rounded-sm bg-muted px-1.5 text-xs leading-5 text-muted-foreground max-w-40">{spaceOf(item)}</span>
+                      )}
+                    </div>
                     <div className="truncate text-xs text-muted-foreground tabular-nums sm:hidden">
                       {size ? `${date}, ${size}` : date}
                     </div>

@@ -1,4 +1,4 @@
-import type { SyncItem } from '@synclet/shared';
+import type { SyncItem, SyncSpaceKind } from '@synclet/shared';
 import { ChevronRight, Folder, House } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -8,6 +8,8 @@ import {
   Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SpaceIcon } from '@/features/spaces/SpaceIcon';
+import { isUnavailable, useSpaces, useUnavailableSpaces } from '@/features/spaces/useSpaces';
 import { cn } from '@/lib/utils';
 import { errorKey } from './errors';
 import { ROOT_ID, useSubfolders } from './queries';
@@ -22,7 +24,8 @@ interface TreeCtx {
   setTarget(t: Target): void;
 }
 
-function TreeNode({ node, depth, ctx, isRoot = false }: { node: Target; depth: number; ctx: TreeCtx; isRoot?: boolean }) {
+/** `space` marks a top-level node: the root of a space (its icon follows the space kind). */
+function TreeNode({ node, depth, ctx, space }: { node: Target; depth: number; ctx: TreeCtx; space?: SyncSpaceKind }) {
   const { t } = useTranslation();
   // The item itself can't be a target, and its subtree is never shown (descendants are invalid too).
   const self = node.id === ctx.item.id;
@@ -30,7 +33,6 @@ function TreeNode({ node, depth, ctx, isRoot = false }: { node: Target; depth: n
   const { data: children, isPending } = useSubfolders(node.id, open);
   const selected = ctx.target?.id === node.id;
   const current = node.id === ctx.item.parentId;
-  const Icon = isRoot ? House : Folder;
 
   return (
     <li role="none">
@@ -61,7 +63,9 @@ function TreeNode({ node, depth, ctx, isRoot = false }: { node: Target; depth: n
           onDoubleClick={() => { if (!self) ctx.toggle(node.id); }}
           className="flex h-full min-w-0 flex-1 items-center gap-2 rounded-sm text-left text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-45"
         >
-          <Icon className={cn('size-4 shrink-0', isRoot ? 'text-muted-foreground' : 'fill-(--ft-folder)/20 text-(--ft-folder)')} />
+          {space === 'personal' ? <House className="size-4 shrink-0 text-muted-foreground" />
+            : space ? <SpaceIcon kind={space} className="text-muted-foreground" />
+              : <Folder className="size-4 shrink-0 fill-(--ft-folder)/20 text-(--ft-folder)" />}
           <span className="truncate">{node.name}</span>
           {current && <span className="ml-auto shrink-0 pl-2 text-xs text-muted-foreground">{t('files.moveDialog.currentLocation')}</span>}
         </button>
@@ -96,6 +100,14 @@ export function MoveDialog({ open, onOpenChange, item, expandedIds, onMove, onCl
   onClosed?(): void;
 }) {
   const { t } = useTranslation();
+  const { spaces } = useSpaces();
+  const unavailable = useUnavailableSpaces();
+  // Top level: "My files" and every other space the user may write to (moves across spaces work).
+  const roots = spaces.length === 0
+    ? [{ id: ROOT_ID, name: t('shell.myFiles'), kind: 'personal' as const }]
+    : spaces
+      .filter((s) => s.kind === 'personal' || (s.canWrite && !isUnavailable(unavailable, s.id)))
+      .map((s) => ({ id: s.rootId, name: s.kind === 'personal' ? t('shell.myFiles') : s.name, kind: s.kind }));
   const [expanded, setExpanded] = useState(() => new Set([ROOT_ID, ...expandedIds]));
   const [target, setTarget] = useState<Target | null>(null);
   const [pending, setPending] = useState(false);
@@ -133,7 +145,7 @@ export function MoveDialog({ open, onOpenChange, item, expandedIds, onMove, onCl
         </DialogHeader>
         <div className="h-72 overflow-y-auto rounded-lg border p-1.5">
           <ul role="tree" aria-label={t('files.moveDialog.tree')}>
-            <TreeNode node={{ id: ROOT_ID, name: t('shell.myFiles') }} depth={0} ctx={ctx} isRoot />
+            {roots.map((r) => <TreeNode key={r.id} node={{ id: r.id, name: r.name }} depth={0} ctx={ctx} space={r.kind} />)}
           </ul>
         </div>
         <FormError>{error}</FormError>

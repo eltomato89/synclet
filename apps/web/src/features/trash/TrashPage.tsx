@@ -12,6 +12,7 @@ import { SkeletonRows, StatusMessage } from '@/features/files/EmptyState';
 import { errorKey } from '@/features/files/errors';
 import { FileIcon } from '@/features/files/FileIcon';
 import { folderPath } from '@/features/files/queries';
+import { PERSONAL, useSpaceLabel } from '@/features/spaces/useSpaces';
 import { ApiError } from '@/lib/api';
 import { formatBytes, formatDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -42,7 +43,11 @@ export function TrashPage() {
     return () => { document.title = prev; };
   }, [t]);
 
-  const location = (path: string) => [t('shell.myFiles'), ...parentSegments(path)].join(' / ');
+  const spaceLabel = useSpaceLabel();
+  /** Original folder, starting with "My files" or the name of the entry's space. */
+  const location = (path: string, spaceId: string | undefined) => [spaceLabel(spaceId) ?? '…', ...parentSegments(path)].join(' / ');
+  // "Empty trash" empties only the personal space (the server's default); team entries stay.
+  const personal = entries.filter((e) => (e.spaceId ?? PERSONAL) === PERSONAL);
 
   const mark = (id: string, on: boolean) => setBusy((s) => {
     const next = new Set(s);
@@ -54,7 +59,7 @@ export function TrashPage() {
     mark(entry.id, true);
     try {
       const r = await m.restore.mutateAsync(entry);
-      const where = location(r.restoredTo);
+      const where = location(r.restoredTo, r.item.spaceId ?? entry.spaceId);
       toast.success(
         r.renamed ? t('trash.toast.restoredAs', { name: entry.name, newName: r.item.name }) : t('trash.toast.restored', { name: entry.name }),
         {
@@ -73,12 +78,12 @@ export function TrashPage() {
   useTopbar(
     <>
       <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">{t('shell.trash')}</h1>
-      {entries.length > 0 && (
+      {personal.length > 0 && (
         <Button
           variant="outline"
           size="sm"
           className="shrink-0"
-          onClick={() => setConfirm({ kind: 'empty', count: entries.length, open: true })}
+          onClick={() => setConfirm({ kind: 'empty', count: personal.length, open: true })}
         >
           <Trash2 />{t('trash.empty.action')}
         </Button>
@@ -127,7 +132,7 @@ export function TrashPage() {
               const expText = exp.kind === 'never' ? null : exp.kind === 'today' ? t('trash.expiresToday') : t('trash.expiresIn', { count: exp.days });
               const urgent = exp.kind === 'today' || (exp.kind === 'days' && exp.days <= 3);
               const size = formatBytes(e.size, locale);
-              const where = location(e.originalPath);
+              const where = location(e.originalPath, e.spaceId);
               return (
                 <tr
                   key={e.id}

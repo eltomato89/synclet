@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 
-/** Typographic empty folder: the panel itself reads as a drop area, with the two ways in. */
+/** Typographic empty folder: the panel itself reads as a drop area, with the two ways in (none when read-only). */
 export function EmptyState({ isRoot, canAdd, onUpload, onUploadFolder, onNewFolder }: {
   isRoot: boolean; canAdd: boolean; onUpload(): void; onUploadFolder(): void; onNewFolder(): void;
 }) {
@@ -13,7 +13,7 @@ export function EmptyState({ isRoot, canAdd, onUpload, onUploadFolder, onNewFold
     <div className="p-4 md:p-6">
       <div className="flex min-h-[min(26rem,60dvh)] flex-col items-start justify-end rounded-2xl border border-dashed border-foreground/15 p-6 md:p-10">
         <h2 className="text-2xl font-semibold text-foreground">{isRoot ? t('files.empty.rootTitle') : t('files.empty.title')}</h2>
-        <p className="mt-2 max-w-[46ch] text-base text-muted-foreground">{t('files.empty.body')}</p>
+        <p className="mt-2 max-w-[46ch] text-base text-muted-foreground">{canAdd ? t('files.empty.body') : t('files.empty.readOnlyBody')}</p>
         {canAdd && (
           <div className="mt-6 flex flex-wrap gap-2">
             <Button onClick={onUpload}><Upload />{t('files.uploadFiles')}</Button>
