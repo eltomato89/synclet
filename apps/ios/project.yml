@@ -30,6 +30,8 @@ targets:
       - path: Synclet
         excludes:
           - "**/.*.swp"
+      # Shared with the Share extension (ShareTarget, upload signal, failure texts).
+      - path: Shared
     dependencies:
       - package: SyncletKit
       - target: SyncletFileProvider
@@ -110,12 +112,13 @@ targets:
         CODE_SIGN_ENTITLEMENTS: SyncletFileProvider/SyncletFileProvider.entitlements
         APPLICATION_EXTENSION_API_ONLY: true
         SKIP_INSTALL: true
-  # Share extension (photos, Safari …); Task 9 replaces the placeholder.
+  # Share extension (photos, files …): account and folder choice, then the upload queue.
   SyncletShare:
     type: app-extension
     platform: iOS
     sources:
       - SyncletShare
+      - Shared
     dependencies:
       - package: SyncletKit
     info:
@@ -132,10 +135,15 @@ targets:
           NSExtensionPointIdentifier: com.apple.share-services
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
           NSExtensionAttributes:
-            NSExtensionActivationRule:
-              NSExtensionActivationSupportsFileWithMaxCount: 50
-              NSExtensionActivationSupportsImageWithMaxCount: 50
-              NSExtensionActivationSupportsMovieWithMaxCount: 50
+            # 1–50 attachments that are items, images or movies.
+            NSExtensionActivationRule: >-
+              SUBQUERY (extensionItems, $extensionItem,
+              SUBQUERY ($extensionItem.attachments, $attachment,
+              ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.item"
+              || ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.image"
+              || ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.movie"
+              ).@count BETWEEN {1, 50}
+              ).@count >= 1
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: tech.jensk.synclet.ios.Share

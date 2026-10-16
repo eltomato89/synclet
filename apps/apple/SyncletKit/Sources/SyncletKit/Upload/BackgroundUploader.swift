@@ -74,22 +74,27 @@ public final class BackgroundUploader: NSObject, Sendable {
     private let credentials: CredentialStore
     private let now: @Sendable () -> Date
     private let onChange: @Sendable (UploadEntry) -> Void
+    private let onProgress: @Sendable (_ entryId: String, _ bytesSent: Int64) -> Void
     private let state = Mutex(State())
 
     /// - Parameters:
     ///   - identifier: `tech.jensk.synclet.upload.app` (app) or `tech.jensk.synclet.upload.share` (extension).
     ///   - appGroup: `sharedContainerIdentifier` of the background session.
     ///   - sessionConfiguration: replaces the background configuration (tests: `.ephemeral` + a `URLProtocol`).
+    ///   - onProgress: bytes of the entry's file sent so far (tus: offset of the chunk + its sent bytes);
+    ///     called on the session's delegate queue, often.
     public init(identifier: String, queue: UploadQueue, appGroup: String?, accounts: AccountStore, credentials: CredentialStore,
                 sessionConfiguration: URLSessionConfiguration? = nil,
                 now: @escaping @Sendable () -> Date = { Date() },
-                onChange: @escaping @Sendable (UploadEntry) -> Void = { _ in }) {
+                onChange: @escaping @Sendable (UploadEntry) -> Void = { _ in },
+                onProgress: @escaping @Sendable (_ entryId: String, _ bytesSent: Int64) -> Void = { _, _ in }) {
         self.identifier = identifier
         self.queue = queue
         self.accounts = accounts
         self.credentials = credentials
         self.now = now
         self.onChange = onChange
+        self.onProgress = onProgress
         super.init()
         let configuration = sessionConfiguration ?? {
             let configuration = URLSessionConfiguration.background(withIdentifier: identifier)
@@ -587,10 +592,16 @@ extension BackgroundUploader: URLSessionDataDelegate, URLSessionDownloadDelegate
         state.withLock { $0.bodies[downloadTask.taskIdentifier] = data }
     }
 
-    /// Progress renews the entry's lease (throttled).
+    /// Progress renews the entry's lease (throttled) and is reported through `onProgress`.
     public func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64,
                            totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
-        if let tag = TaskTag(task.taskDescription) { renewLease(of: tag.entryId) }
+        guard let tag = TaskTag(task.taskDescription) else { return }
+        renewLease(of: tag.entryId)
+        switch tag.step {
+        case .single: onProgress(tag.entryId, totalBytesSent)
+        case .tusPatch(let offset, _): onProgress(tag.entryId, offset + totalBytesSent)
+        case .tusCreate, .tusHead: break
+        }
     }
 
     public func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {

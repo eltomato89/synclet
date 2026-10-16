@@ -101,6 +101,26 @@
         }
       }
     },
+    "Clear Cache": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cache leeren"
+          }
+        }
+      }
+    },
+    "Clear Finished": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Erledigte entfernen"
+          }
+        }
+      }
+    },
     "Connect Synclet": {
       "localizations": {
         "de": {
@@ -117,6 +137,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Verbunden als %@"
+          }
+        }
+      }
+    },
+    "Couldn’t add: %@": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nicht hinzugefügt: %@"
           }
         }
       }
@@ -161,12 +191,52 @@
         }
       }
     },
+    "Error": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fehler"
+          }
+        }
+      }
+    },
+    "File Not Readable": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Datei nicht lesbar"
+          }
+        }
+      }
+    },
+    "File Too Large": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Datei zu groß"
+          }
+        }
+      }
+    },
     "Files": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
             "value": "Dateien"
+          }
+        }
+      }
+    },
+    "Invalid Name": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ungültiger Name"
           }
         }
       }
@@ -361,6 +431,16 @@
         }
       }
     },
+    "No Connection": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keine Verbindung"
+          }
+        }
+      }
+    },
     "No Subfolders": {
       "localizations": {
         "de": {
@@ -381,6 +461,16 @@
         }
       }
     },
+    "No Uploads": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keine Uploads"
+          }
+        }
+      }
+    },
     "No longer exists": {
       "localizations": {
         "de": {
@@ -391,12 +481,62 @@
         }
       }
     },
+    "OK": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OK"
+          }
+        }
+      }
+    },
     "Offline": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
             "value": "Offline"
+          }
+        }
+      }
+    },
+    "Otherwise photos are uploaded in their original format (for example HEIC).": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sonst werden Fotos im Originalformat hochgeladen (zum Beispiel HEIC)."
+          }
+        }
+      }
+    },
+    "Photo %lld": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Foto %lld"
+          }
+        }
+      }
+    },
+    "Photos": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fotos"
+          }
+        }
+      }
+    },
+    "Photos and files you upload appear here.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fotos und Dateien, die du hochlädst, erscheinen hier."
           }
         }
       }
@@ -421,6 +561,26 @@
         }
       }
     },
+    "Remove": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Entfernen"
+          }
+        }
+      }
+    },
+    "Removes downloaded files and thumbnails from this device. Your files on the server stay.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Entfernt geladene Dateien und Vorschaubilder von diesem Gerät. Deine Dateien auf dem Server bleiben erhalten."
+          }
+        }
+      }
+    },
     "Rename": {
       "localizations": {
         "de": {
@@ -431,12 +591,32 @@
         }
       }
     },
+    "Retrying Soon": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neuer Versuch gleich"
+          }
+        }
+      }
+    },
     "Server": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
             "value": "Server"
+          }
+        }
+      }
+    },
+    "Settings": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Einstellungen"
           }
         }
       }
@@ -561,6 +741,26 @@
         }
       }
     },
+    "Storage Full": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Speicher voll"
+          }
+        }
+      }
+    },
+    "Target Folder Deleted": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zielordner gelöscht"
+          }
+        }
+      }
+    },
     "The login window could not be opened.": {
       "localizations": {
         "de": {
@@ -617,6 +817,56 @@
           "stringUnit": {
             "state": "translated",
             "value": "Erneut versuchen"
+          }
+        }
+      }
+    },
+    "Upload": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hochladen"
+          }
+        }
+      }
+    },
+    "Upload Photos as JPEG": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fotos als JPEG hochladen"
+          }
+        }
+      }
+    },
+    "Uploaded": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hochgeladen"
+          }
+        }
+      }
+    },
+    "Uploads": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uploads"
+          }
+        }
+      }
+    },
+    "Waiting": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wartet"
           }
         }
       }

@@ -20,7 +20,9 @@ struct SyncletApp: App {
         .onChange(of: scenePhase) { _, phase in
             guard !AppEnvironment.isRunningTests else { return }
             switch phase {
-            case .active: environment.didBecomeActive()
+            case .active:
+                environment.didBecomeActive()
+                UploadCenter.shared.didBecomeActive()
             case .background: environment.didEnterBackground()
             default: break
             }
