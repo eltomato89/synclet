@@ -6,6 +6,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import javax.crypto.KeyGenerator
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +36,9 @@ import tech.jensk.synclet.core.account.TokenVault
 import tech.jensk.synclet.core.auth.BrowserLogin
 import tech.jensk.synclet.core.auth.DeviceRegistrar
 import tech.jensk.synclet.core.cache.ListingCache
+import tech.jensk.synclet.core.api.SyncAccount
+import tech.jensk.synclet.core.api.SyncJson
+import tech.jensk.synclet.core.account.Account
 import tech.jensk.synclet.core.events.FolderChange
 import tech.jensk.synclet.provider.ProviderNotifier
 
@@ -50,7 +54,9 @@ class ForegroundSyncTest {
     private val requests = CopyOnWriteArrayList<String>()
     private val accountRequests = AtomicInteger()
     @Volatile private var eventsBody: () -> MockResponse = { MockResponse().setResponseCode(503) }
+    private val eventTokens = CopyOnWriteArrayList<String>()
     private lateinit var accounts: AccountRepository
+    private lateinit var vault: TokenVault
 
     private class RecordingNotifier : ProviderNotifier {
         val children = CopyOnWriteArrayList<Pair<String, String>>()
@@ -77,7 +83,7 @@ class ForegroundSyncTest {
                 requests += url.encodedPath
                 return when (url.encodedPath) {
                     "/api/sync/v1/account" -> { accountRequests.incrementAndGet(); json(accountJson) }
-                    "/api/sync/v1/events" -> eventsBody()
+                    "/api/sync/v1/events" -> { eventTokens += request.getHeader("Authorization").orEmpty(); eventsBody() }
                     "/api/sync/v1/changes" -> when (url.queryParameter("cursor")) {
                         "5" -> json("""{"changes":[{"op":"upsert","item":${itemJson(F1, D1)}}],"cursor":"6","hasMore":false}""")
                         else -> json("""{"changes":[],"cursor":"${url.queryParameter("cursor")}","hasMore":false}""")
@@ -88,7 +94,7 @@ class ForegroundSyncTest {
             }
         }
         server.start()
-        val vault = TokenVault(PreferenceDataStoreFactory.create(scope = scope, produceFile = { File(tmp.root, "t.preferences_pb") }),
+        vault = TokenVault(PreferenceDataStoreFactory.create(scope = scope, produceFile = { File(tmp.root, "t.preferences_pb") }),
             SoftwareTokenCrypto(KeyGenerator.getInstance("AES").apply { init(256) }.generateKey()))
         accounts = AccountRepository(AccountStore(File(tmp.root, "accounts.json")), vault, OkHttpClient(),
             BrowserLogin(OkHttpClient()), DeviceRegistrar(OkHttpClient()), deviceName = "Pixel 9", installationId = null,
@@ -101,7 +107,8 @@ class ForegroundSyncTest {
         server.shutdown()
     }
 
-    private fun sync() = ForegroundSync(scope, accounts, OkHttpClient(), listingCache, notifier, pollIntervalMs = 50)
+    private fun sync(ready: suspend () -> Unit = {}) =
+        ForegroundSync(scope, accounts, OkHttpClient(), listingCache, notifier, pollIntervalMs = 50, ready = ready)
 
     private suspend fun eventually(condition: () -> Boolean) = withTimeout(5_000) { while (!condition()) delay(20) }
 
@@ -141,5 +148,42 @@ class ForegroundSyncTest {
         val count = requests.size
         delay(300)
         assertEquals(count, requests.size)
+    }
+
+    /** Cold start: the account file is already published, but the repository has not created the sessions yet. */
+    @Test fun foregroundBeforeTheAccountsAreLoadedStartsTheStreamOnceReady() = runBlocking {
+        eventsBody = { sse(": ping\n\n" + " ".repeat(4096)).throttleBody(8, 10, TimeUnit.SECONDS) }
+        val store = AccountStore(File(tmp.root, "cold.json"))
+        store.upsert(Account.from(server.url("/"), SyncJson.decodeFromString(SyncAccount.serializer(), accountJson), 1))
+        vault.save("srv:u1", "syd_a")
+        accounts = AccountRepository(store, vault, OkHttpClient(), BrowserLogin(OkHttpClient()), DeviceRegistrar(OkHttpClient()),
+            deviceName = "Pixel 9", installationId = null, appVersion = "0.1.5", scope = scope)
+        val ready = CompletableDeferred<Unit>()
+        val sync = sync(ready = { ready.await() })
+        sync.onForeground()                                   // accounts visible, sessions not yet created
+        sync.onAccountsChanged(store.accounts.value)
+        delay(200)
+        assertTrue(eventTokens.isEmpty())
+        accounts.load()
+        ready.complete(Unit)
+        eventually { eventTokens.isNotEmpty() }
+        assertEquals("Bearer syd_a", eventTokens.single())
+        sync.onBackground()
+    }
+
+    @Test fun streamThatEndedWithSignInRequiredRestartsAfterSignInAgain() = runBlocking {
+        eventsBody = {
+            if (eventTokens.last() == "Bearer syd_a")
+                MockResponse().setResponseCode(401).setHeader("Content-Type", "application/json")
+                    .setBody("""{"statusCode":401,"message":"x","code":"device_revoked"}""")
+            else sse(": ping\n\n" + " ".repeat(4096)).throttleBody(8, 10, TimeUnit.SECONDS)
+        }
+        val sync = sync()
+        sync.onForeground()
+        eventually { accounts.accounts.value.single().needsSignIn }   // the stream ended with SIGN_IN_REQUIRED
+        accounts.addWithDeviceToken(server.url("/"), "syd_b")
+        sync.onAccountsChanged(accounts.accounts.value)                   // what AppGraph does after a sign-in
+        eventually { "Bearer syd_b" in eventTokens }
+        sync.onBackground()
     }
 }

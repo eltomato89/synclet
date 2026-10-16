@@ -28,6 +28,8 @@ class ForegroundSync(
     private val listingCache: ListingCache,
     private val notifier: ProviderNotifier,
     private val pollIntervalMs: Long = 60_000,
+    /** Accounts and sessions loaded (AppGraph.awaitReady); streams wait for it before looking up their session. */
+    private val ready: suspend () -> Unit = {},
 ) {
     private val mutableChanges = MutableSharedFlow<FolderChange>(extraBufferCapacity = 64)
     val changes: SharedFlow<FolderChange> = mutableChanges
@@ -54,11 +56,14 @@ class ForegroundSync(
 
     private fun reconcile(list: List<Account>) {
         val wanted = list.filterNot { it.needsSignIn }.map { it.key }.toSet()
+        // A stream that ended (sign-in required, no session) counts as absent, so it is started again.
+        jobs.entries.removeAll { !it.value.isActive }
         (jobs.keys - wanted).forEach { jobs.remove(it)?.cancel() }
         (wanted - jobs.keys).forEach { key -> jobs[key] = run(key) }
     }
 
     private fun run(key: String): Job = scope.launch {
+        try { ready() } catch (e: CancellationException) { throw e } catch (e: Exception) { return@launch }   // startup failed
         val session = accounts.session(key) ?: return@launch
         val tracker = ChangeTracker(session.api)
         val stream = EventStream(session.api, sseClient)

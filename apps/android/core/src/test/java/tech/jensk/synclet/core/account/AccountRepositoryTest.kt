@@ -8,6 +8,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import java.util.concurrent.TimeUnit
+import org.junit.Assert.assertNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -125,5 +129,51 @@ class AccountRepositoryTest {
         assertEquals("/api/sync/v1/devices/current", server.takeRequest().path)
         assertNull(vault.load("srv:u1")); assertNull(store.get("srv:u1")); assertNull(repo.session("srv:u1"))
         assertEquals(listOf("srv:u1"), signedOut)
+    }
+
+    /** Leaving the login screen mid-way must neither lose the registered device nor leave the login session open. */
+    @Test fun cancelledCompletionStillStoresTheDeviceAndEndsTheSession() = runBlocking {
+        server.json("""{"device":$deviceJson,"token":"syd_new","account":$accountJson}""", 201)
+        server.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json")
+            .setBody(accountJson).setBodyDelay(500, TimeUnit.MILLISECONDS))
+        server.enqueue(MockResponse().setResponseCode(204))
+        val repo = repo(); repo.load()
+        val job = launch(Dispatchers.IO) { repo.completeBrowserLogin(server.url("/"), tokens) }
+        server.takeRequest(5, TimeUnit.SECONDS)!!                       // registration
+        server.takeRequest(5, TimeUnit.SECONDS)!!                       // /account (delayed)
+        job.cancelAndJoin()
+        assertEquals("/api/auth/logout", server.takeRequest(5, TimeUnit.SECONDS)!!.path)
+        assertEquals("syd_new", vault.load("srv:u1"))
+        assertNotNull(repo.session("srv:u1"))
+    }
+
+    @Test fun failingSignOutCallbackStillReportsTheChange() = runBlocking {
+        server.json("""{"device":$deviceJson,"token":"syd_a","account":$accountJson}""", 201)
+        server.json(accountJson); server.enqueue(MockResponse().setResponseCode(204))
+        var changed = 0
+        val repo = AccountRepository(store, vault, OkHttpClient(), BrowserLogin(OkHttpClient()), DeviceRegistrar(OkHttpClient()),
+            deviceName = "Pixel 9", installationId = "inst", appVersion = "0.1.5", scope = scope,
+            onAccountsChanged = { changed++ }, onSignedOut = { error("boom") })
+        repo.load(); repo.completeBrowserLogin(server.url("/"), tokens)
+        val before = changed
+        server.enqueue(MockResponse().setResponseCode(204))
+        runCatching { repo.signOut("srv:u1") }
+        assertEquals(before + 1, changed)
+        assertNull(store.get("srv:u1"))
+    }
+
+    /** The store must never publish an account whose session does not exist yet. */
+    @Test fun sessionExistsWhenTheAccountIsPublished() = runBlocking {
+        server.json("""{"device":$deviceJson,"token":"syd_a","account":$accountJson}""", 201)
+        server.json(accountJson); server.enqueue(MockResponse().setResponseCode(204))
+        val repo = repo(); repo.load()
+        val seen = CopyOnWriteArrayList<Boolean>()
+        val watcher = launch(Dispatchers.Unconfined) {
+            store.accounts.collect { list -> list.forEach { seen += repo.session(it.key) != null } }
+        }
+        repo.completeBrowserLogin(server.url("/"), tokens)
+        watcher.cancel()
+        assertTrue(seen.isNotEmpty())
+        assertTrue(seen.all { it })
     }
 }

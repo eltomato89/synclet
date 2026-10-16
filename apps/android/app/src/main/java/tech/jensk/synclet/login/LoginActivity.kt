@@ -9,6 +9,9 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.browser.customtabs.CustomTabsIntent
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import java.io.File
@@ -22,13 +25,15 @@ import tech.jensk.synclet.ui.theme.SyncletTheme
 
 /** Server entry, Custom Tab sign-in and the synclet://oauth redirect (also into a freshly started process). */
 class LoginActivity : ComponentActivity() {
+    private var prefill by mutableStateOf<String?>(null)
+    private var hint by mutableStateOf<String?>(null)
     private val graph get() = (application as SyncletApp).graph
     private val vm: LoginViewModel by viewModels {
         viewModelFactory {
             initializer {
                 LoginViewModel(ServerCheck(graph.http), BrowserLogin(graph.http), graph.accounts,
                     PendingLoginStore(File(noBackupFilesDir, "pending-login.json")), allowHttp = BuildConfig.DEBUG,
-                    ready = { graph.awaitReady() })
+                    ready = { graph.awaitReady() }, workScope = graph.scope)
             }
         }
     }
@@ -38,8 +43,7 @@ class LoginActivity : ComponentActivity() {
         enableEdgeToEdge()
         // A recreated activity (rotation, process restore) must not hand the same redirect in a second time.
         if (savedInstanceState == null) handle(intent)
-        val prefill = intent.getStringExtra(EXTRA_SERVER)
-        val hint = intent.getStringExtra(EXTRA_LOGIN_HINT)
+        takeExtras(intent)
         setContent {
             SyncletTheme {
                 LoginScreen(vm, prefillServer = prefill, loginHint = hint, onOpenBrowser = ::openBrowser, onDone = {
@@ -52,12 +56,22 @@ class LoginActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        handle(intent)
+        // singleTask: a redirect, or a new "sign in (again)" request for another account/server.
+        if (!handle(intent)) { setIntent(intent); takeExtras(intent) }
     }
 
-    private fun handle(intent: Intent?) {
-        val data = intent?.data ?: return
-        if (data.scheme == "synclet" && data.host == "oauth") vm.complete(data.toString())
+    /** True when [intent] was the browser redirect. */
+    private fun handle(intent: Intent?): Boolean {
+        val data = intent?.data ?: return false
+        if (data.scheme != "synclet" || data.host != "oauth") return false
+        vm.complete(data.toString())
+        return true
+    }
+
+    private fun takeExtras(intent: Intent) {
+        if (intent.data != null) return          // the redirect carries no extras; keep what the screen shows
+        prefill = intent.getStringExtra(EXTRA_SERVER)
+        hint = intent.getStringExtra(EXTRA_LOGIN_HINT)
     }
 
     private fun openBrowser(url: HttpUrl) {

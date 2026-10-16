@@ -70,15 +70,15 @@ class AppGraph(private val app: Application) : UploadEnvironment, ProviderEnviro
     override val notifier: ProviderNotifier = ContentResolverNotifier(app.contentResolver)
     override val deviceName: String = DeviceInfo.name(app)
 
-    val accounts = AccountRepository(
+    val accounts: AccountRepository = AccountRepository(
         store = accountStore, vault = tokenVault, http = http, browserLogin = BrowserLogin(http),
         registrar = DeviceRegistrar(http), deviceName = deviceName,
         installationId = DeviceRegistrar.installationId(DeviceInfo.androidId(app)), appVersion = appVersion, scope = scope,
         onAccountsChanged = { notifier.rootsChanged() },
-        onSignedIn = { key -> resumeAfterSignIn(key) },
+        onSignedIn = { key -> resumeAfterSignIn(key); foregroundSync.onAccountsChanged(accounts()) },
         onSignedOut = { key -> forgetAccount(key) },
     )
-    val foregroundSync = ForegroundSync(scope, accounts, sseHttp, listingCache, notifier)
+    val foregroundSync: ForegroundSync = ForegroundSync(scope, accounts, sseHttp, listingCache, notifier, ready = { awaitReady() })
     val folderChanges: SharedFlow<FolderChange> get() = foregroundSync.changes
     val selectedAccountKey: StateFlow<String?> = combine(settings.selectedAccount, accounts.accounts) { selected, list ->
         list.firstOrNull { it.key == selected }?.key ?: list.firstOrNull()?.key
@@ -93,12 +93,14 @@ class AppGraph(private val app: Application) : UploadEnvironment, ProviderEnviro
                 uploadQueue.load()
                 uploadQueue.prune()          // finished entries leave the list after 24 h even without new uploads
                 ready.complete(Unit)
-                accounts.accounts.value.forEach { if (uploadQueue.hasWork(it.key)) UploadScheduler.schedule(app, it.key) }
             } catch (e: Throwable) {
                 ready.completeExceptionally(e)
+                return@launch
             }
+            // Only now: sessions exist for every stored account.
+            launch { accounts.accounts.collect { foregroundSync.onAccountsChanged(it) } }
+            accounts.accounts.value.forEach { if (uploadQueue.hasWork(it.key)) UploadScheduler.schedule(app, it.key) }
         }
-        scope.launch { accounts.accounts.collect { foregroundSync.onAccountsChanged(it) } }
     }
 
     override suspend fun awaitReady() = ready.await()

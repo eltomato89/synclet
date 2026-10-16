@@ -3,6 +3,7 @@ package tech.jensk.synclet.login
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -28,6 +29,8 @@ class LoginViewModel(
     private val clock: () -> Long = System::currentTimeMillis,
     /** Accounts loaded (AppGraph.awaitReady) – a redirect may arrive in a process that is still starting. */
     private val ready: suspend () -> Unit = {},
+    /** Where the completion runs; the app scope in production, so leaving the screen cannot cut it short. */
+    private val workScope: CoroutineScope? = null,
 ) : ViewModel() {
     data class State(val busy: Boolean = false, val error: Throwable? = null, val done: Account? = null)
     private val mutableState = MutableStateFlow(State())
@@ -52,7 +55,7 @@ class LoginViewModel(
 
     /** The browser came back with synclet://oauth?…; the pending login is consumed whatever happens. */
     fun complete(redirect: String) {
-        viewModelScope.launch {
+        (workScope ?: viewModelScope).launch {
             mutableState.value = State(busy = true)
             try {
                 val p = withContext(Dispatchers.IO) { pending.consume() } ?: throw LoginError.Expired

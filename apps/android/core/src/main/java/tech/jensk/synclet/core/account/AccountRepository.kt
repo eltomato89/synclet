@@ -3,10 +3,12 @@ package tech.jensk.synclet.core.account
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.HttpUrl
 import okhttp3.OkHttpClient
@@ -49,16 +51,22 @@ class AccountRepository(
 
     fun session(key: String): AccountSession? = sessions[key]
 
-    /** Browser login finished: register this device, store its token, end the login session (SYNC_API §2.1 step 5). */
+    /**
+     * Browser login finished: register this device, store its token, end the login session (SYNC_API §2.1 step 5).
+     * Once the device is registered the rest runs to completion even if the caller is cancelled (screen left):
+     * the new device token is not lost, and the login session is always ended.
+     */
     suspend fun completeBrowserLogin(origin: HttpUrl, tokens: AppTokens): Account {
         try {
             val registration = registrar.register(origin, tokens.accessToken, deviceName, installationId, appVersion)
-            val account = try {
-                SyncApi(origin, http, FixedTokenSource(registration.token)).account()
-            } catch (e: CancellationException) { throw e } catch (e: Exception) { registration.account }
-            return activate(origin, registration.token, account)
+            return withContext(NonCancellable) {
+                val account = try {
+                    SyncApi(origin, http, FixedTokenSource(registration.token)).account()
+                } catch (e: CancellationException) { throw e } catch (e: Exception) { registration.account }
+                activate(origin, registration.token, account)
+            }
         } finally {
-            browserLogin.endSession(origin, tokens.refreshToken)
+            withContext(NonCancellable) { browserLogin.endSession(origin, tokens.refreshToken) }
         }
     }
 
@@ -85,20 +93,20 @@ class AccountRepository(
         vault.delete(key)
         store.remove(key)
         sessions.remove(key)
-        onSignedOut(key)
-        onAccountsChanged()
+        try { onSignedOut(key) } finally { onAccountsChanged() }
     }
 
     private suspend fun activate(origin: HttpUrl, token: String, remote: SyncAccount): Account {
         val key = remote.organizationId
         val account = signInMutex.withLock {
             vault.save(key, token)
-            val previous = store.get(key)
-            val account = Account.from(origin, remote, clock()).copy(needsSignIn = false, addedAt = previous?.addedAt ?: clock())
-            store.upsert(account)
+            // Session first: whoever sees the account in the store must find its session.
             val existing = sessions[key]
             if (existing != null && SyncApi.sameOrigin(existing.api.origin, origin)) existing.tokens.replace(token)
             else sessions[key] = newSession(key, origin, token)
+            val previous = store.get(key)
+            val account = Account.from(origin, remote, clock()).copy(needsSignIn = false, addedAt = previous?.addedAt ?: clock())
+            store.upsert(account)
             account
         }
         onSignedIn(key)

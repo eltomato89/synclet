@@ -52,7 +52,7 @@ fun LoginScreen(
     val state by vm.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val prefill = prefillServer?.removePrefix("https://")?.trimEnd('/').orEmpty()
-    var text by rememberSaveable { mutableStateOf(prefill) }
+    var text by rememberSaveable(prefill) { mutableStateOf(prefill) }
     val submit = {
         if (!state.busy && text.isNotBlank()) scope.launch { vm.prepare(text, loginHint)?.let(onOpenBrowser) }
     }
