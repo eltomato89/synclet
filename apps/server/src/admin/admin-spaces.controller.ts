@@ -19,8 +19,8 @@ import { SpacesRepo } from '../spaces/spaces.repo';
 type Tx = Prisma.TransactionClient;
 type Db = Tx | PrismaService;
 
-/** Per-space scan interval bounds (the scheduler waits at least 10 s between cycles anyway). */
-const MIN_INTERVAL_SEC = 1;
+/** Per-space scan interval bounds: the scheduler never cycles faster than 10 s, the web UI has the same minimum. */
+const MIN_INTERVAL_SEC = 10;
 const MAX_INTERVAL_SEC = 365 * 24 * 3600;
 
 const Member = z.object({ kind: z.enum(['user', 'group']), id: z.string().regex(UUID, 'invalid id'), role: z.enum(['read', 'write']) });

@@ -70,12 +70,20 @@ export class DiscoveryService {
         const parentGone = kind === 'team' && names.length === 0 && rows.length > 0 && (await this.anyLiveItems(rows.filter((r) => r.status !== 'ignored').map((r) => r.id)));
         for (const row of rows) {
           if (row.status === 'ignored') continue;
-          const next = await this.probe(row, parentGone);
-          if (next.status === row.status && next.readOnly === row.readOnly) continue;
-          await this.prisma.$transaction(async (tx) => {
+          const first = await this.probe(row, parentGone);
+          if (first.status === row.status && first.readOnly === row.readOnly) continue;
+          // Probe again under the space lock: a delete of the last root item in flight (entry
+          // vacated, row not yet tombstoned) must not make the space look missing.
+          const next = await this.prisma.$transaction(async (tx) => {
             await this.journal.lockSpace(tx, row.id);
-            await tx.space.update({ where: { id: row.id }, data: next });
+            const cur = await tx.space.findUnique({ where: { id: row.id } });
+            if (!cur || cur.status === 'ignored' || cur.rootPath !== row.rootPath) return null;
+            const again = await this.probe(cur, parentGone);
+            if (again.status === cur.status && again.readOnly === cur.readOnly) return null;
+            await tx.space.update({ where: { id: row.id }, data: again });
+            return again;
           }, TX_OPTS);
+          if (!next) continue;
           changed.push(row.id);
           for (const u of await this.access.usersOf(row.id)) affected.add(u);
           const what = next.status !== row.status ? `now ${next.status}` : `readOnly=${next.readOnly}`;
@@ -177,7 +185,8 @@ export class DiscoveryService {
         await tx.spaceMember.deleteMany({ where: { spaceId: row.id } });
         await tx.item.deleteMany({ where: { spaceId: row.id } });
         // The journal is gone: cursors handed out before must expire (full resync), not miss deletes.
-        await tx.$executeRaw`UPDATE "SyncScope" SET "minSeq" = seq WHERE "spaceId" = ${row.id}::uuid`;
+        // seq moves on too: a head cursor handed out before must not survive a later restore.
+        await tx.$executeRaw`UPDATE "SyncScope" SET seq = seq + 1, "minSeq" = seq + 1 WHERE "spaceId" = ${row.id}::uuid`;
         await tx.space.update({ where: { id: row.id }, data: { status: 'ignored' } });
         return trash.map((t) => t.id);
       }, TX_OPTS);

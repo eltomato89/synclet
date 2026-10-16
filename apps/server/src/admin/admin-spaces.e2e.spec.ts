@@ -163,7 +163,7 @@ describe('admin API: spaces', () => {
       const ext = await createTestSpace(ctx, 'NAS', 'external');
       expect((await call('PATCH', `/admin/spaces/${ext.id}`, { watch: 'off', scanIntervalSec: 3600 })).json()).toMatchObject({ watch: 'off', scanIntervalSec: 3600 });
       expect((await call('PATCH', `/admin/spaces/${ext.id}`, { scanIntervalSec: null })).json()).toMatchObject({ watch: 'off', scanIntervalSec: null });
-      for (const body of [{ watch: 'sometimes' }, { scanIntervalSec: 0 }, { scanIntervalSec: 1.5 }]) {
+      for (const body of [{ watch: 'sometimes' }, { scanIntervalSec: 0 }, { scanIntervalSec: 9 }, { scanIntervalSec: 1.5 }]) {
         expect((await call('PATCH', `/admin/spaces/${ext.id}`, body)).statusCode).toBe(400);
       }
       expect((await call('PATCH', '/admin/spaces/00000000-0000-4000-8000-000000000000', { watch: 'off' })).statusCode).toBe(404);

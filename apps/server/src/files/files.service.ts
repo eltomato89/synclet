@@ -54,6 +54,13 @@ interface TrashIntent {
   deletedBy?: string;
 }
 
+/** sha256 (hex) of a file's bytes, the format of `Item.contentHash`. */
+async function sha256Of(abs: string): Promise<string> {
+  const hash = createHash('sha256');
+  await pipeline(createReadStream(abs), hash);
+  return hash.digest('hex');
+}
+
 async function sizeOf(abs: string): Promise<bigint> {
   const st = await lstat(abs, { bigint: true });
   if (!st.isDirectory()) return st.isFile() ? st.size : 0n;
@@ -166,7 +173,7 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
     let created: string | null = null;
     try {
       return await this.prisma.$transaction(async (tx) => {
-        await this.journal.lockSpace(tx, space.id);
+        await this.journal.lockSpaceForWrite(tx, space);
         const parentRel = await this.parentPath(tx, space, parentId);
         const { sibs, keys } = await this.takenKeys(tx, space, parentId);
         await this.assertRealDir(space, parentRel);
@@ -247,7 +254,7 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
     let published: { abs: string; ino: bigint } | null = null;
     try {
       return await this.prisma.$transaction(async (tx) => {
-        await this.journal.lockSpace(tx, space.id);
+        await this.journal.lockSpaceForWrite(tx, space);
         const parentRel = await this.parentPath(tx, space, parentId);
         const { sibs, keys } = await this.takenKeys(tx, space, parentId);
         await this.assertRealDir(space, parentRel);
@@ -315,6 +322,36 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
       return { item: fresh, target, changedOnDisk: true };
     }
     return { item, target, changedOnDisk: false };
+  }
+
+  /**
+   * R-inode: some file systems (Docker Desktop's virtiofs) hand out a new inode for an unchanged
+   * file, e.g. after our own rename-over. lockedFile would take that for an atomic save on the host
+   * (version + 1, 412). Before the locked write: when only inode/device differ from the row (size and
+   * mtime equal) and the row has a content hash, the file is hashed (outside the lock); equal bytes
+   * just refresh ino/dev in a short locked transaction – guarded by an unchanged row and an
+   * unchanged disk entry – without a version bump or journal entry. Anything else is left to
+   * lockedFile (no hash: the conservative new version stays).
+   */
+  private async settleInodeDrift(space: IndexSpace, itemId: string): Promise<void> {
+    const row = await this.prisma.item.findFirst({ where: { id: itemId, spaceId: space.id, deletedAt: null } });
+    if (!row || row.type !== 'file' || row.ino === null || !row.contentHash) return;
+    const target = this.abs(space, row.path);
+    const same = (a: { size: bigint; mtime: Date; ino: bigint; dev: bigint } | null, b: { size: bigint; mtime: Date; ino: bigint; dev: bigint }) =>
+      !!a && a.size === b.size && a.mtime.getTime() === b.mtime.getTime() && a.ino === b.ino && a.dev === b.dev;
+    const disk = await statEntry(target).catch(() => null);
+    if (!disk || disk.size !== row.size || disk.mtime.getTime() !== row.mtime.getTime()) return;
+    if (disk.ino === row.ino && disk.dev === row.dev) return;
+    const hash = await sha256Of(target).catch(() => null);
+    if (hash !== row.contentHash || !same(await statEntry(target).catch(() => null), disk)) return;
+    await this.prisma.$transaction(async (tx) => {
+      if ((await this.journal.lockLiveSpace(tx, space)) !== 'ok') return;
+      if (!same(await statEntry(target).catch(() => null), disk)) return;
+      await tx.item.updateMany({
+        where: { id: row.id, deletedAt: null, path: row.path, version: row.version, size: row.size, mtime: row.mtime, ino: row.ino, dev: row.dev, contentHash: row.contentHash },
+        data: { ino: disk.ino, dev: disk.dev },
+      });
+    }, TX_OPTS);
   }
 
   /**
@@ -413,10 +450,11 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
     if (opts.ifMatchVersion !== null && pre.version !== opts.ifMatchVersion) throw new SyncError('conflict', 'version mismatch', pre);
     const { tmp, sha256 } = await this.receive(space, body, opts.modifiedAt, opts.maxBytes);
     try {
+      await this.settleInodeDrift(space, itemId);
       // The transaction returns the conflict instead of throwing, so the recorded
       // external version is committed before the 412 goes out.
       const outcome = await this.withPreparedVersion(space, itemId, (prepared) => this.prisma.$transaction(async (tx) => {
-        await this.journal.lockSpace(tx, space.id);
+        await this.journal.lockSpaceForWrite(tx, space);
         const { item, target, changedOnDisk } = await this.lockedFile(tx, space, itemId);
         // Edited on the host but not yet indexed: that version is recorded, report the conflict.
         if (changedOnDisk) return { conflict: item, reason: 'file changed on disk' } as const;
@@ -451,8 +489,9 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
     guardBody(body);
     const { tmp, sha256 } = await this.receive(space, body);
     try {
+      await this.settleInodeDrift(space, itemId);
       const decided = await this.withPreparedVersion(space, itemId, (prepared) => this.prisma.$transaction(async (tx) => {
-        await this.journal.lockSpace(tx, space.id);
+        await this.journal.lockSpaceForWrite(tx, space);
         const live = await this.store.getLive(tx, space.id, itemId);
         if (!live || live.type !== 'file') {
           const row = live ?? (await tx.item.findFirst({ where: { id: itemId, spaceId: space.id } }));
@@ -505,7 +544,7 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
     let moved: { from: string; to: string } | null = null;
     try {
       return await this.prisma.$transaction(async (tx) => {
-        await this.journal.lockSpace(tx, space.id);
+        await this.journal.lockSpaceForWrite(tx, space);
         const item = await this.store.getLive(tx, space.id, itemId);
         if (!item) throw new SyncError('not_found');
         if (opts.ifMatchEtag && opts.ifMatchEtag !== itemEtag(item)) throw new SyncError('conflict', 'etag mismatch', item);
@@ -596,7 +635,7 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
     let result: Item | typeof CROSS_DEVICE;
     try {
       result = await this.prisma.$transaction(async (tx) => {
-        for (const id of [src.id, dst.id].sort()) await this.journal.lockSpace(tx, id);
+        for (const sp of [src, dst].sort((a, b) => (a.id < b.id ? -1 : 1))) await this.journal.lockSpaceForWrite(tx, sp);
         const item = await this.store.getLive(tx, src.id, itemId);
         if (!item) throw new SyncError('not_found');
         if (copy && (await this.subtreeSnapshot(tx, src, item)) !== copy.snap) {
@@ -652,6 +691,8 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
       }, TX_OPTS);
     } catch (e) {
       for (const d of versionMoves.reverse()) {
+        // A merge removed the emptied source folder: re-create it before moving back.
+        await mkdir(path.dirname(d.from), { recursive: true }).catch(() => {});
         await rename(d.to, d.from).catch((err) => this.log.error(`cannot undo version move ${d.to} -> ${d.from}: ${String(err)}`));
       }
       const r = renamed as { from: string; to: string } | null;
@@ -751,7 +792,7 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
     let staged: { from: string; storePath: string } | null = null;
     try {
       await this.prisma.$transaction(async (tx) => {
-        await this.journal.lockSpace(tx, space.id);
+        await this.journal.lockSpaceForWrite(tx, space);
         const item = await this.store.getLive(tx, space.id, itemId);
         if (!item) throw new SyncError('not_found');
         // Already gone on the host (not indexed yet): the delete stands, there is nothing to trash.

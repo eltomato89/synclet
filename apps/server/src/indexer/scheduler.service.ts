@@ -63,6 +63,8 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     await this.startup();
     // Only now: a watcher-triggered reconcile during recovery could tombstone vacated entries.
     await this.watcher.start();
+    // Not awaited: the server must listen without walking every (network) storage first.
+    this.deepCleanupRun = this.deepCleanup().catch((e) => { this.log.error(`deep cleanup failed: ${(e as Error).message}`); return 0; });
     // Maintenance also runs once right after the first scan: hosts that restart daily would
     // otherwise never reach the 24 h timer.
     this.stopped = false;
@@ -77,6 +79,9 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
       void this.scanAll({ dueOnly: true }).finally(() => this.scheduleNextScan());
     }, this.cycleMs || this.config.scanIntervalSec * 1000);
   }
+
+  /** The background deep temp sweep started at boot (awaitable for tests). */
+  deepCleanupRun: Promise<number> = Promise.resolve(0);
 
   /** First scan + first maintenance after boot (awaitable for tests). */
   initialRun: Promise<void> = Promise.resolve();
@@ -108,12 +113,47 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
   }
 
   /**
-   * Removes `.synclet-tmp-*` files and directories (any depth) left by crashes; at boot nothing is
-   * in flight, so no age gate applies. Symlinks are never followed; `.synclet-trash-*` is never touched.
+   * Removes `.synclet-tmp-*` files and directories left by crashes; at boot nothing is in flight,
+   * so no age gate applies. Personal spaces are swept at any depth. Team folders and external
+   * storages (possibly huge network mounts) only at their top level, where uploads and moves
+   * between spaces keep their temp entries; the deep sweep of those runs after the server listens
+   * (`deepCleanup`). Symlinks are never followed; `.synclet-trash-*` is never touched.
    */
   async startupCleanup(): Promise<number> {
+    this.bootAt = new Date();
     let removed = 0;
-    const walk = async (dir: string, owner: string): Promise<void> => {
+    for (const { space, name, readOnly } of await this.writableSpaces()) {
+      removed += await this.sweep(space.rootPath, name, { deep: space.kind === 'personal' });
+    }
+    return removed;
+  }
+
+  /**
+   * The deep sweep of team folders and external storages, in the background after boot: removes
+   * temp entries below their top level that were last changed before `before` (default: the boot),
+   * so nothing an upload or move started since then is touched.
+   */
+  async deepCleanup(before: Date = this.bootAt ?? new Date()): Promise<number> {
+    let removed = 0;
+    for (const { space, name } of await this.writableSpaces()) {
+      if (space.kind === 'personal' || this.stopped) continue;
+      removed += await this.sweep(space.rootPath, name, { deep: true, before });
+    }
+    if (removed) this.log.log(`deep cleanup removed ${removed} temp leftover(s) in team folders and storages`);
+    return removed;
+  }
+
+  /** Boot time of the startup cleanup (the deep sweep's age gate). */
+  private bootAt?: Date;
+
+  private async writableSpaces(): Promise<IndexableSpace[]> {
+    const spaces = await this.spaces.indexable().catch((e) => { this.log.error(`startup cleanup: ${(e as Error).message}`); return [] as IndexableSpace[]; });
+    return spaces.filter((s) => !s.readOnly);
+  }
+
+  private async sweep(root: string, owner: string, opts: { deep: boolean; before?: Date }): Promise<number> {
+    let removed = 0;
+    const walk = async (dir: string): Promise<void> => {
       let entries: Dirent[];
       try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
       for (const e of entries) {
@@ -122,17 +162,18 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
           if (isTempName(e.name)) {
             const st = await lstat(abs);
             if (st.isSymbolicLink()) continue;
+            // ctime cannot be set by clients (unlike mtime): newer means created after `before`.
+            if (opts.before && st.ctime >= opts.before) continue;
             if (st.isDirectory() || st.isFile()) { await rm(abs, { recursive: true, force: true }); removed++; }
-          } else if (e.isDirectory() && !e.name.startsWith('.synclet-trash-')) {
-            await walk(abs, owner); // Dirent from readdir never follows symlinks
+          } else if (opts.deep && e.isDirectory() && !e.name.startsWith('.synclet-trash-')) {
+            await walk(abs); // Dirent from readdir never follows symlinks
           }
         } catch (err) {
           this.log.warn(`startup cleanup: cannot remove ${abs} (${owner}): ${(err as Error).message}`);
         }
       }
     };
-    const spaces = await this.spaces.indexable().catch((e) => { this.log.error(`startup cleanup: ${(e as Error).message}`); return [] as IndexableSpace[]; });
-    for (const { space, name, readOnly } of spaces) if (!readOnly) await walk(space.rootPath, name);
+    await walk(root);
     return removed;
   }
 

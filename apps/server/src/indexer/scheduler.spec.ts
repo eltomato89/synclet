@@ -156,6 +156,8 @@ describe('SchedulerService', () => {
     jest.spyOn(files, 'recoverStagedTrash').mockImplementation(async () => { order.push('recover:start'); await recoveryGate; order.push('recover:end'); return 0; });
     const start = jest.spyOn(watcher, 'start').mockImplementation(async () => { order.push('watcher'); });
     jest.spyOn(s, 'scanAll').mockImplementation(async () => { order.push('scan'); });
+    // The deep sweep of team/external storages starts after boot and is not awaited.
+    jest.spyOn(s, 'deepCleanup').mockImplementation(() => { order.push('deep'); return new Promise<number>(() => {}); });
     ctx.config.background = true;
     try {
       // The watcher's own bootstrap hook must not subscribe (Nest runs hooks concurrently).
@@ -167,7 +169,7 @@ describe('SchedulerService', () => {
       expect(start).not.toHaveBeenCalled();
       releaseRecovery();
       await boot;
-      expect(order).toEqual(['discover', 'cleanup', 'recover:start', 'recover:end', 'watcher', 'scan']);
+      expect(order).toEqual(['discover', 'cleanup', 'recover:start', 'recover:end', 'watcher', 'deep', 'scan']);
     } finally {
       s.onModuleDestroy();
       ctx.config.background = false;
@@ -243,6 +245,31 @@ describe('SchedulerService', () => {
     await s.startup();
     expect(await ctx.prisma.space.count({ where: { kind: 'team' } })).toBe(1);
     expect(await readdir(path.join(ctx.config.teamsRoot, 'Familie'))).toEqual(['keep.txt']);
+  });
+
+  it('boot cleans only the top level of team/external roots; the deep sweep runs later, sparing newer temps', async () => {
+    const nas = await createTestSpace(ctx, 'NAS', 'external');
+    const team = await createTestSpace(ctx, 'Familie');
+    await mkdir(path.join(nas.rootPath, 'a', 'b'), { recursive: true });
+    await writeFile(path.join(nas.rootPath, '.synclet-tmp-top'), 'x');
+    await writeFile(path.join(nas.rootPath, 'a', 'b', '.synclet-tmp-deep'), 'x');
+    await mkdir(path.join(team.rootPath, 'd'));
+    await writeFile(path.join(team.rootPath, 'd', '.synclet-tmp-deep'), 'x');
+    const s = ctx.app.get(SchedulerService);
+    expect(await s.startupCleanup()).toBe(1);
+    expect(await readdir(nas.rootPath)).toEqual(['a']);
+    expect(await readdir(path.join(nas.rootPath, 'a', 'b'))).toEqual(['.synclet-tmp-deep']);
+    expect(await readdir(path.join(team.rootPath, 'd'))).toEqual(['.synclet-tmp-deep']);
+
+    // Background sweep after listen: only leftovers from before the boot, never an in-flight temp.
+    await new Promise((r) => setTimeout(r, 30));
+    const bootAt = new Date();
+    await new Promise((r) => setTimeout(r, 30));
+    await writeFile(path.join(nas.rootPath, 'a', '.synclet-tmp-inflight'), 'x');
+    expect(await s.deepCleanup(bootAt)).toBe(2);
+    expect(await readdir(path.join(nas.rootPath, 'a', 'b'))).toEqual([]);
+    expect(await readdir(path.join(team.rootPath, 'd'))).toEqual([]);
+    expect((await readdir(path.join(nas.rootPath, 'a'))).sort()).toEqual(['.synclet-tmp-inflight', 'b']);
   });
 
   it('honours a per-space scan interval for periodic cycles', async () => {
