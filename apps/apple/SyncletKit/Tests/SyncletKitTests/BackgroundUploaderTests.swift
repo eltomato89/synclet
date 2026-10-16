@@ -43,14 +43,18 @@ final class BackgroundUploaderTests: XCTestCase {
 
     private var accounts: AccountStore!
 
-    private func makeUploader(_ protocolClass: AnyClass) -> BackgroundUploader {
+    private static let shareIdentifier = "tech.jensk.synclet.upload.share"
+
+    private func makeUploader(_ protocolClass: AnyClass, identifier: String = "tech.jensk.synclet.upload.test",
+                              drainOnly: Bool = false,
+                              onInvalidated: @escaping @Sendable () -> Void = {}) -> BackgroundUploader {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [protocolClass]
         let changes = changes!, clock = clock!
-        return BackgroundUploader(identifier: "tech.jensk.synclet.upload.test", queue: queue, appGroup: nil,
+        return BackgroundUploader(identifier: identifier, queue: queue, appGroup: nil,
                                   accounts: accounts, credentials: credentials,
-                                  sessionConfiguration: configuration, now: { clock.now },
-                                  onChange: { changes.add($0) })
+                                  sessionConfiguration: configuration, drainOnly: drainOnly, now: { clock.now },
+                                  onChange: { changes.add($0) }, onInvalidated: onInvalidated)
     }
 
     /// Switches to ``HoldingURLProtocol`` (requests stay open until released).
@@ -313,7 +317,7 @@ final class BackgroundUploaderTests: XCTestCase {
         await waitUntil("done") { status(entry.id) == .done }
         let claim = try XCTUnwrap(changes.all.first { $0.id == entry.id && $0.status == .uploading })
         XCTAssertEqual(claim.owner, "tech.jensk.synclet.upload.test")
-        XCTAssertEqual(claim.leaseUntil, clock.now.addingTimeInterval(600))
+        XCTAssertEqual(claim.leaseUntil, clock.now.addingTimeInterval(BackgroundUploader.leaseDuration))
         let done = try XCTUnwrap(queue.entry(id: entry.id))
         XCTAssertNil(done.owner)
         XCTAssertNil(done.leaseUntil)
@@ -424,6 +428,152 @@ final class BackgroundUploaderTests: XCTestCase {
         second.isInverted = true
         uploader.handleBackgroundEvents { second.fulfill() }
         await fulfillment(of: [second], timeout: 0.3)
+    }
+
+    // MARK: Lease vs. task lifetime (final review, finding 1)
+
+    /// No task can outlive the claim it was started under: the session's resource timeout
+    /// bounds every task, the lease covers it plus a margin.
+    func testLeaseOutlivesTheResourceTimeoutOfEveryTask() {
+        XCTAssertGreaterThanOrEqual(BackgroundUploader.resourceTimeout, 3600)
+        XCTAssertGreaterThan(BackgroundUploader.leaseDuration, BackgroundUploader.resourceTimeout)
+        XCTAssertEqual(uploader.sessionResourceTimeout, BackgroundUploader.resourceTimeout)
+    }
+
+    /// The Share extension claimed an entry and is gone; its task waits (offline) without
+    /// progress. The app, launched long after the old 10-minute renewal window, must not
+    /// take the entry over while that task could still run – only after the lease ran out.
+    func testShareClaimIsNotTakenOverWhileItsTaskCouldStillRun() async throws {
+        useHoldingProtocol()
+        uploader.invalidate()
+        let share = makeUploader(HoldingURLProtocol.self, identifier: Self.shareIdentifier)
+        let entry = try enqueueSmall()
+        uploader = makeUploader(MockURLProtocol.self, identifier: "tech.jensk.synclet.upload.app")
+        MockURLProtocol.reset { _ in .json(201, Fixtures.itemJSON(id: "f_1")) }
+        await share.pump()
+        await waitUntil("share request sent") { HoldingURLProtocol.count == 1 }
+        XCTAssertEqual(queue.entry(id: entry.id)?.owner, Self.shareIdentifier)
+
+        clock.advance(11 * 60)
+        await uploader.pump()
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(queue.entry(id: entry.id)?.owner, Self.shareIdentifier, "taken over after 11 min")
+        XCTAssertTrue(MockURLProtocol.requests.isEmpty)
+
+        clock.advance(BackgroundUploader.resourceTimeout - 11 * 60)
+        let later = makeUploader(MockURLProtocol.self, identifier: "tech.jensk.synclet.upload.app")
+        defer { later.invalidate() }
+        await later.pump()
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(queue.entry(id: entry.id)?.owner, Self.shareIdentifier, "taken over within the resource timeout")
+        XCTAssertTrue(MockURLProtocol.requests.isEmpty)
+
+        clock.advance(BackgroundUploader.leaseDuration - BackgroundUploader.resourceTimeout + 1)
+        let expired = makeUploader(MockURLProtocol.self, identifier: "tech.jensk.synclet.upload.app")
+        defer { expired.invalidate() }
+        await expired.pump()
+        await waitUntil("taken over and done") { status(entry.id) == .done }
+        share.invalidate()
+    }
+
+    /// The app and the Share extension never share a chunk file (a takeover must not
+    /// overwrite or delete the file the other process' task reads).
+    func testChunkFilesArePerSession() {
+        let other = makeUploader(MockURLProtocol.self, identifier: Self.shareIdentifier)
+        defer { other.invalidate() }
+        let mine = uploader.chunkURL(of: "e1", offset: 16 << 20)
+        let theirs = other.chunkURL(of: "e1", offset: 16 << 20)
+        XCTAssertNotEqual(mine, theirs)
+        XCTAssertEqual(mine.deletingLastPathComponent(), theirs.deletingLastPathComponent())
+    }
+
+    /// A `200` whose `done` could not be written keeps the copy (the entry is retried, not lost).
+    func testFinishedButQueueWriteFailedKeepsTheCopy() async throws {
+        useHoldingProtocol()
+        let entry = try enqueueSmall()
+        await uploader.pump()
+        await waitUntil("upload sent") { HoldingURLProtocol.count == 1 }
+        let uploads = dir.appending(path: "uploads")
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: uploads.path)
+        HoldingURLProtocol.releaseAll()
+        try await Task.sleep(for: .milliseconds(300))
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: uploads.path)
+        XCTAssertEqual(status(entry.id), .uploading, "the write failed")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: queue.fileURL(for: entry.id).path), "copy kept")
+    }
+
+    // MARK: Background events
+
+    /// A `urlSessionDidFinishEvents` without a handler is only good for the handler of that
+    /// delivery: a later event starts a new delivery, whose handler waits for its own end.
+    func testEventsFinishedFlagExpiresWithTheNextEvent() async throws {
+        final class Count: @unchecked Sendable {
+            private let lock = NSLock(); private var n = 0
+            func bump() { lock.withLock { n += 1 } }
+            var value: Int { lock.withLock { n } }
+        }
+        uploader.urlSessionDidFinishEvents(forBackgroundURLSession: URLSession.shared)
+        let task = URLSession.shared.dataTask(with: URL(string: "https://synclet.example.test/x")!)
+        uploader.urlSession(URLSession.shared, task: task, didCompleteWithError: nil)
+        let calls = Count()
+        uploader.handleBackgroundEvents { calls.bump() }
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(calls.value, 0, "called for a delivery that had not finished")
+        uploader.urlSessionDidFinishEvents(forBackgroundURLSession: URLSession.shared)
+        await waitUntil("called") { calls.value == 1 }
+    }
+
+    // MARK: Draining another process' session (final review, finding 2)
+
+    /// The app's uploader for the Share extension's session only drains it: it starts nothing.
+    func testDrainOnlyUploaderStartsNothing() async throws {
+        MockURLProtocol.reset { _ in .json(201, Fixtures.itemJSON(id: "f_1")) }
+        uploader.invalidate()
+        uploader = makeUploader(MockURLProtocol.self, identifier: Self.shareIdentifier, drainOnly: true)
+        let waiting = try enqueueSmall(name: "w.txt")
+        let claimed = try enqueueSmall(name: "c.txt")
+        markUploading(claimed.id, owner: Self.shareIdentifier, leaseUntil: clock.now.addingTimeInterval(60))
+        await uploader.pump()
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertTrue(MockURLProtocol.requests.isEmpty)
+        XCTAssertEqual(status(waiting.id), .waiting)
+        XCTAssertEqual(queue.entry(id: claimed.id)?.owner, Self.shareIdentifier)
+    }
+
+    /// A non-final step that completes while draining goes back to `waiting` (keeping the tus
+    /// URL) for the app's own uploader instead of starting the next request on the share session.
+    func testDrainingHandsTheNextStepBack() async throws {
+        useHoldingProtocol()
+        uploader.invalidate()
+        uploader = makeUploader(HoldingURLProtocol.self, identifier: Self.shareIdentifier)
+        HoldingURLProtocol.respond { _ in .empty(201, headers: ["Location": "/api/sync/v1/uploads/abc"]) }
+        let entry = try enqueueSparse(size: 40 << 20)
+        await uploader.pump()
+        await waitUntil("create sent") { HoldingURLProtocol.count == 1 }
+        uploader.enterDrainOnly()
+        HoldingURLProtocol.releaseAll()
+        await waitUntil("handed back") { status(entry.id) == .waiting }
+        try await Task.sleep(for: .milliseconds(200))
+        let e = try XCTUnwrap(queue.entry(id: entry.id))
+        XCTAssertNil(e.owner)
+        XCTAssertNil(e.leaseUntil)
+        XCTAssertNil(e.nextAttemptAt)
+        XCTAssertEqual(e.attempts, 0)
+        XCTAssertEqual(e.tusURL?.absoluteString, "https://synclet.example.test/api/sync/v1/uploads/abc")
+        XCTAssertEqual(HoldingURLProtocol.count, 1, "no PATCH on the drained session")
+        XCTAssertTrue(chunkFiles().isEmpty)
+    }
+
+    /// `relinquish()` lets running tasks finish, then the session is invalid and reported.
+    func testRelinquishInvalidatesTheSession() async throws {
+        let invalidated = expectation(description: "invalidated")
+        uploader.invalidate()
+        uploader = makeUploader(MockURLProtocol.self, identifier: Self.shareIdentifier, drainOnly: true,
+                                onInvalidated: { invalidated.fulfill() })
+        XCTAssertFalse(uploader.isInvalidated)
+        uploader.relinquish()
+        await fulfillment(of: [invalidated], timeout: 5)
+        XCTAssertTrue(uploader.isInvalidated)
     }
 
     func testTaskDescriptionRoutesCompletion() throws {

@@ -57,7 +57,6 @@ targets:
           - tech.jensk.synclet.ios.refresh
         UIBackgroundModes:
           - fetch
-          - processing
         # Localized in InfoPlist.xcstrings.
         NSPhotoLibraryUsageDescription: Synclet uploads the photos and videos you choose to your server.
         ITSAppUsesNonExemptEncryption: false

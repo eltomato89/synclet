@@ -11,6 +11,9 @@ protocol UploadDriving: AnyObject {
     func pump() async
     func cancel(id: String) async
     func handleBackgroundEvents(completion: @escaping @Sendable () -> Void)
+    /// Gives the session up once its running tasks finished (drain-only share uploader).
+    func relinquish()
+    var isInvalidated: Bool { get }
 }
 
 extension BackgroundUploader: UploadDriving {}
@@ -22,6 +25,12 @@ extension BackgroundUploader: UploadDriving {}
 /// The list is re-read on every change the uploader reports and on the Share extension's
 /// Darwin notification (``UploadSignal/notificationName``). An entry that turns `done` signals
 /// its account's working set once and reloads visible folders of that account.
+///
+/// The Share extension's session (`tech.jensk.synclet.upload.share`) is attached only for a
+/// while, through a drain-only ``BackgroundUploader``: when the system hands the app its events
+/// (the extension is gone), and to cancel a share-owned upload („Abbrechen“, sign-out). The
+/// drain-only uploader records final results and hands every next step to the app's uploader;
+/// afterwards the session is relinquished, so the extension can use it again.
 @MainActor
 @Observable
 final class UploadCenter {
@@ -64,8 +73,11 @@ final class UploadCenter {
     @ObservationIgnored private let signal: (String) async -> Void
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let makeShareUploader: ((UploadCenter) -> UploadDriving)?
-    /// Created when the system hands the app the Share extension's session events.
-    @ObservationIgnored private var shareUploader: UploadDriving?
+    /// Attached to the Share extension's session while its events are handled or a share-owned
+    /// upload is cancelled; dropped once the session is invalid.
+    @ObservationIgnored private(set) var shareUploader: UploadDriving?
+    /// The system's handler for the share session's events is outstanding (do not relinquish yet).
+    @ObservationIgnored private var shareEventsPending = false
     /// Last seen status per entry (finished uploads are signalled on the transition).
     @ObservationIgnored private var knownStatus: [String: UploadStatus] = [:]
     @ObservationIgnored private let startedAt = Date()
@@ -77,7 +89,8 @@ final class UploadCenter {
     /// - Parameters:
     ///   - signal: called once per account when an upload finished (working set + visible folders).
     ///   - uploader: builds the app's uploader (it reports back to the center).
-    ///   - shareUploader: builds an uploader for the Share extension's session (background events).
+    ///   - shareUploader: builds a drain-only uploader for the Share extension's session; it reports
+    ///     changes through ``shareUploaderChanged(_:)`` and its end through ``shareUploaderInvalidated()``.
     init(queue: UploadQueue, defaults: UserDefaults = .standard, signal: @escaping (String) async -> Void,
          shareUploader: ((UploadCenter) -> UploadDriving)? = nil,
          uploader: (UploadCenter) -> UploadDriving) {
@@ -94,18 +107,25 @@ final class UploadCenter {
         let environment = AppEnvironment.shared
         let appGroup = environment.configuration.appGroup
         let queue = UploadQueue(appGroup: appGroup ?? "group.tech.jensk.synclet")
-        func uploaderFactory(_ identifier: String) -> (UploadCenter) -> UploadDriving {
+        func uploaderFactory(_ identifier: String, drainOnly: Bool) -> (UploadCenter) -> UploadDriving {
             { center in
                 BackgroundUploader(
                     identifier: identifier, queue: queue, appGroup: appGroup,
                     accounts: environment.accountStore, credentials: environment.credentials,
                     // No background session inside the test host.
                     sessionConfiguration: AppEnvironment.isRunningTests ? .ephemeral : nil,
+                    drainOnly: drainOnly,
                     onChange: { [weak center] entry in
-                        Task { @MainActor in center?.uploaderChanged(entry) }
+                        Task { @MainActor in
+                            if drainOnly { center?.shareUploaderChanged(entry) } else { center?.uploaderChanged(entry) }
+                        }
                     },
                     onProgress: { [weak center] id, sent in
                         Task { @MainActor in center?.uploaderProgress(entryId: id, bytesSent: sent) }
+                    },
+                    onInvalidated: { [weak center] in
+                        guard drainOnly else { return }
+                        Task { @MainActor in center?.shareUploaderInvalidated() }
                     })
             }
         }
@@ -115,8 +135,8 @@ final class UploadCenter {
                 await environment.signalWorkingSet(accountKey: key)
                 environment.accounts.notifyChange(key)
             },
-            shareUploader: uploaderFactory(UploadSignal.shareSessionIdentifier),
-            uploader: uploaderFactory(UploadSignal.appSessionIdentifier))
+            shareUploader: uploaderFactory(UploadSignal.shareSessionIdentifier, drainOnly: true),
+            uploader: uploaderFactory(UploadSignal.appSessionIdentifier, drainOnly: false))
     }
 
     // MARK: - Lifecycle
@@ -143,17 +163,20 @@ final class UploadCenter {
     }
 
     /// `application(_:handleEventsForBackgroundURLSession:completionHandler:)`. The Share
-    /// extension's session is taken over when the extension is gone (spec §2.6).
+    /// extension's events are drained when the extension is gone (spec §2.6); then its session
+    /// is relinquished.
     func handleBackgroundEvents(identifier: String, completion: @escaping @Sendable () -> Void) {
         switch identifier {
         case UploadSignal.appSessionIdentifier:
             uploader.handleBackgroundEvents(completion: completion)
         case UploadSignal.shareSessionIdentifier:
-            if shareUploader == nil { shareUploader = makeShareUploader?(self) }
-            if let shareUploader {
-                shareUploader.handleBackgroundEvents(completion: completion)
-            } else {
-                completion()
+            guard let shareUploader = attachShareSession() else { return completion() }
+            shareEventsPending = true
+            shareUploader.handleBackgroundEvents { [weak self] in
+                Task { @MainActor in
+                    self?.shareEventsDone()
+                    completion()
+                }
             }
         default:
             Self.log.error("events for an unknown session \(identifier, privacy: .public)")
@@ -235,9 +258,12 @@ final class UploadCenter {
     }
 
     /// „Abbrechen“ (running) and „Entfernen“ (failed): stops the transfer and drops the entry.
+    /// A Share extension upload is cancelled in the extension's session (attached for that).
     func cancel(_ id: String) async {
+        if let entry = queue.entry(id: id), Self.isShareOwned(entry) {
+            await cancelInShareSession([id])
+        }
         await uploader.cancel(id: id)
-        await shareUploader?.cancel(id: id)
         reload()
     }
 
@@ -247,13 +273,52 @@ final class UploadCenter {
         reload()
     }
 
-    /// After a sign-out: running transfers stop, all of the account's entries go.
+    /// After a sign-out: running transfers stop (also the Share extension's), all of the
+    /// account's entries go.
     func accountSignedOut(_ key: String) async {
-        for entry in entries where entry.accountKey == key && entry.status == .uploading {
-            await uploader.cancel(id: entry.id)
-        }
+        let running = queue.all().filter { $0.accountKey == key && $0.status == .uploading }
+        let shareOwned = running.filter(Self.isShareOwned).map(\.id)
+        if !shareOwned.isEmpty { await cancelInShareSession(shareOwned) }
+        for entry in running { await uploader.cancel(id: entry.id) }
         queue.removeAll(accountKey: key)
         reload()
+    }
+
+    // MARK: - Share extension session
+
+    private static func isShareOwned(_ entry: UploadEntry) -> Bool {
+        entry.status == .uploading && entry.owner == UploadSignal.shareSessionIdentifier
+    }
+
+    /// The drain-only uploader on the Share extension's session (a new one once the last is invalid).
+    private func attachShareSession() -> UploadDriving? {
+        if let shareUploader, !shareUploader.isInvalidated { return shareUploader }
+        shareUploader = makeShareUploader?(self)
+        return shareUploader
+    }
+
+    /// Cancels the tasks of `ids` in the Share extension's session, then gives it back
+    /// (unless the system's event handler is still outstanding; that path gives it back).
+    private func cancelInShareSession(_ ids: [String]) async {
+        guard let share = attachShareSession() else { return }
+        for id in ids { await share.cancel(id: id) }
+        if !shareEventsPending { share.relinquish() }
+    }
+
+    private func shareEventsDone() {
+        shareEventsPending = false
+        shareUploader?.relinquish()
+    }
+
+    /// `onChange` of the drain-only share uploader: a handed-back step waits for the app's uploader.
+    func shareUploaderChanged(_ entry: UploadEntry) {
+        reload()
+        Task { await uploader.pump() }
+    }
+
+    /// The share session is invalid: the next events or cancel attach anew.
+    func shareUploaderInvalidated() {
+        if shareUploader?.isInvalidated ?? false { shareUploader = nil }
     }
 
     // MARK: - Uploader reports
