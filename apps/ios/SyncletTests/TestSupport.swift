@@ -18,6 +18,20 @@ struct MockResponse {
     var status: Int
     var body: Data
     var contentType: String
+    /// Extra response headers (`ETag` …).
+    var headers: [String: String] = [:]
+    /// Fails the request with this transport error instead of answering.
+    var failure: URLError.Code?
+
+    /// A transport failure (no HTTP response).
+    static func failure(_ code: URLError.Code) -> MockResponse {
+        MockResponse(status: 0, body: Data(), contentType: "", failure: code)
+    }
+
+    static func data(_ status: Int, _ body: Data, contentType: String = "application/octet-stream",
+                     headers: [String: String] = [:]) -> MockResponse {
+        MockResponse(status: status, body: body, contentType: contentType, headers: headers)
+    }
 
     static func json(_ status: Int, _ text: String) -> MockResponse {
         MockResponse(status: status, body: Data(text.utf8), contentType: "application/json")
@@ -78,8 +92,13 @@ final class MockURLProtocol: URLProtocol, @unchecked Sendable {
             return
         }
         let mock = handler(recordedRequest)
+        if let failure = mock.failure {
+            client?.urlProtocol(self, didFailWithError: URLError(failure))
+            return
+        }
+        let headers = mock.headers.merging(["Content-Type": mock.contentType]) { current, _ in current }
         let response = HTTPURLResponse(url: request.url!, statusCode: mock.status, httpVersion: "HTTP/1.1",
-                                       headerFields: ["Content-Type": mock.contentType])!
+                                       headerFields: headers)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: mock.body)
         client?.urlProtocolDidFinishLoading(self)
@@ -279,4 +298,118 @@ func eventually(timeout: Duration = .seconds(3), _ condition: () -> Bool) async 
         try? await Task.sleep(for: .milliseconds(10))
     }
     return condition()
+}
+
+// MARK: - Browser
+
+/// Builds `SyncItem`s for the browser tests.
+enum Items {
+    static func file(_ name: String, id: String? = nil, parent: String = "root", size: Int64 = 3,
+                     version: Int = 1, etag: String? = nil, modified: String = "2026-10-01T10:00:00.000Z",
+                     thumbnail: Bool = false) -> SyncItem {
+        let id = id ?? "f-\(name)"
+        return SyncItem(id: id, parentId: parent, type: .file, kind: .file, name: name, size: size,
+                        mime: "text/plain", version: version, etag: etag ?? "e-\(id)-\(version)",
+                        contentEtag: "v\(version)", createdAt: modified, modifiedAt: modified, documentId: id,
+                        capabilities: SyncCapabilities(read: true, write: true, rename: true, move: true, delete: true),
+                        preview: SyncPreview(kind: "image", thumbnail: thumbnail))
+    }
+
+    static func folder(_ name: String, id: String? = nil, parent: String = "root",
+                       modified: String = "2026-10-01T10:00:00.000Z") -> SyncItem {
+        let id = id ?? "d-\(name)"
+        return SyncItem(id: id, parentId: parent, type: .folder, kind: .folder, name: name, etag: "e-\(id)",
+                        createdAt: modified, modifiedAt: modified,
+                        capabilities: SyncCapabilities(read: true, write: true, rename: true, move: true,
+                                                       delete: true, addChildren: true))
+    }
+
+    static func json(_ value: some Encodable) -> Data {
+        try! JSONEncoder().encode(value)
+    }
+
+    static func error(_ status: Int, _ code: String, item: SyncItem? = nil) -> MockResponse {
+        var body: [String: Any] = ["statusCode": status, "message": "\(code) message", "code": code]
+        if let item { body["item"] = try! JSONSerialization.jsonObject(with: json(item)) }
+        return .json(status, String(data: try! JSONSerialization.data(withJSONObject: body), encoding: .utf8)!)
+    }
+}
+
+/// A fake Sync API for the folder tests: children per folder (paginated), mutations answered by
+/// `override` first (`nil` falls through to the defaults).
+final class FakeFolderServer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [String: [SyncItem]]
+    private var overrideHandler: ((RecordedRequest) -> MockResponse?)?
+    /// Items per children page (`nil` = all in one page).
+    var pageSize: Int?
+
+    init(_ children: [String: [SyncItem]]) {
+        storage = children
+    }
+
+    var children: [String: [SyncItem]] {
+        get { lock.withLock { storage } }
+        set { lock.withLock { storage = newValue } }
+    }
+
+    var override: ((RecordedRequest) -> MockResponse?)? {
+        get { lock.withLock { overrideHandler } }
+        set { lock.withLock { overrideHandler = newValue } }
+    }
+
+    static let base = URL(string: "https://files.test")!
+
+    func client() -> SyncAPIClient {
+        SyncAPIClient(baseURL: Self.base, token: "syd_test", session: MockURLProtocol.session())
+    }
+
+    func install() {
+        MockURLProtocol.reset { [self] request in respond(request) }
+    }
+
+    func respond(_ request: RecordedRequest) -> MockResponse {
+        if let override, let response = override(request) { return response }
+        let parts = request.path.split(separator: "/").map(String.init)
+        // api sync v1 items <id> [children]
+        guard parts.count >= 4, parts[0] == "api", parts[1] == "sync", parts[2] == "v1", parts[3] == "items" else {
+            return Items.error(404, "not_found")
+        }
+        switch (request.method, parts.count) {
+        case ("GET", 6) where parts[5] == "children":
+            guard let all = children[parts[4]] else { return Items.error(404, "not_found") }
+            let items = URLComponents(url: request.request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            let query = Dictionary(items.map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { $1 })
+            let start = Int(query["pageToken"] ?? "") ?? 0
+            let end = pageSize.map { min(all.count, start + $0) } ?? all.count
+            let next = end < all.count ? String(end) : nil
+            return .data(200, Items.json(SyncChildrenPage(items: Array(all[start..<end]), nextPageToken: next, cursor: "1")),
+                         contentType: "application/json")
+        case ("POST", 4):
+            let name = request.json?["name"] as? String ?? "?"
+            let parent = request.json?["parentId"] as? String ?? "root"
+            return .data(201, Items.json(Items.folder(name, parent: parent)), contentType: "application/json")
+        case ("PATCH", 5):
+            let id = parts[4]
+            let existing = children.values.flatMap { $0 }.first { $0.id == id } ?? Items.file(id)
+            var updated = existing
+            if let name = request.json?["name"] as? String { updated.name = name }
+            if let parent = request.json?["parentId"] as? String { updated.parentId = parent }
+            return .data(200, Items.json(updated), contentType: "application/json")
+        case ("DELETE", 5):
+            return .empty(204)
+        default:
+            return Items.error(404, "not_found")
+        }
+    }
+}
+
+/// Records `signal(accountKey)` calls.
+@MainActor
+final class SignalRecorder {
+    private(set) var keys: [String] = []
+
+    var callback: (String) async -> Void {
+        { [weak self] key in self?.keys.append(key) }
+    }
 }
