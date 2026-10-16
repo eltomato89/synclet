@@ -2,11 +2,13 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { Prisma, Space, SpaceKind } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
-import { access, lstat, mkdir, readdir, rename, rm, rmdir } from 'node:fs/promises';
+import { access, mkdir, readdir, rename, rm, rmdir } from 'node:fs/promises';
 import path from 'node:path';
 import { APP_CONFIG, AppConfig } from '../config';
 import { AppEvents } from '../common/events';
+import { UUID } from '../common/ids';
 import { isIgnored, nameKey, validateName } from '../common/names';
+import { isRealDir as isDir } from '../common/paths';
 import { SyncError } from '../common/sync-error';
 import { JournalService } from '../journal/journal.service';
 import { PrismaService, TX_OPTS } from '../prisma/prisma.service';
@@ -15,7 +17,8 @@ import type { SpaceRow } from './space-access.service';
 type Tx = Prisma.TransactionClient;
 type DiscoveredKind = Extract<SpaceKind, 'team' | 'external'>;
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Disk errors that mean "the server user may not write here" (owner, mode, read-only mount). */
+const NOT_WRITABLE = ['EACCES', 'EPERM', 'EROFS'];
 const isErrno = (e: unknown, ...codes: string[]) => codes.includes((e as NodeJS.ErrnoException)?.code ?? '');
 
 /**
@@ -25,6 +28,8 @@ const isErrno = (e: unknown, ...codes: string[]) => codes.includes((e as NodeJS.
  *   additionally every team space while `/teams` itself is empty and any team space has items.
  * - readOnly: `access(root, W_OK)` fails.
  * Never deletes anything on disk; missing spaces keep their index (the scheduler skips them).
+ * Removed spaces stay as rows with status `ignored`: their folder is never turned into a space
+ * again (matched by rootPath) until `restoreSpace`.
  */
 @Injectable()
 export class DiscoveryService {
@@ -55,8 +60,9 @@ export class DiscoveryService {
           if (row) { created.push(row.id); this.log.log(`discovered ${kind} space "${name}" (${root})`); }
         }
         // An empty /teams while team spaces hold items: the volume is not mounted.
-        const parentGone = kind === 'team' && names.length === 0 && rows.length > 0 && (await this.anyLiveItems(rows.map((r) => r.id)));
+        const parentGone = kind === 'team' && names.length === 0 && rows.length > 0 && (await this.anyLiveItems(rows.filter((r) => r.status !== 'ignored').map((r) => r.id)));
         for (const row of rows) {
+          if (row.status === 'ignored') continue;
           const next = await this.probe(row, parentGone);
           if (next.status === row.status && next.readOnly === row.readOnly) continue;
           await this.prisma.$transaction(async (tx) => {
@@ -87,6 +93,7 @@ export class DiscoveryService {
           await mkdir(root);
         } catch (e) {
           if (isErrno(e, 'EEXIST')) throw new SyncError('name_conflict', 'a folder with this name exists');
+          if (isErrno(e, ...NOT_WRITABLE)) throw notWritable(parent);
           throw e;
         }
         try {
@@ -105,40 +112,47 @@ export class DiscoveryService {
   renameTeam(id: string, rawName: string): Promise<SpaceRow> {
     return this.serial(async () => {
       const row = await this.teamRow(id);
+      if (row.status === 'ignored') throw new SyncError('invalid_request', 'the team folder was removed; restore it first');
       const name = this.checkName(rawName);
       if (name === row.name) return row;
       const parent = path.dirname(row.rootPath);
       const root = path.join(parent, name);
-      const updated = await this.prisma.$transaction(async (tx) => {
-        await this.lockDiscovery(tx);
-        await this.journal.lockSpace(tx, row.id);
-        await this.assertTeamNameFree(tx, parent, name, row);
-        try {
-          await rename(row.rootPath, root);
-        } catch (e) {
-          if (isErrno(e, 'ENOENT')) throw new SyncError('space_unavailable', 'team folder is not available');
-          if (isErrno(e, 'EEXIST', 'ENOTEMPTY')) throw new SyncError('name_conflict', 'a folder with this name exists');
-          throw e;
-        }
-        try {
-          return await tx.space.update({ where: { id: row.id }, data: { name, rootPath: root } });
-        } catch (e) {
-          await rename(root, row.rootPath).catch((err) => this.log.error(`cannot undo rename of ${row.rootPath}: ${(err as Error).message}`));
-          throw e;
-        }
-      }, TX_OPTS);
+      let renamed = false;
+      let updated: Space;
+      try {
+        updated = await this.prisma.$transaction(async (tx) => {
+          await this.lockDiscovery(tx);
+          await this.journal.lockSpace(tx, row.id);
+          await this.assertTeamNameFree(tx, parent, name, row);
+          try {
+            await rename(row.rootPath, root);
+          } catch (e) {
+            if (isErrno(e, 'ENOENT')) throw new SyncError('space_unavailable', 'team folder is not available');
+            if (isErrno(e, 'EEXIST', 'ENOTEMPTY')) throw new SyncError('name_conflict', 'a folder with this name exists');
+            if (isErrno(e, ...NOT_WRITABLE)) throw notWritable(parent);
+            throw e;
+          }
+          renamed = true;
+          return tx.space.update({ where: { id: row.id }, data: { name, rootPath: root } });
+        }, TX_OPTS);
+      } catch (e) {
+        // Also covers a failed commit after the rename: the row still has the old name.
+        if (renamed) await rename(root, row.rootPath).catch((err) => this.log.error(`cannot undo rename of ${row.rootPath}: ${(err as Error).message}`));
+        throw e;
+      }
       this.events.emit('spaces.changed');
       return updated;
     });
   }
 
   /**
-   * Removes a team space: its row, members, index, journal, trash entries, versions and share
-   * links. The folder on disk stays untouched.
+   * Removes a team folder or external storage from Synclet: drops its members, index, journal,
+   * trash entries, versions and share links, and keeps the row with status `ignored` so discovery
+   * does not bring the still existing folder back. The folder on disk stays untouched.
    */
   removeSpace(id: string): Promise<void> {
     return this.serial(async () => {
-      const row = await this.teamRow(id);
+      const row = await this.sharedRow(id);
       const trashIds = await this.prisma.$transaction(async (tx) => {
         await this.journal.lockSpace(tx, row.id);
         const trash = await tx.trashEntry.findMany({ where: { spaceId: row.id }, select: { id: true } });
@@ -146,7 +160,11 @@ export class DiscoveryService {
         await tx.trashEntry.deleteMany({ where: { spaceId: row.id } });
         await tx.fileVersion.deleteMany({ where: { spaceId: row.id } });
         await tx.shareLink.deleteMany({ where: { spaceId: row.id } });
-        await tx.space.delete({ where: { id: row.id } }); // cascades: items, journal head, members
+        await tx.spaceMember.deleteMany({ where: { spaceId: row.id } });
+        await tx.item.deleteMany({ where: { spaceId: row.id } });
+        // The journal is gone: cursors handed out before must expire (full resync), not miss deletes.
+        await tx.$executeRaw`UPDATE "SyncScope" SET "minSeq" = seq WHERE "spaceId" = ${row.id}::uuid`;
+        await tx.space.update({ where: { id: row.id }, data: { status: 'ignored' } });
         return trash.map((t) => t.id);
       }, TX_OPTS);
       // Content kept in /meta for the removed index (never anything in the space folder).
@@ -154,8 +172,24 @@ export class DiscoveryService {
       for (const dir of [path.join(meta, 'versions', row.id), ...trashIds.filter((t) => UUID.test(t)).map((t) => path.join(meta, 'trash', t))]) {
         await rm(dir, { recursive: true, force: true }).catch((e) => this.log.warn(`cannot remove ${dir}: ${(e as Error).message}`));
       }
-      this.log.log(`removed team space "${row.name}" (folder ${row.rootPath} kept)`);
+      this.log.log(`removed ${row.kind} space "${row.name}" (folder ${row.rootPath} kept, ignored by discovery)`);
       this.events.emit('spaces.changed');
+    });
+  }
+
+  /** Takes a removed space back: available (or missing per the disk), no members; the next scan re-indexes it. */
+  restoreSpace(id: string): Promise<SpaceRow> {
+    return this.serial(async () => {
+      const row = await this.sharedRow(id);
+      if (row.status !== 'ignored') return row;
+      const next = await this.probe(row, false);
+      const updated = await this.prisma.$transaction(async (tx) => {
+        await this.journal.lockSpace(tx, row.id);
+        return tx.space.update({ where: { id: row.id }, data: next });
+      }, TX_OPTS);
+      this.log.log(`restored ${row.kind} space "${row.name}" (${next.status})`);
+      this.events.emit('spaces.changed');
+      return updated;
     });
   }
 
@@ -222,15 +256,22 @@ export class DiscoveryService {
   }
 
   private async teamRow(id: string): Promise<Space> {
+    const row = await this.sharedRow(id);
+    if (row.kind !== 'team') throw new SyncError('invalid_request', 'only team folders can be renamed');
+    return row;
+  }
+
+  /** A team folder or external storage (personal spaces are managed with their user). */
+  private async sharedRow(id: string): Promise<Space> {
     const row = UUID.test(id) ? await this.prisma.space.findUnique({ where: { id } }) : null;
     if (!row) throw new SyncError('not_found', 'space not found');
-    if (row.kind !== 'team') throw new SyncError('invalid_request', 'only team folders can be renamed or removed');
+    if (row.kind === 'personal') throw new SyncError('invalid_request', 'personal spaces cannot be changed here');
     return row;
   }
 }
 
-async function isDir(p: string): Promise<boolean> {
-  return lstat(p).then((s) => s.isDirectory(), () => false);
+function notWritable(dir: string): SyncError {
+  return new SyncError('forbidden', `Synclet cannot write to ${dir} – check owner/permissions (PUID/PGID)`);
 }
 
 async function isReadOnly(p: string): Promise<boolean> {

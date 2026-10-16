@@ -15,7 +15,7 @@ import { WatcherService } from './watcher.service';
 describe('SchedulerService', () => {
   let ctx: TestContext;
   beforeEach(async () => { ctx = await createTestApp(); });
-  afterEach(async () => { await ctx.close(); });
+  afterEach(async () => { jest.restoreAllMocks(); await ctx.close(); });
 
   it('removes leftover temp files at startup and scans all users', async () => {
     const user = await createTestUser(ctx);
@@ -262,6 +262,5 @@ describe('SchedulerService', () => {
     fullScan.mockClear();
     await s.scanAll();
     expect(fullScan.mock.calls.map(([sp]) => sp.id).sort()).toEqual([fast.id, slow.id].sort());
-    jest.restoreAllMocks();
   });
 });

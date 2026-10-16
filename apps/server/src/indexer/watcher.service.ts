@@ -1,11 +1,10 @@
 import { Inject, Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
 import type { AsyncSubscription } from '@parcel/watcher';
-import { lstat } from 'node:fs/promises';
 import path from 'node:path';
 import { APP_CONFIG, AppConfig } from '../config';
 import { AppEvents } from '../common/events';
 import { isIgnored } from '../common/names';
-import { parentRel, userRoot } from '../common/paths';
+import { isRealDir, parentRel, userRoot } from '../common/paths';
 import type { IndexSpace } from '../common/types';
 import { SpacesRepo } from '../spaces/spaces.repo';
 import { DirDebouncer } from './debounce';
@@ -106,7 +105,7 @@ export class WatcherService implements OnApplicationBootstrap, OnModuleDestroy {
     if (!this.config.watch) { this.mode = 'scan-only'; return; }
     // Typical failure cause: inotify watch limit (raise fs.inotify.max_user_watches on the host).
     this.mode = (await this.watch(this.config.dataRoot)) ? 'active' : 'scan-only';
-    if (await isDir(this.config.teamsRoot)) await this.watch(this.config.teamsRoot);
+    if (await isRealDir(this.config.teamsRoot)) await this.watch(this.config.teamsRoot);
     await this.syncExternalSubs();
   }
 
@@ -201,8 +200,4 @@ function inside(root: string, abs: string): string | null {
   const rel = path.relative(root, abs);
   if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return null;
   return rel.split(path.sep).join('/');
-}
-
-async function isDir(p: string): Promise<boolean> {
-  return lstat(p).then((s) => s.isDirectory(), () => false);
 }

@@ -4,12 +4,13 @@ import path from 'node:path';
 import { createTestApp, createTestUser, TestContext } from '../../test/context';
 import { IndexerService } from '../indexer/indexer.service';
 import { DiscoveryService } from './discovery.service';
+import { SpaceAccess } from './space-access.service';
 import { SpacesRepo } from './spaces.repo';
 
 describe('DiscoveryService', () => {
   let ctx: TestContext; let discovery: DiscoveryService;
   beforeEach(async () => { ctx = await createTestApp(); discovery = ctx.app.get(DiscoveryService); });
-  afterEach(async () => { await ctx.close(); });
+  afterEach(async () => { jest.restoreAllMocks(); await ctx.close(); });
 
   const spaces = () => ctx.prisma.space.findMany({ where: { kind: { not: 'personal' } }, orderBy: { name: 'asc' } });
   const team = (name: string) => path.join(ctx.config.teamsRoot, name);
@@ -161,20 +162,80 @@ describe('DiscoveryService', () => {
     expect((await discovery.discover()).created).toHaveLength(1); // only "Belegt"
 
     await discovery.removeSpace(created.id);
-    expect(await ctx.prisma.space.findUnique({ where: { id: created.id } })).toBeNull();
+    expect(await ctx.prisma.space.findUnique({ where: { id: created.id } })).toMatchObject({ status: 'ignored' });
     expect(await ctx.prisma.item.count({ where: { spaceId: created.id } })).toBe(0);
     expect(await ctx.prisma.spaceMember.count({ where: { spaceId: created.id } })).toBe(0);
     expect(await ctx.prisma.fileChange.count({ where: { scopeId: created.id } })).toBe(0);
     expect(await readdir(team('Familie Müller'))).toEqual(['x.txt']);
   });
 
-  it('external storages and personal spaces cannot be renamed or removed', async () => {
+  it('a removed (ignored) space is never re-created or re-indexed, and is invisible to former members', async () => {
+    await mkdir(storage('NAS'));
+    await writeFile(path.join(storage('NAS'), 'a.txt'), 'a');
+    await discovery.discover();
+    const [nas] = await spaces();
+    const user = await createTestUser(ctx, 'anna');
+    await ctx.prisma.spaceMember.create({ data: { spaceId: nas.id, userId: user.id, role: 'write' } });
+    await ctx.app.get(IndexerService).fullScan(ctx.app.get(SpacesRepo).toIndexSpace(nas));
+    const cursorBefore = await ctx.prisma.syncScope.findUniqueOrThrow({ where: { spaceId: nas.id } });
+
+    await discovery.removeSpace(nas.id);
+    expect(await discovery.discover()).toEqual({ created: [], changed: [] });
+    expect((await spaces()).map((r) => [r.id, r.status])).toEqual([[nas.id, 'ignored']]);
+    expect((await ctx.app.get(SpacesRepo).indexable()).map((x) => x.space.id)).not.toContain(nas.id);
+    const access = ctx.app.get(SpaceAccess);
+    const row = await ctx.prisma.space.findUniqueOrThrow({ where: { id: nas.id } });
+    expect(await access.roleFor(user, row)).toBeNull();
+    expect(await access.spacesFor(user)).toEqual([expect.objectContaining({ role: 'write', space: expect.objectContaining({ id: user.id }) })]);
+    await expect(access.require(user, nas.id, 'read')).rejects.toMatchObject({ code: 'not_found' });
+    // Old cursors of the dropped journal expire instead of silently missing deletes.
+    const scope = await ctx.prisma.syncScope.findUniqueOrThrow({ where: { spaceId: nas.id } });
+    expect(scope.minSeq).toBe(cursorBefore.seq);
+
+    const restored = await discovery.restoreSpace(nas.id);
+    expect(restored).toMatchObject({ id: nas.id, status: 'available' });
+    expect(await ctx.prisma.spaceMember.count({ where: { spaceId: nas.id } })).toBe(0);
+    expect((await ctx.app.get(SpacesRepo).indexable()).map((x) => x.space.id)).toContain(nas.id);
+    expect(await ctx.app.get(IndexerService).fullScan(ctx.app.get(SpacesRepo).toIndexSpace(restored))).toMatchObject({ created: 1 });
+    await expect(discovery.restoreSpace(user.id)).rejects.toMatchObject({ code: 'invalid_request' });
+  });
+
+  it('a removed team folder can be restored as missing when its folder is gone', async () => {
+    const t = await discovery.createTeam('Familie');
+    await discovery.removeSpace(t.id);
+    await rm(team('Familie'), { recursive: true });
+    expect(await discovery.restoreSpace(t.id)).toMatchObject({ status: 'missing' });
+  });
+
+  it('createTeam/renameTeam report an unwritable teams folder instead of a 500', async () => {
+    if (process.getuid?.() === 0) { console.warn('skipped as root'); return; }
+    const t = await discovery.createTeam('Familie');
+    await chmod(ctx.config.teamsRoot, 0o555);
+    try {
+      await expect(discovery.createTeam('Neu')).rejects.toMatchObject({ code: 'forbidden', message: expect.stringMatching(/cannot write to .*PUID\/PGID/) });
+      await expect(discovery.renameTeam(t.id, 'Anders')).rejects.toMatchObject({ code: 'forbidden' });
+    } finally {
+      await chmod(ctx.config.teamsRoot, 0o755);
+    }
+    expect((await ctx.prisma.space.findUniqueOrThrow({ where: { id: t.id } })).name).toBe('Familie');
+  });
+
+  it('renameTeam restores the folder name when the transaction fails after the disk rename', async () => {
+    const t = await discovery.createTeam('Familie');
+    const orig = ctx.prisma.$transaction.bind(ctx.prisma);
+    jest.spyOn(ctx.prisma, '$transaction').mockImplementationOnce(((fn: (tx: unknown) => Promise<unknown>, opts: unknown) =>
+      (orig as (f: unknown, o: unknown) => Promise<unknown>)(async (tx: unknown) => { await fn(tx); throw new Error('commit failed'); }, opts)) as never);
+    await expect(discovery.renameTeam(t.id, 'Anders')).rejects.toThrow('commit failed');
+    expect(await readdir(ctx.config.teamsRoot)).toEqual(['Familie']);
+    expect((await ctx.prisma.space.findUniqueOrThrow({ where: { id: t.id } })).name).toBe('Familie');
+  });
+
+  it('personal spaces cannot be renamed or removed; external storages cannot be renamed', async () => {
     const user = await createTestUser(ctx, 'anna');
     await mkdir(storage('NAS'));
     await discovery.discover();
     const [nas] = await spaces();
     await expect(discovery.renameTeam(nas.id, 'X')).rejects.toMatchObject({ code: 'invalid_request' });
-    await expect(discovery.removeSpace(nas.id)).rejects.toMatchObject({ code: 'invalid_request' });
     await expect(discovery.removeSpace(user.id)).rejects.toMatchObject({ code: 'invalid_request' });
     await expect(discovery.removeSpace('00000000-0000-4000-8000-000000000000')).rejects.toMatchObject({ code: 'not_found' });
   });

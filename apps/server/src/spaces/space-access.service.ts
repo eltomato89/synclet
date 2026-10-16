@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { Space } from '@prisma/client';
+import { UUID } from '../common/ids';
 import { SyncError } from '../common/sync-error';
 import type { IndexSpace } from '../common/types';
 import { PrismaService } from '../prisma/prisma.service';
@@ -8,7 +9,6 @@ import { SpacesRepo } from './spaces.repo';
 export type Role = 'read' | 'write';
 export type SpaceRow = Space;
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const KIND_ORDER: Record<Space['kind'], number> = { personal: 0, team: 1, external: 2 };
 
 const maxRole = (roles: Iterable<Role>): Role | null => {
@@ -19,7 +19,7 @@ const maxRole = (roles: Iterable<Role>): Role | null => {
 
 /**
  * Who may read or write which space (spec §1.2). Admins have no implicit access; disabled users
- * have none at all. A missing space still yields a role (it is listed); `require` maps it to 503.
+ * have none at all. Removed (`ignored`) spaces do not exist for anyone. A missing space still yields a role (it is listed); `require` maps it to 503.
  */
 @Injectable()
 export class SpaceAccess {
@@ -45,7 +45,7 @@ export class SpaceAccess {
       where: {
         OR: [
           { kind: 'personal', userId: user.id },
-          { kind: { in: ['team', 'external'] }, members: { some: { OR: [{ userId: user.id }, { groupId: { in: groupIds } }] } } },
+          { kind: { in: ['team', 'external'] }, status: { not: 'ignored' }, members: { some: { OR: [{ userId: user.id }, { groupId: { in: groupIds } }] } } },
         ],
       },
       include: { members: { where: { OR: [{ userId: user.id }, { groupId: { in: groupIds } }] }, select: { role: true } } },
@@ -65,7 +65,7 @@ export class SpaceAccess {
   async require(user: { id: string }, spaceId: string, need: Role): Promise<{ space: IndexSpace; role: Role }> {
     const id = spaceId === 'personal' ? user.id : spaceId;
     const row = UUID.test(id) ? await this.prisma.space.findUnique({ where: { id } }) : null;
-    const role = row ? await this.roleFor(user, row) : null;
+    const role = row && row.status !== 'ignored' ? await this.roleFor(user, row) : null;
     if (!row || !role) throw new SyncError('not_found', 'space not found');
     if (row.status === 'missing') throw new SyncError('space_unavailable', 'space is unavailable (storage not mounted)');
     if (need === 'write' && role !== 'write') throw new SyncError('forbidden', 'read-only access to this space');
@@ -77,9 +77,9 @@ export class SpaceAccess {
     if (!UUID.test(spaceId)) return [];
     const space = await this.prisma.space.findUnique({
       where: { id: spaceId },
-      select: { kind: true, userId: true, members: { select: { userId: true, group: { select: { members: { select: { userId: true } } } } } } },
+      select: { kind: true, status: true, userId: true, members: { select: { userId: true, group: { select: { members: { select: { userId: true } } } } } } },
     });
-    if (!space) return [];
+    if (!space || space.status === 'ignored') return [];
     if (space.kind === 'personal') return space.userId ? [space.userId] : [];
     const ids = new Set<string>();
     for (const m of space.members) {
@@ -101,8 +101,9 @@ export class SpaceAccess {
 
   private async roleOfEnabled(userId: string, space: { id: string; kind: string; userId: string | null; readOnly: boolean }): Promise<Role | null> {
     if (space.kind === 'personal') return space.userId === userId ? 'write' : null;
+    // Removed (ignored) spaces count as non-existent.
     const members = await this.prisma.spaceMember.findMany({
-      where: { spaceId: space.id, OR: [{ userId }, { group: { members: { some: { userId } } } }] },
+      where: { spaceId: space.id, space: { status: { not: 'ignored' } }, OR: [{ userId }, { group: { members: { some: { userId } } } }] },
       select: { role: true },
     });
     return this.cap(space, maxRole(members.map((m) => m.role)));

@@ -5,7 +5,7 @@ import { lstat, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { APP_CONFIG, AppConfig } from '../config';
 import { nameKey } from '../common/names';
-import { absPath, joinRel, parentRel } from '../common/paths';
+import { absPath, isRealDir, joinRel, parentRel } from '../common/paths';
 import type { IndexSpace } from '../common/types';
 import { ItemStore } from '../journal/item-store';
 import { ItemRef, JournalService, Tx } from '../journal/journal.service';
@@ -94,7 +94,7 @@ export class IndexerService {
 
   async fullScan(space: IndexSpace): Promise<ReconcileStats | null> {
     const root = space.rootPath;
-    const rootOk = await lstat(root).then((s) => s.isDirectory(), () => false);
+    const rootOk = await isRealDir(root);
     if (!rootOk || !(await this.parentLooksMounted(space))) {
       this.log.error(`space root ${root} missing or its volume looks unmounted – refusing to scan`);
       return null;
@@ -148,7 +148,7 @@ export class IndexerService {
       if (dir !== '') {
         const parent = await this.store.findLiveByPath(tx, space.id, dir);
         if (!parent || parent.type !== 'folder') {
-          const exists = await lstat(abs).then((s) => s.isDirectory(), () => false);
+          const exists = await isRealDir(abs);
           return exists ? { kind: 'missing-parent' } : { kind: 'missing-dir' };
         }
         parentId = parent.id;

@@ -71,6 +71,8 @@ enum SpaceKind {
 enum SpaceStatus {
   available
   missing
+  /// Removed by an admin: no members, no index; discovery skips its folder until restored.
+  ignored
 }
 
 enum SpaceWatch {

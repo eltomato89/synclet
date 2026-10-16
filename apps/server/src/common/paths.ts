@@ -1,4 +1,4 @@
-import { realpath } from 'node:fs/promises';
+import { lstat, realpath } from 'node:fs/promises';
 import path from 'node:path';
 
 /** Root folder of a personal space (only used to create and locate personal roots). */
@@ -36,4 +36,9 @@ export async function realpathInside(abs: string, root: string): Promise<string>
     throw new Error(`path escapes root: ${abs}`);
   }
   return realTarget;
+}
+
+/** True if `abs` is a real directory (symlinks are not followed; errors mean false). */
+export function isRealDir(abs: string): Promise<boolean> {
+  return lstat(abs).then((s) => s.isDirectory(), () => false);
 }

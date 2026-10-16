@@ -6,4 +6,5 @@ coverage/
 .DS_Store
 playwright-report/
 test-results/
-deploy/teams/
+deploy/teams/*
+!deploy/teams/.gitkeep
