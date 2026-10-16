@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="nav_files">Files</string>
+    <string name="nav_recent">Recent</string>
+    <string name="nav_search">Search</string>
+    <string name="nav_more">More</string>
+    <string name="nav_trash">Trash</string>
+    <string name="nav_uploads">Uploads</string>
+    <string name="space_personal">My Files</string>
+    <string name="account_sign_in_required">Sign In Again</string>
+    <string name="account_signed_in">Signed in</string>
+    <string name="accounts_title">Accounts</string>
+    <string name="accounts_add">Add Account</string>
+    <string name="accounts_sign_out">Sign Out</string>
+    <string name="accounts_sign_out_confirm">Sign out of %1$s? Uploads still waiting for this account are removed.</string>
+    <string name="accounts_cancel">Cancel</string>
+    <string name="settings_title">Settings</string>
+    <string name="welcome_text">Sign in to your Synclet server to see your files.</string>
+    <string name="welcome_sign_in">Sign In</string>
+    <string name="shared_text_name">Shared text</string>
+    <string name="shell_back">Back</string>
+</resources>

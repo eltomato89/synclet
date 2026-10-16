@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="nav_files">Dateien</string>
+    <string name="nav_recent">Zuletzt</string>
+    <string name="nav_search">Suche</string>
+    <string name="nav_more">Mehr</string>
+    <string name="nav_trash">Papierkorb</string>
+    <string name="nav_uploads">Uploads</string>
+    <string name="space_personal">Meine Dateien</string>
+    <string name="account_sign_in_required">Neu anmelden</string>
+    <string name="account_signed_in">Angemeldet</string>
+    <string name="accounts_title">Konten</string>
+    <string name="accounts_add">Konto hinzufügen</string>
+    <string name="accounts_sign_out">Abmelden</string>
+    <string name="accounts_sign_out_confirm">Von %1$s abmelden? Noch wartende Uploads dieses Kontos werden entfernt.</string>
+    <string name="accounts_cancel">Abbrechen</string>
+    <string name="settings_title">Einstellungen</string>
+    <string name="welcome_text">Melde dich bei deinem Synclet-Server an, um deine Dateien zu sehen.</string>
+    <string name="welcome_sign_in">Anmelden</string>
+    <string name="shared_text_name">Geteilter Text</string>
+    <string name="shell_back">Zurück</string>
+</resources>

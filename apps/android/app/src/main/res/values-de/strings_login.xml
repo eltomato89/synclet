@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="login_title">Anmelden</string>
+    <string name="login_server_label">Server-Adresse</string>
+    <string name="login_continue">Im Browser fortfahren</string>
+    <string name="login_again_notice">Melde dich erneut an, um %1$s wieder zu verbinden.</string>
+    <string name="login_error_invalid_address">Bitte eine gültige Server-Adresse eingeben, z. B. files.example.com.</string>
+    <string name="login_error_insecure">Nur https://-Adressen sind erlaubt.</string>
+    <string name="login_error_not_synclet">Kein Synclet-Server unter %1$s</string>
+    <string name="login_error_unreachable">%1$s ist nicht erreichbar. Bitte Adresse und Verbindung prüfen.</string>
+    <string name="login_error_state">Die Anmeldung konnte nicht bestätigt werden. Bitte erneut versuchen.</string>
+    <string name="login_error_denied">Die Anmeldung wurde abgelehnt (%1$s).</string>
+    <string name="login_error_expired">Die Anmeldung ist abgelaufen. Bitte neu beginnen.</string>
+    <string name="login_error_no_browser">Kein Browser für die Anmeldung installiert.</string>
+    <string name="login_error_generic">Anmeldung fehlgeschlagen (%1$s).</string>
+</resources>

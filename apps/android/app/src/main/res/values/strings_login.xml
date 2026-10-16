@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="login_title">Sign In</string>
+    <string name="login_server_label">Server address</string>
+    <string name="login_server_hint" translatable="false">files.example.com</string>
+    <string name="login_continue">Continue in Browser</string>
+    <string name="login_again_notice">Sign in again to reconnect %1$s.</string>
+    <string name="login_error_invalid_address">Please enter a valid server address, e.g. files.example.com.</string>
+    <string name="login_error_insecure">Only https:// addresses are allowed.</string>
+    <string name="login_error_not_synclet">No Synclet server at %1$s</string>
+    <string name="login_error_unreachable">%1$s cannot be reached. Check the address and your connection.</string>
+    <string name="login_error_state">The sign-in could not be verified. Please try again.</string>
+    <string name="login_error_denied">The sign-in was refused (%1$s).</string>
+    <string name="login_error_expired">The sign-in expired. Please start again.</string>
+    <string name="login_error_no_browser">No browser is installed to sign in.</string>
+    <string name="login_error_generic">Sign-in failed (%1$s).</string>
+</resources>
