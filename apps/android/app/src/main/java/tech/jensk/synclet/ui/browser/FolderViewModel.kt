@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import tech.jensk.synclet.R
@@ -50,15 +51,21 @@ class FolderViewModel(
     private val mutable = MutableStateFlow(State(items = listingCache.get(key, folderId)?.items.orEmpty()))
     val state: StateFlow<State> = mutable.asStateFlow()
     private var loadJob: Job? = null
+    private var loadMoreJob: Job? = null
+    private var firstLoadDone = false
+    /** Whether the latest load asked for folder mosaics; null until the first load has read the setting. */
+    private var fetchedWithThumbnails: Boolean? = null
+    /** Bumped when a refresh starts and when it replaces the listing; a page fetched for an older one is dropped. */
+    private var generation = 0
 
     init {
         viewModelScope.launch {
             combine(settings.viewMode, settings.sortOrder) { mode, sort -> mode to sort }.collect { (mode, sort) ->
-                val before = mutable.value
-                val reloadForGrid = mode == ViewMode.GRID && before.viewMode != ViewMode.GRID
+                val reloadForGrid = mode == ViewMode.GRID && fetchedWithThumbnails == false
                 mutable.update { it.copy(viewMode = mode, sort = sort, items = sortItems(it.items, sort)) }
                 // Folder mosaics only come with folderThumbnails=1; a first load still running without them restarts.
-                if (reloadForGrid) refresh(initial = before.loading)
+                // Before the first load finished it is restarted as the initial load (no pull-to-refresh spinner).
+                if (reloadForGrid) refresh(initial = !firstLoadDone)
             }
         }
         viewModelScope.launch {
@@ -71,16 +78,25 @@ class FolderViewModel(
 
     fun refresh(initial: Boolean = false) {
         loadJob?.cancel()
+        // A page 2 still on its way belongs to the old listing: it must not be merged into the new one.
+        loadMoreJob?.cancel()
+        loadMoreJob = null
+        mutable.update { it.copy(loadingMore = false) }
+        generation++
         loadJob = viewModelScope.launch {
             mutable.update { it.copy(loading = initial && it.items.isEmpty(), refreshing = !initial, error = null) }
             try {
+                // From the setting itself: on open the stored GRID may not have reached the state yet.
+                val grid = settings.viewMode.first() == ViewMode.GRID
+                fetchedWithThumbnails = grid
                 coroutineScope {
-                    val grid = mutable.value.viewMode == ViewMode.GRID
                     val folder = async { session.api.item(folderId) }
                     val page = async { session.api.children(folderId, null, pageSize, folderThumbnails = grid) }
                     val p = page.await()
                     val f = folder.await()
                     listingCache.put(key, folderId, p.items, complete = p.nextPageToken == null)
+                    firstLoadDone = true
+                    generation++
                     mutable.update {
                         it.copy(folder = f, items = sortItems(p.items, it.sort), nextPageToken = p.nextPageToken,
                             loading = false, refreshing = false, error = null,
@@ -90,6 +106,7 @@ class FolderViewModel(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                firstLoadDone = true
                 mutable.update { it.copy(loading = false, refreshing = false, error = e) }
             }
         }
@@ -99,9 +116,14 @@ class FolderViewModel(
         val token = mutable.value.nextPageToken ?: return
         if (mutable.value.loadingMore) return
         mutable.update { it.copy(loadingMore = true) }
-        viewModelScope.launch {
+        val startedFor = generation
+        loadMoreJob = viewModelScope.launch {
             try {
                 val page = session.api.children(folderId, token, pageSize, folderThumbnails = mutable.value.viewMode == ViewMode.GRID)
+                if (startedFor != generation) {                 // the listing was reloaded meanwhile
+                    mutable.update { it.copy(loadingMore = false) }
+                    return@launch
+                }
                 mutable.update {
                     val all = (it.items + page.items).distinctBy { i -> i.id }
                     listingCache.put(key, folderId, all, complete = page.nextPageToken == null)
@@ -135,7 +157,7 @@ class FolderViewModel(
         publish(FolderChange.Folders(key, setOf(folderId)))
     }
 
-    fun move(items: List<SyncItem>, targetFolderId: String) = mutation({}) {
+    fun move(items: List<SyncItem>, targetFolderId: String) = mutation(null) {
         try {
             for (item in items) {
                 session.api.patchItem(item.id, parentId = targetFolderId, ifMatch = item.etag)
@@ -147,7 +169,7 @@ class FolderViewModel(
         }
     }
 
-    fun delete(items: List<SyncItem>) = mutation({}) {
+    fun delete(items: List<SyncItem>) = mutation(null) {
         try {
             for (item in items) {
                 try {
@@ -163,19 +185,22 @@ class FolderViewModel(
         mutable.update { it.copy(message = UiMessage.Text(R.plurals.browser_deleted, listOf(items.size), plural = true)) }
     }
 
-    private fun mutation(onResult: (Throwable?) -> Unit, block: suspend () -> Unit) = viewModelScope.launch {
+    /** [onResult] is the name dialog's callback; without one (move, delete) every failure becomes a message. */
+    private fun mutation(onResult: ((Throwable?) -> Unit)?, block: suspend () -> Unit) = viewModelScope.launch {
         try {
             block()
-            onResult(null)
+            onResult?.invoke(null)
         } catch (e: CancellationException) {
             throw e
         } catch (e: SyncError.Http) {
-            if (e.code == ErrorCodes.NAME_CONFLICT || e.code == ErrorCodes.INVALID_NAME) { onResult(e); return@launch }
-            onResult(null)
+            val nameProblem = e.code == ErrorCodes.NAME_CONFLICT || e.code == ErrorCodes.INVALID_NAME
+            if (nameProblem && onResult != null) { onResult(e); return@launch }
+            onResult?.invoke(null)
             mutable.update { it.copy(message = UiMessage.Error(e)) }
-            if (e.status == 412 || e.status == 404) refresh()          // "Changed in the meantime" / "No longer available"
+            // "Changed in the meantime" / "No longer available"; a move that hit a name conflict may have moved some items.
+            if (e.status == 412 || e.status == 404 || nameProblem) refresh()
         } catch (e: Exception) {
-            onResult(null)
+            onResult?.invoke(null)
             mutable.update { it.copy(message = UiMessage.Error(e)) }
         }
     }

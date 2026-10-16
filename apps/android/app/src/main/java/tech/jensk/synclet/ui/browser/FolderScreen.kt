@@ -1,6 +1,7 @@
 package tech.jensk.synclet.ui.browser
 
 import android.net.Uri
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -97,6 +98,8 @@ import tech.jensk.synclet.ui.components.text
 import tech.jensk.synclet.ui.preview.PreviewPane
 import tech.jensk.synclet.ui.sharelink.ShareLinkSheet
 
+private const val LOG_TAG = "SyncletBrowser"
+
 @Composable
 fun FolderScreen(
     graph: AppGraph,
@@ -107,7 +110,16 @@ fun FolderScreen(
     onBack: () -> Unit,
 ) {
     // After process death the route is restored before the accounts are loaded.
-    val ready by produceState(false) { runCatching { graph.awaitReady() }; value = true }
+    val ready by produceState(false) {
+        try {
+            graph.awaitReady()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Loading the accounts failed: the missing session below shows the error.
+        }
+        value = true
+    }
     if (!ready) { LoadingBox(); return }
     val session = graph.session(route.accountKey)
     if (session == null) {
@@ -334,11 +346,24 @@ private fun enqueue(
 ) {
     val resources = context.resources
     scope.launch {
-        val n = runCatching {
-            graph.scope.async { graph.enqueueUploads(route.accountKey, route.folderId, title, uris) }.await()
-        }.getOrElse { if (it is kotlinx.coroutines.CancellationException) throw it; 0 }
-        if (n > 0) snackbar.showSnackbar(resources.getQuantityString(R.plurals.browser_uploads_queued, n, n))
-        else snackbar.showSnackbar(context.getString(R.string.error_unexpected))
+        // One at a time: a source that cannot be read must not cost the others.
+        val (queued, failed) = graph.scope.async {
+            var ok = 0
+            var bad = 0
+            for (uri in uris) {
+                try {
+                    ok += graph.enqueueUploads(route.accountKey, route.folderId, title, listOf(uri))
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    bad++
+                    Log.w(LOG_TAG, "enqueue failed: ${e.javaClass.simpleName}")      // no URI or message: may name private files
+                }
+            }
+            ok to bad
+        }.await()
+        if (queued > 0) snackbar.showSnackbar(resources.getQuantityString(R.plurals.browser_uploads_queued, queued, queued))
+        if (failed > 0) snackbar.showSnackbar(context.getString(R.string.error_unexpected))
     }
 }
 

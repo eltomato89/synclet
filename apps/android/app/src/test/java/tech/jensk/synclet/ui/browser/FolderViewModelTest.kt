@@ -10,6 +10,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import okhttp3.mockwebserver.Dispatcher
@@ -67,6 +68,7 @@ class FolderViewModelTest {
     @Volatile private var mutationResponse: (RecordedRequest) -> MockResponse = { json("{}") }
     @Volatile private var firstPage: List<SyncItem> = listOf(fileB, sub, fileA)
     @Volatile private var firstPageToken: String? = "p2"
+    @Volatile private var secondPageDelayMs = 0L
 
     private fun json(body: String, code: Int = 200) =
         MockResponse().setResponseCode(code).setHeader("Content-Type", "application/json").setBody(body)
@@ -90,6 +92,7 @@ class FolderViewModelTest {
                     url.encodedPath == "/api/sync/v1/items/$D1/children" -> when (url.queryParameter("pageToken")) {
                         null -> json(page(firstPage, firstPageToken))
                         "p2" -> json(page(listOf(third), null))
+                            .setHeadersDelay(secondPageDelayMs, java.util.concurrent.TimeUnit.MILLISECONDS)
                         else -> MockResponse().setResponseCode(404)
                     }
                     else -> MockResponse().setResponseCode(404)
@@ -256,5 +259,74 @@ class FolderViewModelTest {
         val s = vm.await { !it.loading && it.error != null }
         assertTrue(s.error is SyncError.Transport)
         assertTrue(s.items.isEmpty())
+    }
+
+    @Test fun moveNameConflictShowsMessage() {
+        mutationResponse = { errorBody(409, "name_conflict") }
+        val vm = vm()
+        vm.loaded()
+        vm.move(listOf(fileB), D2)
+        val s = vm.await { it.message != null }
+        assertEquals("name_conflict", ((s.message as UiMessage.Error).error as SyncError.Http).code)
+        eventually { childrenRequests().size == 2 }
+        assertEquals(listOf("Sub", "A.txt", "b.txt"), vm.await { !it.refreshing }.items.map { it.name })
+    }
+
+    @Test fun deleteForbiddenShowsMessage() {
+        mutationResponse = { errorBody(403, "forbidden") }
+        val vm = vm()
+        vm.loaded()
+        vm.delete(listOf(fileB))
+        val s = vm.await { it.message != null }
+        assertEquals(403, ((s.message as UiMessage.Error).error as SyncError.Http).status)
+    }
+
+    @Test fun refreshDropsAPageTwoOfTheOldListing() {
+        secondPageDelayMs = 800
+        val vm = vm()
+        vm.loaded()
+        vm.loadMore()
+        eventually { childrenRequests().any { it.requestUrl!!.queryParameter("pageToken") == "p2" } }
+        firstPage = listOf(sub, fileA)
+        firstPageToken = null
+        runBlocking { changes.emit(FolderChange.Folders(key, setOf(D1))) }
+        eventually { childrenRequests().size == 3 }
+        vm.await { !it.refreshing && it.items.size == 2 }
+        Thread.sleep(1_200)                                   // the old page 2 would have arrived by now
+        val s = vm.state.value
+        assertEquals(listOf("Sub", "A.txt"), s.items.map { it.name })
+        assertNull(s.nextPageToken)
+        assertFalse(s.loadingMore)
+        val cached = listingCache.get(key, D1)!!
+        assertTrue(cached.complete)
+        assertEquals(2, cached.items.size)
+    }
+
+    @Test fun loadMoreDuringARefreshIsDropped() {
+        val vm = vm()
+        vm.loaded()
+        firstPage = listOf(sub, fileA)
+        firstPageToken = null
+        secondPageDelayMs = 300
+        vm.refresh()
+        vm.loadMore()                                         // still holds the old token "p2"
+        vm.await { !it.refreshing && it.items.size == 2 }
+        Thread.sleep(600)
+        assertEquals(listOf("Sub", "A.txt"), vm.state.value.items.map { it.name })
+        assertTrue(listingCache.get(key, D1)!!.complete)
+    }
+
+    @Test fun savedGridOpensWithoutTheRefreshSpinner() {
+        runBlocking { settings.setViewMode(ViewMode.GRID) }
+        listingCache.put(key, D1, listOf(fileA), complete = true)     // cached items: loading is false from the start
+        val vm = vm()
+        val seen = CopyOnWriteArrayList<Boolean>()
+        val job = ioScope.launch { vm.state.collect { seen += it.refreshing } }
+        val s = vm.await { !it.loading && it.folder != null && it.viewMode == ViewMode.GRID }
+        job.cancel()
+        assertFalse(s.refreshing)
+        assertFalse(seen.any { it })
+        Thread.sleep(200)
+        assertEquals("1", childrenRequests().single().requestUrl!!.queryParameter("folderThumbnails"))
     }
 }
