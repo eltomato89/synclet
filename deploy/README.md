@@ -8,11 +8,20 @@ Quickstart, configuration and the other server topics are in the [top-level READ
 | --- | --- |
 | `compose.yml` | The stack. Works on its own (with `.env`): pulls `ghcr.io/eltomato89/synclet-server` and `synclet-web` in the version `SYNCLET_VERSION` (default `latest`). |
 | `.env.example` | Template for `.env`, with every setting explained. |
-| `compose.office.yml` | Optional Euro-Office Document Server; use with `-f compose.yml -f compose.office.yml`. Needs no other files: the office Caddy site is part of the `synclet-web` image. |
+| `compose.office.yml` | Optional Euro-Office Document Server. Enable it with `COMPOSE_FILE=compose.yml:compose.office.yml` in `.env`, so that every command (`up`, `pull`, `logs`, `down -v`) includes it. Needs no other files: the office Caddy site is part of the `synclet-web` image. |
 | `compose.build.yml` | Builds both images from a repository checkout (local tags `synclet/server:dev`, `synclet/caddy:dev`) instead of pulling them: `-f deploy/compose.yml -f deploy/compose.build.yml ... up -d --build`. |
 | `Dockerfile.server`, `server-entrypoint.sh` | Image `synclet-server` (server and worker). |
 | `Dockerfile.caddy`, `Caddyfile`, `Caddyfile.office` | Image `synclet-web` (Caddy with the built web app; the office site is enabled by `compose.office.yml`). |
 | `compose.dev.yml` | Postgres for local development (`pnpm dev:db`). |
+
+## Upgrading an existing source-built install
+
+Before the prebuilt images, `compose.yml` built the images itself (`up -d --build`). It now pulls them from GHCR. For an existing installation from a checkout, choose one:
+
+- **Switch to the prebuilt images:** run `docker compose -f deploy/compose.yml --env-file deploy/.env pull`, then the same command with `up -d` (no `--build`). Optionally set `SYNCLET_VERSION` in `deploy/.env` first. Your data, database and volumes stay as they are.
+- **Keep building from source:** add `deploy/compose.build.yml` after `compose.yml` and put your own override last: `docker compose -f deploy/compose.yml -f deploy/compose.build.yml -f <your override> --env-file deploy/.env up -d --build`.
+
+With Office, use the new `compose.office.yml` and remove any old bind mount of `Caddyfile.office` into `/etc/caddy/conf.d/office.caddy` from your own overrides: the office site is now built into the image and turned on by `compose.office.yml`, and mounting it as well defines the site twice, so Caddy does not start.
 
 ## Team folders and external storage
 

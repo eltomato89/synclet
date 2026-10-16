@@ -44,8 +44,15 @@ Synclet runs from prebuilt images on GHCR (`ghcr.io/eltomato89/synclet-server` a
 mkdir synclet && cd synclet
 curl -fsSLO https://raw.githubusercontent.com/eltomato89/synclet/main/deploy/compose.yml
 curl -fsSL -o .env https://raw.githubusercontent.com/eltomato89/synclet/main/deploy/.env.example
-mkdir teams   # team folders (SYNCLET_TEAMS, default ./teams): must exist and be writable by PUID:PGID
-# edit .env: set SYNCLET_DATA (your files folder), SYNCLET_META, PUID/PGID, POSTGRES_PASSWORD,
+# the folders must exist before the first start and be writable by PUID:PGID
+# (files, metadata outside the files folder, team folders = SYNCLET_TEAMS, default ./teams)
+sudo mkdir -p /srv/files /srv/synclet-meta
+sudo chown "$(id -u):$(id -g)" /srv/files /srv/synclet-meta
+mkdir -p teams
+# run Synclet as your user and set a database password
+sed -i.bak -e "s/^PUID=.*/PUID=$(id -u)/" -e "s/^PGID=.*/PGID=$(id -g)/" \
+  -e "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 24)/" .env && rm .env.bak
+# edit .env: check SYNCLET_DATA (/srv/files) and SYNCLET_META (/srv/synclet-meta),
 # and pin SYNCLET_VERSION to a release (default latest)
 docker compose up -d
 ```
@@ -58,7 +65,7 @@ Run all later `docker compose` commands in this folder (compose reads `compose.y
 
 ### Updating
 
-Image tags: `X.Y.Z` (a release), `X.Y` (the newest patch release of that line), `latest` (the newest release) and `edge` (the current `main` branch, untested). Set `SYNCLET_VERSION` in `.env` to the version you want (recommended: a pinned release instead of `latest`), then:
+Image tags: `X.Y.Z` (a release), `X.Y` (the newest patch release of that line), `latest` (the newest release) and `edge` (the latest image build from `main`, untested). Set `SYNCLET_VERSION` in `.env` to the version you want (recommended: a pinned release instead of `latest`), then:
 
 ```bash
 docker compose pull
@@ -184,21 +191,22 @@ Optional. Edit `docx`, `xlsx`, `pptx`, `odt`, `ods` and `odp` files in the brows
    curl -fsSLO https://raw.githubusercontent.com/eltomato89/synclet/main/deploy/compose.office.yml
    ```
 
-2. Add to `.env`:
+2. Add to `.env` (`COMPOSE_FILE` makes every `docker compose` command, including `pull`, `logs` and `down -v`, use both files, so the office container is never left behind):
 
    ```
+   COMPOSE_FILE=compose.yml:compose.office.yml
    SYNCLET_OFFICE_SITE_ADDRESS=office.example.com
    SYNCLET_OFFICE_PUBLIC_URL=https://office.example.com
    OFFICE_JWT_SECRET=<openssl rand -hex 32>
    ```
 
-3. Start the stack with the office override (the office site is built into the `synclet-web` image; the override turns it on):
+3. Start the stack (the office site is built into the `synclet-web` image; the override turns it on):
 
    ```bash
-   docker compose -f compose.yml -f compose.office.yml up -d
+   docker compose up -d
    ```
 
-   From a checkout with source builds: `docker compose -f deploy/compose.yml -f deploy/compose.build.yml -f deploy/compose.office.yml --env-file deploy/.env up -d --build`. Every later `docker compose` command (`pull`, `down`, ...) needs the same `-f` options.
+   From a checkout with source builds, leave out `COMPOSE_FILE` and pass the files instead: `docker compose -f deploy/compose.yml -f deploy/compose.build.yml -f deploy/compose.office.yml --env-file deploy/.env up -d --build`. Every later `docker compose` command (`down`, `logs`, ...) needs the same `-f` options.
 
 4. Open a document in the web app with "Open in Office" (new documents can be created there as well). The admin status page shows whether the Document Server is reachable.
 
@@ -422,11 +430,11 @@ Admins get an "Admin" entry in the web app with:
 
 ## Leaving Synclet
 
-`docker compose down -v` (with Office: `docker compose -f compose.yml -f compose.office.yml down -v`) removes the containers and the Postgres/Caddy volumes. Your `SYNCLET_DATA` folder is untouched (trash in `SYNCLET_META` stays too).
+`docker compose down -v` (with Office, `COMPOSE_FILE` in `.env` includes the office container) removes the containers and the Postgres/Caddy volumes. Your `SYNCLET_DATA` folder is untouched (trash in `SYNCLET_META` stays too).
 
 ## Architecture
 
-Four containers (five with the optional `office` Document Server): `postgres` (index and journal), `server` (NestJS/Fastify API, indexer, file access), `worker` (same image; thumbnails, previews, text extraction) and `caddy` (reverse proxy for `/api/*` plus the static web app). The spec lists the web app as a separate service; it is served from the Caddy image instead, which is leaner and equivalent. `server` and `worker` run the image `ghcr.io/eltomato89/synclet-server` (`deploy/Dockerfile.server`), `caddy` runs `ghcr.io/eltomato89/synclet-web` (`deploy/Dockerfile.caddy`: Caddy, the built web app and the Caddyfiles). Both are built by the `Container images` workflow for every release tag (`X.Y.Z`, `X.Y`, `latest`) and every push to `main` (`edge`, `sha-<commit>`). For automatic Let's Encrypt certificates set `SYNCLET_SITE_ADDRESS=<your domain>`, `SYNCLET_PORT=80` and `SYNCLET_TLS_PORT=443` (all three are required, plus public DNS and reachable ports 80/443). With the defaults (`:80`, ports 8080/8443) no certificates are issued; use that behind an existing reverse proxy.
+Four containers (five with the optional `office` Document Server): `postgres` (index and journal), `server` (NestJS/Fastify API, indexer, file access), `worker` (same image; thumbnails, previews, text extraction) and `caddy` (reverse proxy for `/api/*` plus the static web app). The spec lists the web app as a separate service; it is served from the Caddy image instead, which is leaner and equivalent. `server` and `worker` run the image `ghcr.io/eltomato89/synclet-server` (`deploy/Dockerfile.server`), `caddy` runs `ghcr.io/eltomato89/synclet-web` (`deploy/Dockerfile.caddy`: Caddy, the built web app and the Caddyfiles). Both are built by the `Container images` workflow for every release tag (`X.Y.Z`, `X.Y`, `latest`) and for pushes to `main` that change the code, the Dockerfiles or the Caddyfiles (`edge`, `sha-<commit>`). For automatic Let's Encrypt certificates set `SYNCLET_SITE_ADDRESS=<your domain>`, `SYNCLET_PORT=80` and `SYNCLET_TLS_PORT=443` (all three are required, plus public DNS and reachable ports 80/443). With the defaults (`:80`, ports 8080/8443) no certificates are issued; use that behind an existing reverse proxy.
 
 ## Development
 

@@ -293,24 +293,26 @@
                 <pre><code>mkdir synclet &amp;&amp; cd synclet
 curl -fsSLO https://raw.githubusercontent.com/eltomato89/synclet/main/deploy/compose.yml
 curl -fsSL -o .env https://raw.githubusercontent.com/eltomato89/synclet/main/deploy/.env.example
-mkdir teams</code></pre>
+sudo mkdir -p /srv/files /srv/synclet-meta
+sudo chown "$(id -u):$(id -g)" /srv/files /srv/synclet-meta
+mkdir -p teams
+sed -i.bak -e "s/^PUID=.*/PUID=$(id -u)/" -e "s/^PGID=.*/PGID=$(id -g)/" \
+  -e "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 24)/" .env &amp;&amp; rm .env.bak</code></pre>
               </figure>
             </li>
             <li>
               <h3 class="text-lg font-semibold">2. Point it at your folders</h3>
-              <p class="mt-2 text-muted-foreground">Edit <code class="inline-code">.env</code>:</p>
+              <p class="mt-2 text-muted-foreground">The commands above create the folders and set the owner (your user) and a database password. Check the rest of <code class="inline-code">.env</code>:</p>
               <figure class="code-block mt-3">
                 <pre><code><span class="comment"># your files; each user gets a subfolder named like the username</span>
 SYNCLET_DATA=/srv/files
 <span class="comment"># trash, versions, previews: must exist, outside SYNCLET_DATA</span>
 SYNCLET_META=/srv/synclet-meta
 <span class="comment"># team folders (optional, default ./teams)</span>
-SYNCLET_TEAMS=/srv/teams
-<span class="comment"># owner of your files (id -u / id -g)</span>
+#SYNCLET_TEAMS=/srv/teams
+<span class="comment"># owner of your files: set to your user by the commands above</span>
 PUID=1000
 PGID=1000
-<span class="comment"># openssl rand -hex 24</span>
-POSTGRES_PASSWORD=…
 <span class="comment"># pin a release (default latest)</span>
 SYNCLET_VERSION=…</code></pre>
               </figure>

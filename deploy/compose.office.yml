@@ -2,6 +2,8 @@
 # Caddy. Needs ~4 GB RAM. Use together with compose.yml (both files next to each other, no other
 # repository files needed; the office Caddy site is baked into the synclet-web image):
 #   docker compose -f compose.yml -f compose.office.yml up -d
+# or, so that every command (pull, logs, down) includes it, set in .env:
+#   COMPOSE_FILE=compose.yml:compose.office.yml
 # From a repository checkout, building the images: add -f compose.build.yml and --build.
 services:
   office:
