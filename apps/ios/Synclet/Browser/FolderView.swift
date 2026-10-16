@@ -276,7 +276,9 @@ struct FolderView: View {
     /// The „+“ menu: uploads (photos, files) and „Neuer Ordner“.
     private var addMenu: some View {
         Menu {
-            UploadMenu(showsPhotos: $showsPhotoPicker, showsFiles: $showsFileImporter)
+            UploadMenu(showsPhotos: $showsPhotoPicker, showsFiles: $showsFileImporter,
+                       target: UploadTarget(accountKey: model.accountKey, parentId: model.folderId,
+                                            parentName: model.title))
             Button("New Folder", systemImage: "folder.badge.plus") {
                 model.fieldError = nil
                 nameRequest = .newFolder

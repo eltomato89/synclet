@@ -15,14 +15,41 @@ struct UploadTarget: Equatable {
 struct UploadMenu: View {
     @Binding var showsPhotos: Bool
     @Binding var showsFiles: Bool
+    /// The folder of the menu (DEBUG: target of `-SyncletTestUpload`).
+    var target: UploadTarget?
 
     var body: some View {
         Button("Photos", systemImage: "photo.on.rectangle") { showsPhotos = true }
-            .accessibilityIdentifier("browser.uploadPhotos")
-        Button("Files", systemImage: "doc.badge.plus") { showsFiles = true }
-            .accessibilityIdentifier("browser.uploadFiles")
+            .accessibilityIdentifier("upload.photos")
+        Button("Files", systemImage: "doc.badge.plus") {
+            #if DEBUG
+            if let url = TestUpload.url(), let target {
+                Task {
+                    await UploadCenter.shared.enqueue(urls: [url], accountKey: target.accountKey,
+                                                      parentId: target.parentId, parentName: target.parentName)
+                }
+                return
+            }
+            #endif
+            showsFiles = true
+        }
+        .accessibilityIdentifier("upload.files")
     }
 }
+
+#if DEBUG
+/// DEBUG builds only (UI tests): `-SyncletTestUpload <path>` makes „Dateien“ enqueue that file
+/// into the menu's folder instead of opening the file importer (which UI tests can't drive
+/// reliably on the simulator).
+enum TestUpload {
+    static func url(from arguments: [String] = ProcessInfo.processInfo.arguments) -> URL? {
+        guard let index = arguments.firstIndex(of: "-SyncletTestUpload"), index + 1 < arguments.count else { return nil }
+        let path = arguments[index + 1]
+        guard !path.isEmpty, !path.hasPrefix("-") else { return nil }
+        return URL(filePath: path)
+    }
+}
+#endif
 
 extension View {
     /// The photo picker and file importer of ``UploadMenu``; picked items are enqueued into `target`.

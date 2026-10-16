@@ -86,7 +86,7 @@ private struct TrashList: View {
                         Button("Restore", systemImage: "arrow.uturn.backward") {
                             Task { await model.restore(entry) }
                         }
-                        .accessibilityIdentifier("trash.restore")
+                        .accessibilityIdentifier("trash.restore.\(entry.name)")
                         Button("Delete Forever", systemImage: "trash", role: .destructive) {
                             deleteCandidate = entry
                         }

@@ -36,6 +36,16 @@ struct ShareLinkView: View {
         .sheet(item: $shared) { shared in
             ActivityView(items: [shared.url])
                 .presentationDetents([.medium, .large])
+                #if DEBUG
+                // UI tests read the shared URL here (the system sheet's own elements are private).
+                .overlay(alignment: .topLeading) {
+                    Color.clear
+                        .frame(width: 1, height: 1)
+                        .accessibilityElement()
+                        .accessibilityLabel(Text(verbatim: shared.url.absoluteString))
+                        .accessibilityIdentifier("share.sheet")
+                }
+                #endif
         }
         .interactiveDismissDisabled(model.isBusy)
     }
