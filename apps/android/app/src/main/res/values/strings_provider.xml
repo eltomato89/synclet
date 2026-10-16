@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="provider_error_folder">Folders cannot be opened as files.</string>
+    <string name="provider_error_top">Choose a space first, e.g. My Files.</string>
+    <string name="provider_error_cross_account">Items cannot be moved between accounts.</string>
+    <string name="provider_error_no_account">This Synclet account is no longer signed in.</string>
+    <string name="provider_space_unavailable">Unavailable</string>
+</resources>
