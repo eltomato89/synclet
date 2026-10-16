@@ -135,11 +135,34 @@ public final class AccountManager: Sendable {
             deviceName: registration.device.name, deviceId: registration.device.id, email: account.email,
             signedInAt: tokenStoredAt))
 
+        try await ensureDomain(stored)
+        return stored
+    }
+
+    /// Stores an account whose device token was registered elsewhere (the iOS app's DEBUG
+    /// test login with `-SyncletTestToken`): `GET /account` with the token, then token,
+    /// metadata (upsert by account key) and the domain unless it exists. Nothing is
+    /// registered or revoked; a rejected token stores nothing.
+    @discardableResult
+    public func addRegistered(server: URL, deviceToken: String) async throws -> StoredAccount {
+        let account = try await SyncAPIClient(baseURL: server, token: deviceToken, session: session).account()
+        let key = account.organizationId
+        let tokenStoredAt = Date()
+        try credentials.save(token: deviceToken, for: key)
+        let stored = try accounts.upsert(StoredAccount(
+            key: key, serverURL: server, userId: account.userId, username: account.slug,
+            displayName: account.displayName, spaces: account.spaces, deviceName: deviceName,
+            email: account.email, signedInAt: tokenStoredAt))
+        try await ensureDomain(stored)
+        return stored
+    }
+
+    /// Adds the account's domain unless the system already has it.
+    private func ensureDomain(_ stored: StoredAccount) async throws {
         let existing = (try? await domains.domainIdentifiers()) ?? []
         if !existing.contains(stored.key16) {
             try await domains.addDomain(identifier: stored.key16, displayName: stored.domainDisplayName)
         }
-        return stored
     }
 
     /// Signs an account out: `DELETE /devices/current` (best effort, at most `timeout`),
