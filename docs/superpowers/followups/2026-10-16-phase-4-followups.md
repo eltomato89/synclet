@@ -6,7 +6,7 @@ Stand: 2026-10-16, Branch phase-4 (T1–T10). Spec: `docs/superpowers/specs/2026
 - R0: parallele Implementierer in eigenen Worktrees pro Welle (`Synclet-wt/4-tN`) — Kosten: Merge-Konflikte (vom Controller aufgelöst)
 - P1: T3 exportiert `apiSpaceId(space, user)` und `spaceIdFromApi(user, apiId)` (`apps/server/src/spaces/space-ids.ts`); T4/T5 müssen sie nutzen — vermeidet abweichende Abbildungen `personal`/uuid — Kosten: keine
 - P2: „missing“ = Wurzel ist kein Verzeichnis ODER Wurzel leer, obwohl der Space lebende Items hat (Teams und extern); für Teams zusätzlich: ist `/teams` selbst leer, während ein Team-Space Items hat, sind alle Team-Spaces missing — einfach und sicher (löscht nie) — Kosten: ein absichtlich geleerter Space gilt als „nicht verfügbar“, bis wieder eine Datei darin liegt; Admin kann entfernen und wieder aufnehmen
-- R-par: T6, T7, T8 starteten parallel zu T2, gegen die API-Formen aus dem Plan mit Mocks (nur Unit-Tests); Playwright- und Live-Schritte wurden nach dem Merge von T3/T5 nachgeholt — Kosten, falls falsch: Nacharbeit (die Formen waren im Plan fixiert)
+- R-par: T6, T7, T8 starteten parallel zu T2, gegen die API-Formen aus dem Plan mit Mocks (nur Unit-Tests); die zurückgestellten Playwright- und Live-Schritte laufen vor dem Merge in den Branches (macOS live ist bereits grün; Web und iOS stehen aus) — Kosten, falls falsch: Nacharbeit (die Formen waren im Plan fixiert)
 - R-early: T4/T5 starteten vom T3-Stand (cb5e939), während T3 noch im Review war — Kosten: Rebase auf die T3-Fixrunde; die Integration von T4+T5 war ein eigener Merge (1a3cc37, `openapi.yaml`-Konflikt)
 - R2a: „Entfernen“ eines Space setzt den Status `ignored` (neuer Enum-Wert, neue Migration), für Team und extern; die Erkennung legt ignorierte Spaces nie neu an, `restoreSpace(id)` holt sie ohne Mitglieder zurück — löst den Spec-Widerspruch (jeder `/teams`-Unterordner ist ein Space vs. „Entfernen“) — Kosten: T5 stellt `DELETE` und eine Restore-Route bereit, T7 zeigt ausgeblendete Spaces mit „Wieder aufnehmen“
 - R6a: Leseberechtigte bekommen Office im Ansichtsmodus (Plan T4); das Web nennt die Aktion „In Office ansehen“ statt sie zu verstecken — Kosten: keine
@@ -32,7 +32,8 @@ Stand: 2026-10-16, Branch phase-4 (T1–T10). Spec: `docs/superpowers/specs/2026
 
 ## Offene Kleinigkeiten (deferred, aus den Reviews)
 - **Server – Spaces/Index (T1):**
-  - `events.controller` nutzt `user.id` als Journal-Schlüssel (in T3 behoben, im Final-Review prüfen).
+  - `events.controller` nutzt `user.id` als Journal-Schlüssel (laut Ledger nur → T3 vorgemerkt; im Final-Review prüfen).
+  - Watcher-Fill bei `user.created`, fehlender `rootPath`-Guard und Schlüssel nach Space-Name statt `spaceId` wurden in T2 behoben.
   - Der Test „failed insert“ in `spaces.repo.spec` prüft kein Rollback.
   - `by` ist bei `replaceContent`/`restore` optional; sollte Pflicht sein.
   - Testhelfer dupliziert `createPersonal`.
@@ -74,4 +75,5 @@ Stand: 2026-10-16, Branch phase-4 (T1–T10). Spec: `docs/superpowers/specs/2026
   - `fetchCursor try?` verschluckt 401/403; `.account`-`onChange` kann von einem folgenden `hello` überholt werden; `hasCursors` redundant.
   - Browser-Änderungsereignisse kommen pro Konto, nicht pro Space; `ForegroundMonitor` vergleicht die Cursor aller Spaces.
   - Keine View-Tests für die Nur-Lesen-UI (deckt der Live-Schritt ab).
+  - Die Gleichheit bei Statusänderungen in `updateSpaces` ist ungetestet.
   - Eine `spaceId`, die nicht in `account.spaces` steht, gilt als nur lesbar (alter Server); ein zusätzliches `GET /items/:id` pro Ordner-Laden.

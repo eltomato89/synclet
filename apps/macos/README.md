@@ -386,7 +386,7 @@ Open Settings → Offline, or start the app with `-SyncletShowOffline`.
    4. **Zugriff entfernen.** Im Web (Admin-Bereich → Spaces) den Benutzer aus "Familie" entfernen.
       - **Expected:** "Familie" verschwindet binnen weniger Sekunden aus dem Finder, ohne Neuanmeldung.
    5. **Fehlender Mount.** `docker compose -p <project> stop server`, den Mount von `/storage/Archiv` abziehen (oder die Freigabe trennen), Server starten.
-      - **Expected:** Finder und Menü zeigen den Space als nicht verfügbar; vorhandene Dateien bleiben auf dem Server und werden nicht gelöscht. Nach dem Wiederanhängen ist der Space nach einem Scan wieder da.
+      - **Expected:** Der Inhalt des Space lässt sich im Finder nicht öffnen (Fehler, der Server antwortet 503; die macOS-App hat dafür keine eigene Anzeige). Vorhandene Dateien bleiben auf dem Server und werden nicht gelöscht. Nach dem Wiederanhängen und einem Scan sind die Dateien wieder da.
 32. **Clean up.**
    1. Run `DerivedData/Build/Products/Debug/Synclet.app/Contents/MacOS/Synclet -SyncletSignOutAll`.
    2. Press Ctrl-C in all server terminals.

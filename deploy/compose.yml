@@ -95,5 +95,5 @@ volumes:
   #   driver: local
   #   driver_opts:
   #     type: cifs
-  #     device: //nas/share
-  #     o: "username=…,password=…,uid=${PUID},gid=${PGID},file_mode=0664,dir_mode=0775"
+  #     device: //192.168.1.20/share
+  #     o: "addr=192.168.1.20,username=…,password=…,uid=${PUID},gid=${PGID},file_mode=0664,dir_mode=0775"

@@ -252,6 +252,11 @@ WEG=$(api -XPOST "$B/admin/spaces" -H 'content-type: application/json' -d '{"nam
 printf 'bleibt' > "$TEAMS/Weg/bleibt.txt"
 api -XDELETE "$B/admin/spaces/$WEG" >/dev/null
 [ "$(cat "$TEAMS/Weg/bleibt.txt" 2>/dev/null)" = bleibt ] || fail "removing a team folder deleted its content"
+[ "$(api "$B/admin/spaces" | jq -r --arg id "$WEG" '.[] | select(.id==$id) | .status')" = ignored ] || fail "removed team folder is not ignored"
+[ -z "$(team_root Weg)" ] || fail "removed team folder still in the account's spaces"
+sleep $(( ${SYNCLET_THROWAWAY_SCAN_INTERVAL:-10} + 3 ))   # one more scan: the folder must not be re-created as a space
+[ "$(api "$B/admin/spaces" | jq -r '[.[] | select(.name=="Weg")] | length')" = 1 ] || fail "removed team folder was re-created as a new space"
+[ "$(api "$B/admin/spaces" | jq -r --arg id "$WEG" '.[] | select(.id==$id) | .status')" = ignored ] || fail "removed team folder no longer ignored after a scan"
 team_leftovers() { (cd "$TEAMS" && find . -name '.synclet-*'); }
 
 # 4) Nothing but user content in the data folder: trash staging (.synclet-trash-*) is moved to

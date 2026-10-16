@@ -33,13 +33,14 @@ services:
       - nas-fotos:/storage/Fotos:ro
 
 volumes:
-  # SMB/CIFS auf einem NAS, von Docker auf dem Host eingehängt:
+  # SMB/CIFS auf einem NAS, von Docker auf dem Host eingehängt. Der Docker-Treiber "local" mountet
+  # ohne mount.cifs: Hostnamen werden meist nicht aufgelöst, deshalb IP-Adresse in device und addr=.
   nas-fotos:
     driver: local
     driver_opts:
       type: cifs
-      device: //nas/share
-      o: "username=…,password=…,uid=${PUID},gid=${PGID},file_mode=0664,dir_mode=0775"
+      device: //192.168.1.20/share
+      o: "addr=192.168.1.20,username=…,password=…,uid=${PUID},gid=${PGID},file_mode=0664,dir_mode=0775"
   # NFS entsprechend:
   # nas-archiv:
   #   driver: local
@@ -68,7 +69,7 @@ Folgen: Ein Space, den Sie absichtlich leeren, gilt so lange als „nicht verfü
 
 ### Netzwerk-Dateisysteme (NFS/SMB)
 
-- Änderungen von außen kommen zuverlässig nur über **Scans**, nicht über Dateisystem-Ereignisse. Stellen Sie pro Space im Admin-Bereich **Beobachtung: aus** und ein **Scan-Intervall** ein (Standard: alle 2 Minuten bzw. `SYNCLET_SCAN_INTERVAL`). Der Knopf „Jetzt scannen“ stößt einen Scan an.
+- Änderungen von außen kommen zuverlässig nur über **Scans**, nicht über Dateisystem-Ereignisse. Stellen Sie pro Space im Admin-Bereich **Beobachtungsmodus: aus** und ein **Scan-Intervall** ein (Standard ohne gesetztes `SYNCLET_SCAN_INTERVAL`: 900 s bei eingeschalteter Beobachtung, 120 s bei ausgeschalteter). Der Knopf „Jetzt scannen“ stößt einen Scan an.
 - Inode-Nummern sind oft nicht stabil. **Verschieben von außen wird daher als Löschen + Neuanlegen erkannt**, das Item bekommt eine neue ID und Clients laden es erneut. Verschieben über Synclet (Web, Apps) behält die ID, auch zwischen Spaces desselben Dateisystems; zwischen verschiedenen Dateisystemen wird kopiert und das Original danach entfernt.
 - Der Start prüft jeden externen Speicher auf liegengebliebene Synclet-Reste; das kann auf einer langsamen Freigabe etwas dauern.
 
