@@ -56,6 +56,7 @@ export function SharesPage() {
             <tr className="[&>th]:h-9 [&>th]:border-b [&>th]:px-2 [&>th]:text-left [&>th]:font-medium">
               <th scope="col" className="pl-3! md:pl-6!">{t('shares.columns.item')}</th>
               <th scope="col" className="hidden w-36 sm:table-cell">{t('admin.shares.owner')}</th>
+              <th scope="col" className="hidden w-36 lg:table-cell">{t('admin.shares.space')}</th>
               <th scope="col" className="hidden w-32 lg:table-cell">{t('shares.columns.created')}</th>
               <th scope="col" className="hidden w-44 md:table-cell">{t('shares.columns.expires')}</th>
               <th scope="col" className="hidden w-16 text-right! md:table-cell">{t('shares.columns.hits')}</th>
@@ -96,6 +97,10 @@ export function SharesPage() {
                     <Link to={userPath(s.owner.id)} className="text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:underline">
                       {s.owner.username}
                     </Link>
+                  </td>
+                  {/* Team folders and storages by name; a personal space (named after its user = the owner) stays empty. */}
+                  <td data-testid="share-space" className="hidden truncate px-2 text-muted-foreground lg:table-cell" title={s.space && s.space.kind !== 'personal' ? s.space.name : undefined}>
+                    {s.space && s.space.kind !== 'personal' ? s.space.name : ''}
                   </td>
                   <td className="hidden px-2 text-muted-foreground tabular-nums lg:table-cell">{formatDay(s.createdAt, locale)}</td>
                   <td className={cn('hidden truncate px-2 tabular-nums md:table-cell', st === 'expired' ? 'text-destructive' : 'text-muted-foreground')} title={exp}>{exp}</td>

@@ -46,7 +46,7 @@ volumes:
   #   driver: local
   #   driver_opts:
   #     type: nfs
-  #     o: "addr=nas,rw,nfsvers=4"
+  #     o: "addr=192.168.1.20,rw,nfsvers=4"
   #     device: ":/export/archiv"
 ```
 
@@ -69,14 +69,18 @@ Folgen: Ein Space, den Sie absichtlich leeren, gilt so lange als „nicht verfü
 
 ### Netzwerk-Dateisysteme (NFS/SMB)
 
-- Änderungen von außen kommen zuverlässig nur über **Scans**, nicht über Dateisystem-Ereignisse. Stellen Sie pro Space im Admin-Bereich **Beobachtungsmodus: aus** und ein **Scan-Intervall** ein (Standard ohne gesetztes `SYNCLET_SCAN_INTERVAL`: 900 s bei eingeschalteter Beobachtung, 120 s bei ausgeschalteter). Der Knopf „Jetzt scannen“ stößt einen Scan an.
+- Änderungen von außen kommen zuverlässig nur über **Scans**, nicht über Dateisystem-Ereignisse. Stellen Sie pro Space im Admin-Bereich **Beobachtungsmodus: aus** und ein **Scan-Intervall** ein (Minimum 10 s; ohne eigenes Intervall gilt das globale: `SYNCLET_SCAN_INTERVAL`, sonst 900 s, wenn `SYNCLET_WATCH` an ist, und 120 s, wenn es global aus ist. Der Beobachtungsmodus eines einzelnen Space ändert diesen Standard nicht, setzen Sie dort also auch ein Intervall). Der Knopf „Jetzt scannen“ stößt einen Scan an.
 - Inode-Nummern sind oft nicht stabil. **Verschieben von außen wird daher als Löschen + Neuanlegen erkannt**, das Item bekommt eine neue ID und Clients laden es erneut. Verschieben über Synclet (Web, Apps) behält die ID, auch zwischen Spaces desselben Dateisystems; zwischen verschiedenen Dateisystemen wird kopiert und das Original danach entfernt.
-- Der Start prüft jeden externen Speicher auf liegengebliebene Synclet-Reste; das kann auf einer langsamen Freigabe etwas dauern.
+- Beim Start räumt Synclet in Team-Ordnern und externen Speichern nur die oberste Ebene von liegengebliebenen Synclet-Resten (`.synclet-tmp-*`) auf; die tiefere Suche läuft danach im Hintergrund, der Server ist also sofort erreichbar, auch bei einer langsamen Freigabe.
 
 ### Entfernen heißt Ausblenden
 
-„Entfernen“ im Admin-Bereich löscht **nichts**: Der Ordner bleibt auf der Platte, der Space verschwindet für alle Mitglieder und wird nicht wieder automatisch entdeckt. In der Liste der ausgeblendeten Spaces bringt **„Wieder aufnehmen“** ihn zurück (ohne Mitglieder; diese müssen neu zugewiesen werden). Wirklich löschen Sie einen Team-Ordner, indem Sie ihn auf dem Host entfernen.
+„Entfernen“ im Admin-Bereich löscht **nichts**: Der Ordner bleibt auf der Platte, der Space verschwindet für alle Mitglieder und wird nicht wieder automatisch entdeckt. In der Liste der ausgeblendeten Spaces bringt **„Wieder aufnehmen“** ihn zurück (ohne Mitglieder; diese müssen neu zugewiesen werden). Wirklich löschen Sie einen Team-Ordner, indem Sie ihn nach dem Entfernen des Bereichs auf dem Host löschen.
 
 ### Backup und Verlassen
 
 Team-Ordner und externe Speicher sind normale Ordner; Sie sichern sie wie `SYNCLET_DATA`. Die Metadaten (Papierkorb, Versionen, Vorschauen) liegen weiter in `SYNCLET_META`.
+
+### Update und Downgrade
+
+Beim ersten Start einer Version mit Bereichen migriert Synclet die Datenbank (Bereiche, Gruppen, Mitglieder; die persönlichen Ordner werden zu Bereichen). **Ein Downgrade auf eine ältere Version wird danach nicht unterstützt.** Sichern Sie vor dem Update die Datenbank (z. B. `pg_dump`), wenn Sie zurück können wollen.

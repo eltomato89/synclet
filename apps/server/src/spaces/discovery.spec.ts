@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createTestApp, createTestUser, TestContext } from '../../test/context';
 import { IndexerService } from '../indexer/indexer.service';
+import { JournalService } from '../journal/journal.service';
 import { DiscoveryService } from './discovery.service';
 import { SpaceAccess } from './space-access.service';
 import { SpacesRepo } from './spaces.repo';
@@ -130,6 +131,33 @@ describe('DiscoveryService', () => {
     expect(await ctx.prisma.item.count({ where: { deletedAt: null } })).toBe(1);
   });
 
+  it('a delete of the last root item in flight during the probe does not mark the space missing', async () => {
+    await mkdir(team('Familie'));
+    await writeFile(path.join(team('Familie'), 'a.txt'), 'a');
+    await discovery.discover();
+    const [fam] = await spaces();
+    await ctx.app.get(IndexerService).fullScan(ctx.app.get(SpacesRepo).toIndexSpace(fam));
+    // Like FilesService.remove: under the space lock the entry is vacated first, the row tombstoned later.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let locked!: () => void;
+    const isLocked = new Promise<void>((r) => { locked = r; });
+    const del = ctx.prisma.$transaction(async (tx) => {
+      await ctx.app.get(JournalService).lockSpace(tx, fam.id);
+      await rm(path.join(team('Familie'), 'a.txt'));
+      locked();
+      await gate;
+      await tx.item.updateMany({ where: { spaceId: fam.id }, data: { deletedAt: new Date() } });
+    }, { timeout: 20_000 });
+    await isLocked;
+    const found = discovery.discover();
+    await new Promise((r) => setTimeout(r, 200)); // the unlocked probe has seen an empty root with a live item
+    release();
+    await del;
+    expect((await found).changed).toEqual([]);
+    expect((await spaces()).map((r) => r.status)).toEqual(['available']);
+  });
+
   it('testReturnedMountBecomesAvailable', async () => {
     await mkdir(storage('NAS'));
     await writeFile(path.join(storage('NAS'), 'a.txt'), 'a');
@@ -213,13 +241,16 @@ describe('DiscoveryService', () => {
     await expect(access.require(user, nas.id, 'read')).rejects.toMatchObject({ code: 'not_found' });
     // Old cursors of the dropped journal expire instead of silently missing deletes.
     const scope = await ctx.prisma.syncScope.findUniqueOrThrow({ where: { spaceId: nas.id } });
-    expect(scope.minSeq).toBe(cursorBefore.seq);
+    expect(scope.minSeq).toBe(cursorBefore.seq + 1n);
+    expect(scope.seq).toBe(cursorBefore.seq + 1n);
 
     const restored = await discovery.restoreSpace(nas.id);
     expect(restored).toMatchObject({ id: nas.id, status: 'available' });
     expect(await ctx.prisma.spaceMember.count({ where: { spaceId: nas.id } })).toBe(0);
     expect((await ctx.app.get(SpacesRepo).indexable()).map((x) => x.space.id)).toContain(nas.id);
     expect(await ctx.app.get(IndexerService).fullScan(ctx.app.get(SpacesRepo).toIndexSpace(restored))).toMatchObject({ created: 1 });
+    // Even the head cursor of before the remove expires after the restore (full resync).
+    await expect(ctx.app.get(JournalService).changesSince(nas.id, String(cursorBefore.seq), 100)).rejects.toMatchObject({ code: 'cursor_expired' });
     await expect(discovery.restoreSpace(user.id)).rejects.toMatchObject({ code: 'invalid_request' });
   });
 

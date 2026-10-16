@@ -187,4 +187,24 @@ describe('moving items between spaces (PATCH parentId in another space)', () => 
     expect(await readFile(moved.storePath, 'utf8')).toBe('one');
     expect(await readFile(path.join(strayDir, path.basename(v.storePath)), 'utf8')).toBe('stray');
   });
+  it('a failed commit after merging versions puts them back into the source folder', async () => {
+    const f = (await api('POST', '/items/upload?parentId=root&name=m.txt', { body: 'one' })).json();
+    expect((await api('PUT', `/items/${f.id}/content`, { body: 'two', headers: { 'if-match': '*' } })).statusCode).toBe(200);
+    const [v] = await ctx.prisma.fileVersion.findMany({ where: { itemId: f.id.slice(2) } });
+    const store = path.resolve(ctx.config.metaRoot, 'versions');
+    const strayDir = path.join(store, team.id, f.id.slice(2));
+    await mkdir(strayDir, { recursive: true });
+    await writeFile(path.join(strayDir, 'other'), 'stray');
+    const prisma = ctx.prisma;
+    const orig = prisma.$transaction.bind(prisma);
+    const spy = jest.spyOn(prisma, '$transaction').mockImplementationOnce(((fn: (tx: unknown) => Promise<unknown>, opts: unknown) =>
+      (orig as (f: unknown, o: unknown) => Promise<unknown>)(async (tx: unknown) => { await fn(tx); throw new Error('commit failed'); }, opts)) as never);
+    const mine = { id: alice.id, kind: 'personal' as const, rootPath: home() };
+    await expect(ctx.app.get(FilesService).update(mine, f.id.slice(2), { parentId: null, targetSpace: team })).rejects.toThrow('commit failed');
+    spy.mockRestore();
+    expect(await ctx.prisma.fileVersion.findUniqueOrThrow({ where: { id: v.id } })).toMatchObject({ spaceId: alice.id, storePath: v.storePath });
+    expect(await readFile(v.storePath, 'utf8')).toBe('one');
+    expect(await readdir(strayDir)).toEqual(['other']);
+    expect(await readFile(path.join(home(), 'm.txt'), 'utf8')).toBe('two');
+  });
 });

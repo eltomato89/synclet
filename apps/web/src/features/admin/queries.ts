@@ -7,6 +7,8 @@ import { api } from '@/lib/api';
 import type { GroupWire, SpacePatch, SpaceWire } from './types';
 
 export const ADMIN_KEY = ['admin'] as const;
+/** `/sync/v1/account` (sidebar spaces, quota). */
+const ACCOUNT_KEY = ['account'] as const;
 const usersKey = [...ADMIN_KEY, 'users'] as const;
 const userKey = (id: string) => [...usersKey, id] as const;
 const sharesKey = [...ADMIN_KEY, 'shares'] as const;
@@ -144,8 +146,8 @@ export function useAdminGroups() {
 
 export function useGroupMutations() {
   const qc = useQueryClient();
-  // Group membership shows up in spaces (via member names) too.
-  const settled = () => qc.invalidateQueries({ queryKey: ADMIN_KEY });
+  // Group membership shows up in spaces (via member names) too, and in the admin's own spaces.
+  const settled = () => Promise.all([qc.invalidateQueries({ queryKey: ADMIN_KEY }), qc.invalidateQueries({ queryKey: ACCOUNT_KEY })]);
   return {
     create: useMutation({
       mutationFn: (input: { name: string; memberIds?: string[] }) => api<GroupWire>('/admin/groups', { method: 'POST', json: input }),
@@ -169,7 +171,8 @@ export function useAdminSpaces() {
 
 export function useSpaceMutations() {
   const qc = useQueryClient();
-  const settled = () => qc.invalidateQueries({ queryKey: ADMIN_KEY });
+  // The admin may be a member: the sidebar's spaces (`/account`) change too.
+  const settled = () => Promise.all([qc.invalidateQueries({ queryKey: ADMIN_KEY }), qc.invalidateQueries({ queryKey: ACCOUNT_KEY })]);
   return {
     create: useMutation({
       mutationFn: (input: { name: string; members?: SpacePatch['members'] }) => api<SpaceWire>('/admin/spaces', { method: 'POST', json: input }),

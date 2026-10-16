@@ -167,7 +167,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   useEffect(() => {
     // The error first: a refetch of a cached folder can fail while its old data is still there.
     if (loadError instanceof ApiError && loadError.code === 'space_unavailable') {
-      const space = spaceIdOfRoot(folderId) ?? (folder && spaceOfItem(folder)) ?? qc.getQueryData<SyncItem>(['item', folderId])?.spaceId ?? loadError.item?.spaceId;
+      const space = spaceIdOfRoot(folderId) ?? (folder && spaceOfItem(folder)) ?? qc.getQueryData<SyncItem>(['item', folderId])?.spaceId;
       if (space) markSpaceUnavailable(qc, space, true);
     } else if (folder) markSpaceUnavailable(qc, spaceOfItem(folder), false);
   }, [folder, loadError, folderId, qc]);

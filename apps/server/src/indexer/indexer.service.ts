@@ -143,7 +143,9 @@ export class IndexerService {
   private async reconcileOne(space: IndexSpace, dir: string, stats: ReconcileStats): Promise<OneResult> {
     const abs = absPath(space.rootPath, dir);
     const first: TxResult = await this.prisma.$transaction(async (tx): Promise<TxResult> => {
-      await this.journal.lockSpace(tx, space.id);
+      // Resolved before the lock (scheduler, watcher): a space removed, gone missing or renamed
+      // meanwhile must not get rows (again) from its stale root.
+      if ((await this.journal.lockLiveSpace(tx, space)) !== 'ok') return { kind: 'refused' };
       let parentId: string | null = null;
       if (dir !== '') {
         const parent = await this.store.findLiveByPath(tx, space.id, dir);
@@ -175,7 +177,7 @@ export class IndexerService {
     const { subdirs, newDirs, parentId } = first;
     for (const part of chunks(first.pending, this.createChunk)) {
       const ok = await this.prisma.$transaction(async (tx) => {
-        await this.journal.lockSpace(tx, space.id);
+        if ((await this.journal.lockLiveSpace(tx, space)) !== 'ok') return false;
         if (parentId !== null) {
           const parent = await this.store.getLive(tx, space.id, parentId);
           if (!parent || parent.path !== dir) return false; // moved/deleted meanwhile: a later reconcile catches up

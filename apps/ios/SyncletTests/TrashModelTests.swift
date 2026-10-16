@@ -111,4 +111,28 @@ final class TrashModelTests: XCTestCase {
         XCTAssertTrue(requests.contains { $0.method == "DELETE" && $0.path == "/api/trash" })
         XCTAssertTrue(model.entries.isEmpty)
     }
+    /// The server empties only the personal space: „Empty Trash“ is offered for personal entries
+    /// only (like the web), and its confirmation says so.
+    func testEmptyOnlyCoversMyFiles() async {
+        var team = AppFixtures.trashEntry("t.txt")
+        team.spaceId = "11111111-2222-4333-8444-555555555555"
+        var mine = AppFixtures.trashEntry("m.txt")
+        mine.spaceId = "personal"
+        entries = [team]
+        let model = makeModel()
+        XCTAssertFalse(model.canEmpty)
+        await model.load()
+        XCTAssertFalse(model.canEmpty)
+        XCTAssertTrue(model.personalEntries.isEmpty)
+        entries = [team, mine, AppFixtures.trashEntry("old-server.txt")]
+        await model.load()
+        XCTAssertTrue(model.canEmpty)
+        XCTAssertEqual(model.personalEntries.map(\.name), ["m.txt", "old-server.txt"])
+
+        let path = Bundle.main.path(forResource: "de", ofType: "lproj")
+        let german = path.flatMap(Bundle.init(path:))
+        let key = TrashModel.emptyMessageKey
+        XCTAssertEqual(german?.localizedString(forKey: key, value: nil, table: nil),
+                       "Alle aus „Meine Dateien“ gelöschten Objekte werden endgültig gelöscht. Gelöschte Objekte anderer Bereiche bleiben im Papierkorb. Das kann nicht rückgängig gemacht werden.")
+    }
 }

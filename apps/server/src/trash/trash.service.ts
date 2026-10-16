@@ -249,7 +249,7 @@ export class TrashService {
     let published: { from: string; to: string } | null = null;
     try {
       return await this.prisma.$transaction(async (tx): Promise<CommitOutcome> => {
-        await this.journal.lockSpace(tx, space.id);
+        await this.journal.lockSpaceForWrite(tx, space);
         const entry = await tx.trashEntry.findFirst({ where: { id: entryId, spaceId: space.id } });
         if (!entry) throw new SyncError('not_found');
         const target = await this.target(tx, space, entry);

@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 export type Tx = Prisma.TransactionClient;
 export interface ItemRef { id: string; type: ItemType }
+export type SpaceLockState = 'ok' | 'gone' | 'missing' | 'moved';
 
 @Injectable()
 export class JournalService {
@@ -13,6 +14,29 @@ export class JournalService {
   /** Serializes all mutations of one space's tree (API + indexer). Released at commit/rollback. */
   async lockSpace(tx: Tx, spaceId: string): Promise<void> {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${spaceId}::text, 0))`;
+  }
+
+  /**
+   * lockSpace, then re-reads the space row: a space resolved before the lock may have been removed
+   * (`ignored`), gone missing, or renamed (new rootPath) by a transaction that committed meanwhile.
+   * Returns `ok` only when its content may still be read and changed at `space.rootPath`.
+   * Personal spaces are never removed, missing or moved this way: `ok` without a read.
+   */
+  async lockLiveSpace(tx: Tx, space: { id: string; kind: string; rootPath: string }): Promise<SpaceLockState> {
+    await this.lockSpace(tx, space.id);
+    if (space.kind === 'personal') return 'ok';
+    const row = await tx.space.findUnique({ where: { id: space.id }, select: { status: true, rootPath: true } });
+    if (!row || row.status === 'ignored') return 'gone';
+    if (row.rootPath !== space.rootPath) return 'moved';
+    return row.status === 'missing' ? 'missing' : 'ok';
+  }
+
+  /** lockLiveSpace for API mutations: 404 for a removed space, 503 for a missing or renamed one. */
+  async lockSpaceForWrite(tx: Tx, space: { id: string; kind: string; rootPath: string }): Promise<void> {
+    const state = await this.lockLiveSpace(tx, space);
+    if (state === 'gone') throw new SyncError('not_found', 'space not found');
+    if (state === 'missing') throw new SyncError('space_unavailable', 'space is not available');
+    if (state === 'moved') throw new SyncError('space_unavailable', 'space was renamed meanwhile, try again');
   }
 
   /** The only writer of `FileChange` rows (API and indexer). */

@@ -61,12 +61,12 @@
         }
       }
     },
-    "All items in the trash will be deleted forever. This can’t be undone." : {
+    "All items deleted from “My Files” will be deleted forever. Deleted items of other spaces stay in the trash. This can’t be undone." : {
       "localizations" : {
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Alle Objekte im Papierkorb werden endgültig gelöscht. Das kann nicht rückgängig gemacht werden."
+            "value" : "Alle aus „Meine Dateien“ gelöschten Objekte werden endgültig gelöscht. Gelöschte Objekte anderer Bereiche bleiben im Papierkorb. Das kann nicht rückgängig gemacht werden."
           }
         }
       }

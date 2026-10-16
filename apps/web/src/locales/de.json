@@ -934,6 +934,7 @@
       "loadError": "Die Freigabelinks konnten nicht geladen werden",
       "owner": "Besitzer",
       "allUsers": "Alle Benutzer",
+      "space": "Bereich",
       "none": {
         "active": "Keine aktiven Links",
         "expired": "Keine abgelaufenen Links",
