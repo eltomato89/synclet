@@ -34,4 +34,8 @@ class ReconnectPolicyTest {
         assertEquals(1_200L, ReconnectPolicy(random = { 1.0 }).delayMs(Disconnect.Network, 0))
         assertEquals(60_000L, ReconnectPolicy(random = { 1.0 }).delayMs(Disconnect.Network, 10))
     }
+
+    @Test fun retryAfterIsCappedAtTenMinutes() {
+        assertEquals(600_000L, policy.delayMs(Disconnect.Http(429, 86_400), 0))
+    }
 }

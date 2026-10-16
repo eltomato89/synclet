@@ -21,9 +21,11 @@ class ReconnectPolicy(
             Disconnect.Network, Disconnect.Closed -> exponential(attempt)
         }
         val jittered = (base * (1.0 + jitter * (2.0 * random() - 1.0))).toLong().coerceIn(0, maxMs)
-        val retryAfter = ((reason as? Disconnect.Http)?.retryAfterSeconds ?: 0L) * 1_000
+        val retryAfter = (((reason as? Disconnect.Http)?.retryAfterSeconds ?: 0L).coerceIn(0L, MAX_RETRY_AFTER_SECONDS)) * 1_000
         return maxOf(jittered, retryAfter)
     }
+
+    private companion object { const val MAX_RETRY_AFTER_SECONDS = 600L }
 
     private fun exponential(attempt: Int): Long = minOf(maxMs, initialMs shl attempt.coerceIn(0, 16))
 }

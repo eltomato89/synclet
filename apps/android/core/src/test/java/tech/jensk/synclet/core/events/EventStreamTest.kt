@@ -6,7 +6,9 @@ import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import java.util.concurrent.TimeUnit
 import okhttp3.OkHttpClient
+import okhttp3.mockwebserver.SocketPolicy
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
@@ -25,8 +27,9 @@ class EventStreamTest {
     @Before fun setUp() = server.start()
     @After fun tearDown() = server.shutdown()
 
-    private fun stream() = EventStream(server.api(tokens), OkHttpClient(), ReconnectPolicy(random = { 0.5 }),
-        sleep = { sleeps += it }, uptimeMs = { 0L })
+    private fun stream(client: OkHttpClient = OkHttpClient(), idleTimeoutMs: Long = 70_000) =
+        EventStream(server.api(tokens), client, ReconnectPolicy(random = { 0.5 }),
+            sleep = { sleeps += it }, uptimeMs = { 0L }, idleTimeoutMs = idleTimeoutMs)
 
     private fun sse(body: String) = MockResponse().setResponseCode(200)
         .setHeader("Content-Type", "text/event-stream").setBody(body)
@@ -75,5 +78,29 @@ class EventStreamTest {
         withTimeout(5_000) { stream.events().toList() }
         assertEquals(StreamState.SIGN_IN_REQUIRED, stream.state.value)
         assertEquals(0, server.requestCount)
+    }
+
+    @Test fun midStreamDropIsANetworkErrorWithShortBackoff() = runBlocking {
+        server.enqueue(sse("event: hello\ndata: {\"cursor\":\"1\"}\n\nevent: changes\ndata: {\"space\":\"personal\",\"cursor\":\"2\"}\n\n")
+            .setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY))
+        server.enqueue(sse("event: hello\ndata: {\"cursor\":\"3\"}\n\n"))
+        withTimeout(5_000) { stream().events().first { it is SyncEvent.Hello && it.cursor == "3" } }
+        assertEquals(1_000L, sleeps.first())
+    }
+
+    @Test fun silentConnectionIsDroppedAfterIdleTimeout() = runBlocking {
+        server.enqueue(sse("event: hello\ndata: {\"cursor\":\"1\"}\n\n").setBodyDelay(3, TimeUnit.SECONDS))
+        server.enqueue(sse("event: hello\ndata: {\"cursor\":\"2\"}\n\n"))
+        val first = withTimeout(5_000) { stream(idleTimeoutMs = 200).events().first() }
+        assertEquals(SyncEvent.Hello("2", emptyMap()), first)
+        assertEquals(1_000L, sleeps.first())
+    }
+
+    @Test fun shortClientTimeoutDoesNotDropAHealthyStream() = runBlocking {
+        server.enqueue(sse("event: hello\ndata: {\"cursor\":\"1\"}\n\n").setBodyDelay(500, TimeUnit.MILLISECONDS))
+        val client = OkHttpClient.Builder().readTimeout(100, TimeUnit.MILLISECONDS).build()
+        val first = withTimeout(5_000) { stream(client, idleTimeoutMs = 5_000).events().first() }
+        assertEquals(SyncEvent.Hello("1", emptyMap()), first)
+        assertTrue(sleeps.isEmpty())
     }
 }

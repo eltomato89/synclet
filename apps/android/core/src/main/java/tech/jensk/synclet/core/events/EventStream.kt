@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.isActive
+import java.util.concurrent.TimeUnit
 import kotlinx.serialization.Serializable
 import okhttp3.OkHttpClient
 import okhttp3.Response
@@ -26,7 +27,11 @@ class EventStream(
     private val policy: ReconnectPolicy = ReconnectPolicy(),
     private val sleep: suspend (Long) -> Unit = { delay(it) },
     private val uptimeMs: () -> Long = { System.nanoTime() / 1_000_000 },
+    /** No event or ping (every 25 s) for this long = dead connection (SYNC_API §5a: ~60 s plus margin). */
+    private val idleTimeoutMs: Long = 70_000,
 ) {
+    private val streamClient: OkHttpClient =
+        client.newBuilder().readTimeout(idleTimeoutMs, TimeUnit.MILLISECONDS).build()
     private val mutableState = MutableStateFlow(StreamState.IDLE)
     val state: StateFlow<StreamState> = mutableState.asStateFlow()
 
@@ -82,12 +87,15 @@ class EventStream(
                     }
                     response.code !in 200..299 ->
                         Disconnect.Http(response.code, response.header("Retry-After")?.trim()?.toLongOrNull())
-                    else -> Disconnect.NotEventStream      // 200 that is not text/event-stream (proxy page)
+                    // 2xx that is not text/event-stream (proxy page, okhttp "Invalid content-type")
+                    response.header("Content-Type")?.contains("text/event-stream", ignoreCase = true) != true ->
+                        Disconnect.NotEventStream
+                    else -> Disconnect.Network             // established stream dropped mid-body
                 }
                 done.complete(reason)
             }
         }
-        val source = EventSources.createFactory(client).newEventSource(signed.request, listener)
+        val source = EventSources.createFactory(streamClient).newEventSource(signed.request, listener)
         return try { done.await() } finally { source.cancel() }
     }
 
