@@ -27,6 +27,9 @@ class BrowserLogin(
     val clientId: String = CLIENT_ID,
     val redirectUri: String = REDIRECT_URI,
 ) {
+    /** Never follow redirects: the code, verifier and refresh cookie must not leave the origin. */
+    private val noRedirects: OkHttpClient = client.newBuilder().followRedirects(false).followSslRedirects(false).build()
+
     fun authorizeUrl(origin: HttpUrl, challenge: String, state: String, loginHint: String? = null): HttpUrl =
         origin.newBuilder().encodedPath("/app-login").query(null).fragment(null)
             .addQueryParameter("client_id", clientId)
@@ -43,7 +46,7 @@ class BrowserLogin(
         val request = Request.Builder().url(origin.newBuilder().encodedPath("/api/auth/app/token").build())
             .header("Accept", "application/json").post(body).build()
         val response = try {
-            client.newCall(request).await()
+            noRedirects.newCall(request).await()
         } catch (e: CancellationException) {
             throw e
         } catch (e: IOException) {
@@ -66,7 +69,7 @@ class BrowserLogin(
                 .header("Cookie", "synclet_refresh=$refreshToken")
                 .post(ByteArray(0).toRequestBody(null)).build()
             try {
-                client.newBuilder().callTimeout(5, TimeUnit.SECONDS).build().newCall(request).await().close()
+                noRedirects.newBuilder().callTimeout(5, TimeUnit.SECONDS).build().newCall(request).await().close()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -83,12 +86,18 @@ class BrowserLogin(
         /** `code` of the redirect, after checking `state` (first, so a forged redirect never yields anything). */
         fun codeFromRedirect(redirect: String, expectedState: String): String {
             val uri = try { URI(redirect) } catch (e: URISyntaxException) { throw LoginError.MissingCode }
-            if (uri.scheme != "synclet" || uri.host != "oauth") throw LoginError.MissingCode
-            val params = (uri.rawQuery ?: "").split('&').filter { it.isNotEmpty() }.associate { pair ->
-                val i = pair.indexOf('=')
-                val key = if (i < 0) pair else pair.substring(0, i)
-                val value = if (i < 0) "" else pair.substring(i + 1)
-                URLDecoder.decode(key, "UTF-8") to URLDecoder.decode(value, "UTF-8")
+            if (uri.scheme != "synclet" || uri.host != "oauth" || uri.rawUserInfo != null ||
+                uri.port != -1 || !uri.rawPath.isNullOrEmpty()
+            ) throw LoginError.MissingCode
+            val params = try {
+                (uri.rawQuery ?: "").split('&').filter { it.isNotEmpty() }.associate { pair ->
+                    val i = pair.indexOf('=')
+                    val key = if (i < 0) pair else pair.substring(0, i)
+                    val value = if (i < 0) "" else pair.substring(i + 1)
+                    URLDecoder.decode(key, "UTF-8") to URLDecoder.decode(value, "UTF-8")
+                }
+            } catch (e: IllegalArgumentException) {
+                throw LoginError.MissingCode
             }
             if (params["state"] != expectedState) throw LoginError.StateMismatch
             params["error"]?.let { throw LoginError.Denied(it) }

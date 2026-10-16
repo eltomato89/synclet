@@ -63,4 +63,29 @@ class BrowserLoginTest {
         server.shutdown()
         BrowserLogin(OkHttpClient()).endSession(url, "syr_x")   // unreachable: still no exception
     }
+
+    @Test fun malformedOrOddRedirectsAreMissingCode() {
+        for (bad in listOf("synclet://oauth?state=%zz", "synclet://oauth?state=s1&code=%", "synclet://oauth/x?code=a&state=s1",
+            "synclet://user@oauth?code=a&state=s1", "synclet://oauth:1?code=a&state=s1")) {
+            assertThrows(bad, LoginError.MissingCode::class.java) { BrowserLogin.codeFromRedirect(bad, "s1") }
+        }
+    }
+    @Test fun exchangeCodeNeverFollowsRedirects() = runBlocking {
+        val other = MockWebServer().apply { start() }
+        try {
+            server.enqueue(MockResponse().setResponseCode(307).setHeader("Location", other.url("/steal").toString()))
+            val e = assertThrows(SyncError.Http::class.java) { runBlocking { BrowserLogin(OkHttpClient()).exchangeCode(origin(), "c", "v".repeat(43)) } }
+            assertEquals(307, e.status)
+            assertEquals(0, other.requestCount)
+        } finally { other.shutdown() }
+    }
+    @Test fun endSessionNeverFollowsRedirects() = runBlocking {
+        val other = MockWebServer().apply { start() }
+        try {
+            server.enqueue(MockResponse().setResponseCode(308).setHeader("Location", other.url("/steal").toString()))
+            BrowserLogin(OkHttpClient()).endSession(origin(), "syr_x")
+            assertEquals(1, server.requestCount)
+            assertEquals(0, other.requestCount)
+        } finally { other.shutdown() }
+    }
 }
