@@ -470,12 +470,19 @@ paths:
       tags: [items]
       operationId: deleteItem
       summary: Move a file or folder (with its subtree) to the trash
+      parameters:
+        - name: If-Match
+          in: header
+          required: false
+          description: The item's `etag` (quoted or bare) or `*`. Mismatch → `412 conflict`.
+          schema: { type: string }
       responses:
         '204': { description: Deleted. }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '412': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/SpaceUnavailable' }
   /sync/v1/items/{id}/children:
     parameters:

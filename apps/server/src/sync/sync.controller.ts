@@ -378,9 +378,18 @@ export class SyncController {
 
   @Delete('items/:id')
   @HttpCode(204)
-  async remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    const { space, item: row } = await this.resolve(user, id, 'write');
+  async remove(@CurrentUser() user: AuthUser, @Param('id') id: string, @Headers('if-match') ifMatchRaw?: string) {
+    const { space, item: row, view } = await this.resolve(user, id, 'write');
     if (!row) throw new SyncError('forbidden', 'root cannot be deleted');
-    await this.files.remove(space, row.id, user.id);
+    // Like PATCH: compare with the etag the client was served, then let FilesService re-check
+    // the row's etag under the space lock, so a change in between still yields 412.
+    const ifMatch = unquote(ifMatchRaw);
+    let guard: { ifMatchEtag?: string } = {};
+    if (ifMatch && ifMatch !== '*') {
+      const current = await this.one(space, row, view);
+      if (ifMatch !== current.etag) throw new SyncError('conflict', 'etag mismatch', row);
+      guard = { ifMatchEtag: itemEtag(row) };
+    }
+    await this.files.remove(space, row.id, user.id, guard);
   }
 }

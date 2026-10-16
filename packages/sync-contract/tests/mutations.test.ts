@@ -308,4 +308,15 @@ describe('PATCH and DELETE', () => {
     expect(restored!.json().item).toMatchObject({ id: box.id, name: box.name });
     expect((await api.get(`/sync/v1/items/${f.id}`)).json()).toMatchObject({ id: f.id, parentId: box.id });
   });
+
+  it('DELETE with a stale If-Match is 412 conflict carrying the current item; a matching one deletes', async () => {
+    const box = await scratchFolder(api, ctx, 'delete-if-match');
+    const f = await uploadFile(api, box.id, 'f.txt', 'f');
+    await api.replace(f.id, 'f2', '"v1"');
+    const stale = await api.del(`/sync/v1/items/${f.id}`, { headers: { 'if-match': '"v1"' } });
+    expect(stale.status).toBe(412);
+    expect(stale.json()).toMatchObject({ code: 'conflict', item: { id: f.id, etag: 'v2' } });
+    expect(schemaErrors('Error', stale.json())).toBe('');
+    expect((await api.del(`/sync/v1/items/${f.id}`, { headers: { 'if-match': '"v2"' } })).status).toBe(204);
+  });
 });
