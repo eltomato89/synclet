@@ -9,3 +9,9 @@ export const TESTFLIGHT_URL = 'https://testflight.apple.com/join/NA3Aphqe';
 export const MAC_DMG_URL = 'https://github.com/eltomato89/synclet/releases/latest/download/Synclet.dmg';
 
 export const REPO_URL = 'https://github.com/eltomato89/synclet';
+
+/** Stable download link of the Android app: the asset `Synclet.apk` of the latest GitHub release. */
+export const ANDROID_APK_URL = 'https://github.com/eltomato89/synclet/releases/latest/download/Synclet.apk';
+
+/** Google Play listing (internal/open testing). Empty = no Play button. */
+export const PLAY_URL = '';

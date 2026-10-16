@@ -1,9 +1,20 @@
 import '@fontsource-variable/inter';
 import './styles.css';
-import { MAC_DMG_URL, TESTFLIGHT_URL } from './config';
+import { ANDROID_APK_URL, MAC_DMG_URL, PLAY_URL, TESTFLIGHT_URL } from './config';
 
 // Download links come from config.ts so the HTML never has to change for a new link.
 for (const a of document.querySelectorAll<HTMLAnchorElement>('[data-link="mac-dmg"]')) a.href = MAC_DMG_URL;
+for (const a of document.querySelectorAll<HTMLAnchorElement>('[data-link="android-apk"]')) a.href = ANDROID_APK_URL;
+
+const play = document.querySelector<HTMLElement>('[data-play]');
+if (play && PLAY_URL) {
+  const link = document.createElement('a');
+  link.href = PLAY_URL;
+  link.className = 'btn btn-secondary w-full';
+  link.textContent = 'Get it on Google Play';
+  play.replaceChildren(link);
+}
+// Otherwise the static "Google Play testing coming soon" badge stays.
 
 const ios = document.querySelector<HTMLElement>('[data-ios-download]');
 if (ios) {
