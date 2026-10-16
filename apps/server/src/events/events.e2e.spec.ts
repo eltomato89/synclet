@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import { createTestApp, createTestSpace, createTestUser, TestContext } from '../../test/context';
 import { AuthService } from '../auth/auth.service';
 import { JournalService } from '../journal/journal.service';
+import { AccountSignal } from '../spaces/account-signal';
 import { ChangeNotifier } from './change-notifier';
 import { EventsController } from './events.controller';
 
@@ -285,11 +286,11 @@ describe('GET /api/sync/v1/events (SSE)', () => {
       expect(theirs.of('changes')).toEqual([]);
     });
 
-    it('notifyAccount emits `account` (with a data line) and re-subscribes to the new space set', async () => {
+    it('AccountSignal emits `account` (with a data line) and re-subscribes to the new space set', async () => {
       const s = await opened();
       const team = await createTestSpace(ctx, 'Neu');
       await ctx.prisma.spaceMember.create({ data: { spaceId: team.id, userId, role: 'write' } });
-      await ctx.app.get(ChangeNotifier).notifyAccount([userId]);
+      await ctx.app.get(AccountSignal).notify([userId]);
       await s.until(() => s.of('account').length > 0, 3000, 'account');
       expect(s.of('account')).toEqual([{ event: 'account', data: {} }]);
       expect(s.body).toContain('event: account\ndata: {}\n\n');
@@ -303,7 +304,7 @@ describe('GET /api/sync/v1/events (SSE)', () => {
       await ctx.prisma.spaceMember.create({ data: { spaceId: team.id, userId, role: 'write' } });
       const s = await opened();
       await ctx.prisma.spaceMember.deleteMany({ where: { spaceId: team.id } });
-      await ctx.app.get(ChangeNotifier).notifyAccount([userId]);
+      await ctx.app.get(AccountSignal).notify([userId]);
       await s.until(() => s.of('account').length > 0, 3000, 'account');
       const journal = ctx.app.get(JournalService);
       await ctx.prisma.$transaction(async (tx) => {

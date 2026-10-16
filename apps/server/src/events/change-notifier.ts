@@ -2,7 +2,7 @@ import { Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 
 /** Postgres channel the journal notifies on (payload = space id), see JournalService.record(). */
 export const CHANGES_CHANNEL = 'synclet_changes';
-/** Postgres channel for "the space list or rights of this user changed" (payload = user id), see notifyAccount(). */
+/** Postgres channel for "the space list or rights of this user changed" (payload = user id); sent by AccountSignal (spaces/account-signal.ts). */
 export const ACCOUNT_CHANNEL = 'synclet_account';
 
 /** The part of `pg.Client` the notifier uses (a fake in unit tests). */
@@ -20,8 +20,6 @@ export interface ListenClient {
 export interface ChangeNotifierOptions {
   /** Creates a fresh, unconnected client (one per connection attempt). */
   createClient: () => ListenClient;
-  /** Sends a Postgres notification (`pg_notify`); used by notifyAccount(). */
-  publish?: (channel: string, payload: string) => Promise<unknown>;
   /** Trailing-edge window: at most one callback per key (space or user) per window. */
   coalesceMs?: number;
   minBackoffMs?: number;
@@ -141,20 +139,6 @@ export class ChangeNotifier implements OnModuleInit, OnModuleDestroy {
     const off = this.accounts.subscribe(userId, cb);
     const offResync = onResync ? this.resyncs.subscribe(userId, onResync) : () => {};
     return () => { off(); offResync(); };
-  }
-
-  /**
-   * Tells every server process that the space list or rights of these users changed (membership,
-   * space created/removed/missing, group changes): their event streams send `account` and follow
-   * the new space set. Collect the users *before* removing memberships or spaces.
-   */
-  async notifyAccount(userIds: string[]): Promise<void> {
-    const publish = this.opts.publish;
-    if (!publish) {
-      for (const id of new Set(userIds)) this.accounts.notify(id); // no database: this process only
-      return;
-    }
-    for (const id of new Set(userIds)) await publish(ACCOUNT_CHANNEL, id);
   }
 
   /** Wakes every subscriber (after a reconnect: notifications may have been missed). */
