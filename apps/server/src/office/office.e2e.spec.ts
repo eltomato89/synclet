@@ -393,7 +393,7 @@ describe('Office (Euro-Office) integration', () => {
       expect((await callback(callbackPath, saveData(key, 6, `${site}/documentserver/cache/files/data/k_1/output.docx/output.docx?md5=x&expires=1`))).json()).toEqual({ error: 0 });
       expect((await callback(callbackPath, saveData(key, 6, `${site}/DOCUMENTSERVER/cache/x`))).json()).toEqual({ error: 1 });
       // The public origin is Synclet's own: nothing outside the prefix is fetched.
-      for (const bad of [`${site}/api/sync/v1/items`, `${site}/documentserverx/cache/a`, `${site}/documentserver/../api/x`, `${site}/`]) {
+      for (const bad of [`${site}/api/sync/v1/items`, `${site}/documentserverx/cache/a`, `${site}/documentserver/../api/x`, `${site}/`, `${site}/documentserver//evil.example/x`, `${site}/documentserver/\\evil.example/x`]) {
         expect((await callback(callbackPath, saveData(key, 6, bad))).json()).toEqual({ error: 1 });
       }
       // The internal URL still works as is.
@@ -409,6 +409,9 @@ describe('Office (Euro-Office) integration', () => {
       const { key, callbackPath } = await open(item.id);
       expect((await callback(callbackPath, saveData(key, 6, 'https://files.example.test/documentserver/cache/a?b=1'))).json()).toEqual({ error: 0 });
       expect((await callback(callbackPath, saveData(key, 6, 'https://files.example.test/cache/a'))).json()).toEqual({ error: 1 });
+      // A "//" left after stripping either prefix is refused as well.
+      expect((await callback(callbackPath, saveData(key, 6, 'https://files.example.test/documentserver//evil.example/x'))).json()).toEqual({ error: 1 });
+      expect((await callback(callbackPath, saveData(key, 6, `${ds.origin}/ds//evil.example/x`))).json()).toEqual({ error: 1 });
       expect(ds.state.hits).toEqual(['/ds/cache/a?b=1']);
     });
 

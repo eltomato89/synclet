@@ -335,7 +335,8 @@ export class OfficeService {
     let rel: string | null = null;
     if (url.origin === internal.origin) rel = belowPrefix(url, internal) ?? url.pathname;
     else if (url.origin === pub.origin) rel = belowPrefix(url, pub);
-    if (rel === null) return null;
+    // Likewise after stripping a prefix ("/documentserver//evil.example/x").
+    if (rel === null || rel.startsWith('//')) return null;
     // Built on a copy of the internal URL, so host and port can only come from the configuration.
     const target = new URL(internal.href);
     target.pathname = `${pathPrefix(internal)}${rel}`;
