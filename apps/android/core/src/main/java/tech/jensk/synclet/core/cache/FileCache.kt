@@ -8,6 +8,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import tech.jensk.synclet.core.api.SyncApi
+import tech.jensk.synclet.core.api.SyncError
 import tech.jensk.synclet.core.api.SyncItem
 import tech.jensk.synclet.core.api.shortKey
 
@@ -34,7 +35,13 @@ class FileCache(private val dir: File, private val maxBytes: Long = 1L shl 30) {
             val versionDir = versionDir(accountKey, item)
             withContext(Dispatchers.IO) { versionDir.mkdirs() }
             val partial = File(versionDir, ".partial")
-            api.download(item.id, partial, ifRange = item.contentEtag, onProgress = onProgress)
+            val length = api.download(item.id, partial, ifRange = item.contentEtag, onProgress = onProgress)
+            val stored = withContext(Dispatchers.IO) { partial.length() }
+            if (length != item.size || stored != item.size) {
+                // Short or overlong body: never serve it as this version (and never resume from it).
+                withContext(Dispatchers.IO) { partial.delete() }
+                throw SyncError.InvalidResponse("download of ${item.id}: $stored bytes instead of ${item.size}")
+            }
             withContext(Dispatchers.IO) {
                 val file = target(accountKey, item)
                 if (!partial.renameTo(file)) throw IOException("cannot store ${item.name} in the cache")

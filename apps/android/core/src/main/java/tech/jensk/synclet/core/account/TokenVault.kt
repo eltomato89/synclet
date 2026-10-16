@@ -31,8 +31,22 @@ class TokenVault(private val store: DataStore<Preferences>, private val crypto: 
             throw e
         } catch (e: Exception) {
             Log.w("SyncletVault", "token of an account cannot be decrypted (${e.javaClass.simpleName}); sign-in required")
-            delete(accountKey)
+            dropIfUnchanged(accountKey, encoded)
             null
+        }
+    }
+
+    /**
+     * Compare-and-delete: removes the entry only while it still holds [failed] – a token saved meanwhile (re-sign-in)
+     * survives. Best effort: a failing write leaves the entry, which then simply fails again on the next load.
+     */
+    private suspend fun dropIfUnchanged(accountKey: String, failed: String) {
+        try {
+            store.edit { if (it[prefKey(accountKey)] == failed) it.remove(prefKey(accountKey)) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("SyncletVault", "could not drop an undecryptable token (${e.javaClass.simpleName})")
         }
     }
 

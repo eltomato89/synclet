@@ -53,6 +53,8 @@ EMU_PID=""
 SERIAL=""
 SLEEP_PID=""
 mkdir -p "$WORK/files" "$WORK/meta" "$WORK/teams"
+# Loopback only: the throwaway stack (known password, test tokens) must not be reachable from the network.
+# The emulator still reaches it, as 10.0.2.2 is the host's loopback.
 cat > "$WORK/.env" <<ENV
 SYNCLET_DATA=$WORK/files
 SYNCLET_META=$WORK/meta
@@ -60,8 +62,8 @@ SYNCLET_TEAMS=$WORK/teams
 PUID=$(id -u)
 PGID=$(id -g)
 POSTGRES_PASSWORD=androidlive
-SYNCLET_PORT=$PORT
-SYNCLET_TLS_PORT=$TLS_PORT
+SYNCLET_PORT=127.0.0.1:$PORT
+SYNCLET_TLS_PORT=127.0.0.1:$TLS_PORT
 SYNCLET_SITE_ADDRESS=:80
 SYNCLET_VERSIONS=on
 ENV
@@ -86,7 +88,8 @@ cleanup() {
   if [ -n "$SERIAL" ]; then "$ADB" -s "$SERIAL" emu kill >/dev/null 2>&1 || true; fi
   if [ -n "$EMU_PID" ]; then
     for _ in $(seq 1 20); do kill -0 "$EMU_PID" 2>/dev/null || break; sleep 1; done
-    kill "$EMU_PID" 2>/dev/null || true          # exactly the emulator process this run started
+    # Exactly the emulator process this run started, and only while it is still running.
+    if kill -0 "$EMU_PID" 2>/dev/null; then kill "$EMU_PID" 2>/dev/null || true; fi
   fi
   "${DC[@]}" down -v >/dev/null 2>&1 || true
   docker image rm "synclet-androidlive/server:$TAG" "synclet-androidlive/caddy:$TAG" >/dev/null 2>&1 || true
@@ -148,7 +151,8 @@ start_emulator() {
   local window=(-no-window)
   if [ "${EMULATOR_HEADLESS:-1}" = 0 ] || [ "$MODE" = --serve ]; then window=(); fi
   # -read-only: the AVD's own data stays untouched, every run boots a fresh device.
-  "$EMULATOR" -avd "$AVD" -port "$port" "${window[@]}" -no-audio -no-boot-anim -no-snapshot -read-only \
+  # ${window[@]+…}: an empty array under `set -u` is an error in bash 3.2 (macOS).
+  "$EMULATOR" -avd "$AVD" -port "$port" ${window[@]+"${window[@]}"} -no-audio -no-boot-anim -no-snapshot -read-only \
     -gpu swiftshader_indirect >"$WORK/emulator.log" 2>&1 &
   EMU_PID=$!
   echo "== booting $AVD as $SERIAL (pid $EMU_PID)"

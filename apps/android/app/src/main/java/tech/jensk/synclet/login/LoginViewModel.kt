@@ -61,8 +61,9 @@ class LoginViewModel(
                 val p = withContext(Dispatchers.IO) { pending.consume() } ?: throw LoginError.Expired
                 val code = BrowserLogin.codeFromRedirect(redirect, p.state)
                 val origin = p.origin.toHttpUrl()
-                val tokens = login.exchangeCode(origin, code, p.verifier)
+                // Before the one-time code is spent: if the app cannot start, nothing is left half signed in.
                 ready()
+                val tokens = login.exchangeCode(origin, code, p.verifier)
                 mutableState.value = State(done = accounts.completeBrowserLogin(origin, tokens))
             } catch (e: CancellationException) {
                 throw e

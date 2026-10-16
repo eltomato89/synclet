@@ -85,7 +85,7 @@ class ProviderWriteDeviceTest {
 
     @Test fun readWriteWithoutChangesUploadsNothing() {
         enqueueItem()
-        server.enqueue(MockResponse().setBody("same"))
+        server.enqueue(MockResponse().setBody("equal"))            // item size is 5
         provider.openDocument("srv:u1/$F1", "rw", null).close()
         waitUntil { workFiles().isEmpty() }
         assertTrue(env.uploadQueue.entries.value.isEmpty())
@@ -102,7 +102,7 @@ class ProviderWriteDeviceTest {
         capabilities = Capabilities(read = true, write = true, rename = true, move = true, delete = true),
     )
 
-    private fun workFiles(): List<File> = File(context.cacheDir, "provider-work").listFiles().orEmpty().toList()
+    private fun workFiles(): List<File> = File(context.cacheDir, "provider-work").walkTopDown().filter { it.isFile }.toList()
 
     private fun waitUntil(ms: Long = 5_000, cond: () -> Boolean) {
         val end = System.currentTimeMillis() + ms

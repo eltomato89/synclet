@@ -2,6 +2,8 @@ package tech.jensk.synclet.core.upload
 
 import java.io.File
 import kotlinx.coroutines.runBlocking
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -13,6 +15,7 @@ import org.junit.rules.TemporaryFolder
 import tech.jensk.synclet.core.api.SyncItem
 import tech.jensk.synclet.core.api.SyncJson
 import tech.jensk.synclet.core.testing.F1
+import tech.jensk.synclet.core.testing.api
 import tech.jensk.synclet.core.testing.itemJson
 
 class UploadQueueTest {
@@ -183,4 +186,49 @@ class UploadQueueTest {
     }
 
     private fun item(id: String, version: Long = 1) = SyncJson.decodeFromString(SyncItem.serializer(), itemJson(id, "a", version = version))
+
+    @Test fun dropReplacesOfRemovesQueuedEditsButKeepsConflictCopies() = runBlocking {
+        val q = queue()
+        // 412 on the replace: the uploader turned it into a conflict copy (a new file) and is uploading it.
+        val copy = q.enqueueReplace("k", F1, "root", "", "a.txt", "v3", tmp.newFile().apply { writeText("mine") }, null)
+        q.update(copy.id) { it.copy(status = UploadStatus.UPLOADING, conflictCopyName = "a (Konflikt Pixel 2026-10-16 09-05).txt") }
+        now += 1
+        val waiting = q.enqueueReplace("k", F1, "root", "", "a.txt", "v3", tmp.newFile().apply { writeText("one") }, copy.id)
+        val other = q.enqueueReplace("k", "f_other", "root", "", "b.txt", "v1", tmp.newFile().apply { writeText("b") }, null)
+        val otherAccount = q.enqueueReplace("k2", F1, "root", "", "a.txt", "v1", tmp.newFile().apply { writeText("c") }, null)
+        val create = q.enqueueCreate("k", "root", "", "a.txt", source("new"))
+
+        val dropped = q.dropReplacesOf("k", F1)
+
+        assertEquals(listOf(waiting.id), dropped.map { it.id })
+        assertFalse(q.copyFile(waiting.id).exists())
+        assertEquals(setOf(copy.id, other.id, otherAccount.id, create.id), q.entries.value.map { it.id }.toSet())
+        assertTrue(q.copyFile(copy.id).exists())
+        // Persisted, not only in memory.
+        val again = queue(); again.load()
+        assertEquals(4, again.entries.value.size)
+    }
+
+    @Test fun dropReplacesOfTerminatesSameOriginTusUploadsOnly() = runBlocking {
+        val server = MockWebServer().apply { start() }
+        try {
+            val q = queue()
+            val own = q.enqueueReplace("k", F1, "root", "", "a.txt", "v3", tmp.newFile().apply { writeText("one") }, null)
+            q.update(own.id) { it.copy(status = UploadStatus.UPLOADING, tusUrl = server.url("/api/sync/v1/tus/abc").toString()) }
+            now += 1
+            val foreign = q.enqueueReplace("k", F1, "root", "", "a.txt", "v3", tmp.newFile().apply { writeText("two") }, own.id)
+            q.update(foreign.id) { it.copy(tusUrl = "https://elsewhere.example/tus/x") }
+            server.enqueue(MockResponse().setResponseCode(204))
+
+            q.dropReplacesOf(server.api(), "k", F1)
+
+            assertTrue(q.entries.value.isEmpty())
+            assertEquals(1, server.requestCount)
+            val request = server.takeRequest()
+            assertEquals("DELETE", request.method)
+            assertEquals("/api/sync/v1/tus/abc", request.path)
+        } finally {
+            server.shutdown()
+        }
+    }
 }

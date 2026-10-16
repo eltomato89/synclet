@@ -10,6 +10,10 @@ import java.io.File
 import java.time.ZoneOffset
 import java.time.ZonedDateTime
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
@@ -33,7 +37,10 @@ import tech.jensk.synclet.core.testing.json
 
 class FakeUploadEnvironment(override val uploadQueue: UploadQueue) : UploadEnvironment {
     var uploaders: (String) -> Uploader? = { null }
+    /** The app's ready gate (accounts and sessions loaded); open by default. */
+    var ready: suspend () -> Unit = {}
     val finished = CopyOnWriteArrayList<Pair<UploadEntry, SyncItem>>()
+    override suspend fun awaitReady() = ready()
     override fun uploader(accountKey: String): Uploader? = uploaders(accountKey)
     override fun onUploadFinished(entry: UploadEntry, item: SyncItem) { finished += entry to item }
 }
@@ -111,13 +118,40 @@ class UploadWorkerTest {
         assertEquals(UploadStatus.DONE, queue.entry(b.id)!!.status)
     }
 
-    @Test fun signedOutAccountDropsItsUploads() = runBlocking {
+    @Test fun missingUploaderAfterReadyKeepsTheQueue() = runBlocking {
+        // Sign-out removes entries itself (AppGraph.forgetAccount); the worker never deletes anything.
         val e = enqueue("a.txt", "gone")
         val kept = enqueue("b.txt")
         assertEquals(ListenableWorker.Result.success(), worker("gone").doWork())
-        assertTrue(queue.entries.value.none { it.accountKey == "gone" })
-        assertFalse(queue.copyFile(e.id).exists())
+        assertEquals(UploadStatus.WAITING, queue.entry(e.id)!!.status)
+        assertTrue(queue.copyFile(e.id).exists())
         assertTrue(queue.copyFile(kept.id).exists())
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test fun coldStartWaitsForTheReadyGateBeforeLookingUpTheUploader() = runBlocking {
+        val e = enqueue("a.txt")
+        val real = env.uploaders
+        val gate = CompletableDeferred<Unit>()
+        env.uploaders = { null }                       // sessions do not exist yet
+        env.ready = { gate.await() }
+        server.json(itemJson(F1, "a.txt"), 201)
+        val result = async(Dispatchers.Default) { worker().doWork() }
+        delay(100)
+        assertFalse(result.isCompleted)
+        env.uploaders = real                           // AccountRepository.load() finished
+        gate.complete(Unit)
+        assertEquals(ListenableWorker.Result.success(), result.await())
+        assertEquals(UploadStatus.DONE, queue.entry(e.id)!!.status)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun failedReadyGateRetriesAndKeepsTheQueue() = runBlocking {
+        val e = enqueue("a.txt")
+        env.ready = { throw java.io.IOException("accounts.json unreadable") }
+        assertEquals(ListenableWorker.Result.retry(), worker().doWork())
+        assertEquals(UploadStatus.WAITING, queue.entry(e.id)!!.status)
+        assertTrue(queue.copyFile(e.id).exists())
         assertEquals(0, server.requestCount)
     }
 
