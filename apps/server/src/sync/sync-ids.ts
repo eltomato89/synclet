@@ -1,6 +1,8 @@
 import type { ItemType } from '@prisma/client';
 
-export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+import { UUID } from '../common/ids';
+
+export { UUID };
 export const ROOT_ID = 'root';
 
 export type ParsedSyncId = { kind: 'root' } | { kind: 'folder' | 'file'; uuid: string };

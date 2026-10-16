@@ -36,4 +36,9 @@ describe('SpacesRepo', () => {
     await expect(spaces.personalFor(id)).rejects.toMatchObject({ code: 'not_found' });
     expect(await spaces.byId(id)).toBeNull();
   });
+
+  it('toIndexSpace fails loudly on an empty root (never cwd-relative disk access)', () => {
+    expect(() => spaces.toIndexSpace({ id: 'x', kind: 'personal', rootPath: '' })).toThrow(/no root path/);
+    expect(() => spaces.toIndexSpace({ id: 'x', kind: 'team', rootPath: 'relative/dir' })).toThrow(/no root path/);
+  });
 });

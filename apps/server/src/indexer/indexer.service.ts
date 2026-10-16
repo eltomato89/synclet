@@ -5,7 +5,7 @@ import { lstat, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { APP_CONFIG, AppConfig } from '../config';
 import { nameKey } from '../common/names';
-import { absPath, joinRel, parentRel } from '../common/paths';
+import { absPath, isRealDir, joinRel, parentRel } from '../common/paths';
 import type { IndexSpace } from '../common/types';
 import { ItemStore } from '../journal/item-store';
 import { ItemRef, JournalService, Tx } from '../journal/journal.service';
@@ -69,19 +69,34 @@ export class IndexerService {
 
   /** Mass-deletion guard: an empty or missing data root almost always means an unmounted volume. */
   async dataRootLooksMounted(): Promise<boolean> {
+    return this.looksMounted(this.config.dataRoot);
+  }
+
+  private async looksMounted(dir: string): Promise<boolean> {
     try {
-      const entries = await readdir(this.config.dataRoot, { withFileTypes: true });
+      const entries = await readdir(dir, { withFileTypes: true });
       return entries.some((e) => e.isDirectory());
     } catch {
       return false;
     }
   }
 
+  /**
+   * Whether the volume holding the space root looks mounted. Personal spaces: the data root has a
+   * user folder; team spaces: the teams root has a team folder. External storages are their own
+   * mount point (an empty one is caught by refuseEmptyRoot).
+   */
+  private async parentLooksMounted(space: IndexSpace): Promise<boolean> {
+    if (space.kind === 'personal') return this.dataRootLooksMounted();
+    if (space.kind === 'team') return this.looksMounted(this.config.teamsRoot);
+    return true;
+  }
+
   async fullScan(space: IndexSpace): Promise<ReconcileStats | null> {
     const root = space.rootPath;
-    const rootOk = await lstat(root).then((s) => s.isDirectory(), () => false);
-    if (!rootOk || !(await this.dataRootLooksMounted())) {
-      this.log.error(`space root ${root} missing or data root empty – refusing to scan (unmounted volume?)`);
+    const rootOk = await isRealDir(root);
+    if (!rootOk || !(await this.parentLooksMounted(space))) {
+      this.log.error(`space root ${root} missing or its volume looks unmounted – refusing to scan`);
       return null;
     }
     const { stats, refused } = await this.run(space, '', true);
@@ -133,7 +148,7 @@ export class IndexerService {
       if (dir !== '') {
         const parent = await this.store.findLiveByPath(tx, space.id, dir);
         if (!parent || parent.type !== 'folder') {
-          const exists = await lstat(abs).then((s) => s.isDirectory(), () => false);
+          const exists = await isRealDir(abs);
           return exists ? { kind: 'missing-parent' } : { kind: 'missing-dir' };
         }
         parentId = parent.id;
@@ -174,19 +189,26 @@ export class IndexerService {
     return { kind: 'ok', subdirs, newDirs };
   }
 
-  /** Mass-deletion guard for an empty space root (unmounted volume, wiped mount point, …). */
+  /**
+   * Mass-deletion guard for an empty space root (unmounted volume, wiped mount point, …).
+   * Team folders and external storages never lose their whole index to an empty root: that is a
+   * missing mount (discovery marks the space missing). Personal roots refuse when the data root
+   * looks unmounted or above SYNCLET_MASS_DELETE_THRESHOLD.
+   */
   private async refuseEmptyRoot(tx: Tx, space: IndexSpace, abs: string): Promise<boolean> {
     const liveRoot = await tx.item.count({ where: { spaceId: space.id, parentId: null, deletedAt: null } });
     if (liveRoot === 0) return false;
     const limit = this.config.massDeleteThreshold;
-    const unmounted = !(await this.dataRootLooksMounted());
+    const unmounted = space.kind !== 'personal' || !(await this.dataRootLooksMounted());
     if (!unmounted && !(limit > 0 && liveRoot > limit)) return false;
     this.log.error(
       `space root ${abs} is empty but ${liveRoot} item(s) are indexed there – refusing to delete them ` +
-        (unmounted
-          ? '(data root looks unmounted). Check the SYNCLET_DATA mount and restart the server.'
-          : `(more than SYNCLET_MASS_DELETE_THRESHOLD=${limit}). If the deletion is intended, ` +
-            'set SYNCLET_MASS_DELETE_THRESHOLD=0 and restart the server (then set it back).'),
+        (space.kind !== 'personal'
+          ? '(storage not mounted?). Check the mount; the space is unavailable until it is back.'
+          : unmounted
+            ? '(data root looks unmounted). Check the SYNCLET_DATA mount and restart the server.'
+            : `(more than SYNCLET_MASS_DELETE_THRESHOLD=${limit}). If the deletion is intended, ` +
+              'set SYNCLET_MASS_DELETE_THRESHOLD=0 and restart the server (then set it back).'),
     );
     return true;
   }

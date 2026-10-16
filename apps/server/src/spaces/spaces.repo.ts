@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import type { Prisma, Space } from '@prisma/client';
 import { APP_CONFIG, AppConfig } from '../config';
@@ -5,6 +6,15 @@ import { userRoot } from '../common/paths';
 import { SyncError } from '../common/sync-error';
 import type { IndexSpace } from '../common/types';
 import { PrismaService } from '../prisma/prisma.service';
+
+export interface IndexableSpace {
+  space: IndexSpace;
+  /** For logs (personal: the username). */
+  name: string;
+  watch: 'auto' | 'off';
+  scanIntervalSec: number | null;
+  readOnly: boolean;
+}
 
 /** Loads spaces for the file index. Personal space: id = User.id, rootPath = <dataRoot>/<username>. */
 @Injectable()
@@ -18,8 +28,28 @@ export class SpacesRepo implements OnModuleInit {
     await this.syncPersonalRoots();
   }
 
+  /** Throws on an empty or relative root: disk access must never resolve against the process cwd. */
   toIndexSpace(row: Pick<Space, 'id' | 'kind' | 'rootPath'>): IndexSpace {
+    if (!row.rootPath || !path.isAbsolute(row.rootPath)) throw new Error(`space ${row.id} (${row.kind}) has no root path`);
     return { id: row.id, kind: row.kind, rootPath: row.rootPath };
+  }
+
+  /**
+   * Spaces the indexer works on: personal spaces of enabled users and available team/external
+   * spaces (missing ones are never scanned or watched). Ordered by kind, then name.
+   */
+  async indexable(): Promise<IndexableSpace[]> {
+    const rows = await this.prisma.space.findMany({
+      where: { OR: [{ kind: 'personal', user: { disabledAt: null } }, { kind: { in: ['team', 'external'] }, status: 'available' }] },
+      select: { id: true, kind: true, rootPath: true, name: true, watch: true, scanIntervalSec: true, readOnly: true },
+      orderBy: [{ kind: 'asc' }, { name: 'asc' }],
+    });
+    const out: IndexableSpace[] = [];
+    for (const r of rows) {
+      if (!r.rootPath) continue; // personal root not yet synced (only before onModuleInit)
+      out.push({ space: this.toIndexSpace(r), name: r.name, watch: r.watch, scanIntervalSec: r.scanIntervalSec, readOnly: r.readOnly });
+    }
+    return out;
   }
 
   /** The personal space of `userId` (404 when there is none). */
