@@ -20,9 +20,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -34,6 +36,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -66,26 +69,49 @@ class FolderPickerViewModel(
     val canPickHere: Boolean
         get() = state.value.current.folder?.let { layout.canCreateIn(it) && it.id !in excludeIds } == true
 
-    fun openSpace(space: SyncSpace) = viewModelScope.launch {
-        mutable.update { it.copy(loading = true, error = null) }
-        try {
-            load(api.item(space.rootId), layout.displayName(space, personalName))
-        } catch (e: CancellationException) { throw e } catch (e: Exception) { fail(e) }
+    private var job: Job? = null
+    private var pendingSpace: SyncSpace? = null
+
+    private fun launchLoad(block: suspend () -> Unit) {
+        job?.cancel()
+        job = viewModelScope.launch { block() }
     }
 
-    fun openFolder(folder: SyncItem) = viewModelScope.launch { load(folder, folder.name) }
+    fun openSpace(space: SyncSpace) {
+        pendingSpace = space
+        val base = state.value.path
+        launchLoad {
+            mutable.update { it.copy(loading = true, error = null) }
+            try {
+                load(base, api.item(space.rootId), layout.displayName(space, personalName))
+                pendingSpace = null
+            } catch (e: CancellationException) { throw e } catch (e: Exception) { fail(e) }
+        }
+    }
+
+    fun openFolder(folder: SyncItem) {
+        val base = state.value.path
+        launchLoad { load(base, folder, folder.name) }
+    }
 
     fun up() {
+        job?.cancel()
+        pendingSpace = null
         val p = state.value.path
         if (p.size <= 1) return
         val parent = p.dropLast(1)
         mutable.value = State(parent)
-        if (parent.last().folder == null) showSpaces() else viewModelScope.launch { reload(parent) }
+        if (parent.last().folder == null) showSpaces() else launchLoad { reload(parent) }
     }
 
     fun retry() {
         val p = state.value.path
-        if (p.last().folder == null) showSpaces() else viewModelScope.launch { reload(p) }
+        val space = pendingSpace
+        when {
+            space != null -> openSpace(space)
+            p.last().folder == null -> { job?.cancel(); showSpaces() }
+            else -> launchLoad { reload(p) }
+        }
     }
 
     private fun showSpaces() = mutable.update {
@@ -94,7 +120,7 @@ class FolderPickerViewModel(
         })
     }
 
-    private suspend fun load(folder: SyncItem, name: String) { reload(state.value.path + Level(folder, name)) }
+    private suspend fun load(base: List<Level>, folder: SyncItem, name: String) { reload(base + Level(folder, name)) }
 
     private suspend fun reload(path: List<Level>) {
         mutable.update { State(path, loading = true) }
@@ -113,7 +139,8 @@ fun FolderPickerDialog(
     api: SyncApi, layout: SpaceLayout, personalName: String, title: String, confirmLabel: String,
     excludeIds: Set<String> = emptySet(), onPick: (folderId: String, folderName: String) -> Unit, onDismiss: () -> Unit,
 ) {
-    val vm: FolderPickerViewModel = viewModel(key = "picker-${excludeIds.hashCode()}") {
+    val nonce = remember { java.util.UUID.randomUUID().toString() }
+    val vm: FolderPickerViewModel = viewModel(key = "picker-$nonce") {
         FolderPickerViewModel(api, layout, personalName, excludeIds)
     }
     val state by vm.state.collectAsStateWithLifecycle()
@@ -126,7 +153,7 @@ fun FolderPickerDialog(
                 Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
                     verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     IconButton(onClick = { if (state.path.size > 1) vm.up() else onDismiss() }) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = stringResource(R.string.action_cancel))
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = stringResource(if (state.path.size > 1) R.string.picker_back else R.string.action_cancel))
                     }
                     Column(Modifier.weight(1f)) {
                         Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -148,7 +175,7 @@ fun FolderPickerDialog(
                                             ?: entry.space?.let { s -> Icon(spaceIcon(s), contentDescription = null) }
                                     },
                                     modifier = Modifier.alpha(if (entry.enabled) 1f else 0.4f)
-                                        .clickable(enabled = entry.enabled) {
+                                        .clickable(enabled = entry.enabled, role = Role.Button) {
                                             entry.space?.let { vm.openSpace(it) } ?: entry.folder?.let { vm.openFolder(it) }
                                         },
                                 )
