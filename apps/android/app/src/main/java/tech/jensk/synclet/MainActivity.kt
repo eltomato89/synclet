@@ -1,19 +1,63 @@
 package tech.jensk.synclet
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.ui.res.stringResource
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import tech.jensk.synclet.login.LoginActivity
+import tech.jensk.synclet.ui.AppScaffold
+import tech.jensk.synclet.ui.WelcomeScreen
 import tech.jensk.synclet.ui.theme.SyncletTheme
 
-/** Placeholder; Task 8 replaces the content with the app navigation. */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent { SyncletTheme { Surface { Text(stringResource(R.string.app_name)) } } }
+        val graph = (application as SyncletApp).graph
+        setContent {
+            SyncletTheme {
+                val ready by produceState(false) { graph.awaitReady(); value = true }
+                val accounts by graph.accounts.accounts.collectAsStateWithLifecycle()
+                RequestNotificationPermissionOnce()
+                when {
+                    !ready -> Box(Modifier.fillMaxSize())
+                    accounts.isEmpty() -> WelcomeScreen(onSignIn = { startActivity(Intent(this, LoginActivity::class.java)) })
+                    else -> AppScaffold(graph)
+                }
+            }
+        }
     }
 }
+
+/** Upload progress lives in notifications: ask once per process on API 33+; a refusal is accepted. */
+@Composable
+private fun RequestNotificationPermissionOnce() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+    val context = LocalContext.current
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    LaunchedEffect(Unit) {
+        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        if (!granted && !NotificationPermission.asked) {
+            NotificationPermission.asked = true
+            launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+}
+
+private object NotificationPermission { @Volatile var asked = false }
