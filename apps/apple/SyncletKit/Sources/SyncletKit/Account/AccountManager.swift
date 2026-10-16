@@ -203,3 +203,17 @@ public final class AccountManager: Sendable {
         return true
     }
 }
+
+#if os(iOS)
+import UIKit
+
+extension AccountManager {
+    /// The device name shown in the web's device list ("Jens' iPhone"). The iOS app passes
+    /// it into `init(deviceName:)`.
+    @MainActor public static func iOSDeviceName() -> String {
+        let name = UIDevice.current.name
+        if !name.isEmpty { return name }
+        return UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
+    }
+}
+#endif
