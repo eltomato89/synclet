@@ -388,8 +388,10 @@ public final class PinWorkQueue: @unchecked Sendable {
         dirty = false
         var result: [PinTask] = []
         if let fileURL, let data = try? Data(contentsOf: fileURL) {
-            if let decoded = try? JSONDecoder().decode([PinTask].self, from: data) {
-                result = decoded
+            if let decoded = try? JSONDecoder().decode(VersionedEntries<[PinTask]>.self, from: data) {
+                result = decoded.entries
+            } else if let decoded = try? JSONDecoder().decode([PinTask].self, from: data) {
+                result = decoded // unversioned file of an earlier build
             } else {
                 Log.pinning.error("pin-queue.json unreadable: moved aside, scheduling a full re-walk")
                 quarantine(fileURL)
@@ -472,7 +474,7 @@ public final class PinWorkQueue: @unchecked Sendable {
                 return
             }
             do {
-                try JSONEncoder().encode(storage).write(to: fileURL, options: .atomic)
+                try JSONEncoder().encode(VersionedEntries(storage)).write(to: fileURL, options: .atomic)
                 dirty = false
             } catch {
                 Log.pinning.error("pin queue not saved: \(String(describing: error), privacy: .public)")

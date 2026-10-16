@@ -458,7 +458,7 @@ final class PinningModel {
 /// (`accounts/<key16>/offline-walk.json`, app only), so the launch can skip the walk when
 /// nothing changed.
 struct OfflineWalkRecord: Codable, Equatable {
-    static let formatVersion = 1
+    static let formatVersion = StateFormat.version
     var v = OfflineWalkRecord.formatVersion
     var pins: [String: PinSet]
     /// Bytes per container identifier.

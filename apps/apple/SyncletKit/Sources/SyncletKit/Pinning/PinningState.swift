@@ -1,5 +1,19 @@
 import Foundation
 
+/// Format version written into the JSON files of the app group (`"v"`). Readers accept files
+/// without it (written before versioning, same format as version 1); a future breaking change
+/// bumps it and migrates instead of silently resetting.
+public enum StateFormat {
+    public static let version = 1
+}
+
+/// A versioned JSON map file: `{"v":1,"entries":{…}}`.
+struct VersionedEntries<Value: Codable>: Codable {
+    var v: Int = StateFormat.version
+    var entries: Value
+    init(_ entries: Value) { self.entries = entries }
+}
+
 /// An exclusive `flock` on a lock file, shared by app and extension (cross-process).
 enum FileLock {
     static func withLock<T>(_ url: URL, _ body: () throws -> T) throws -> T {
@@ -65,7 +79,7 @@ final class SharedJSONMap<Value: Codable & Sendable & Equatable>: @unchecked Sen
                 return
             }
             do {
-                try JSONEncoder().encode(storage).write(to: fileURL, options: .atomic)
+                try JSONEncoder().encode(VersionedEntries(storage)).write(to: fileURL, options: .atomic)
                 dirty = false
             } catch {
                 Log.pinning.error("\(fileURL.lastPathComponent, privacy: .public) not saved: \(String(describing: error), privacy: .public)")
@@ -82,9 +96,13 @@ final class SharedJSONMap<Value: Codable & Sendable & Equatable>: @unchecked Sen
         stamp = current
         dirty = false
         var result: [String: Value] = [:]
-        if let fileURL, let data = try? Data(contentsOf: fileURL),
-           let decoded = try? JSONDecoder().decode([String: Value].self, from: data) {
-            result = decoded
+        if let fileURL, let data = try? Data(contentsOf: fileURL) {
+            // Versioned file, or the unversioned map of earlier builds.
+            if let decoded = try? JSONDecoder().decode(VersionedEntries<[String: Value]>.self, from: data) {
+                result = decoded.entries
+            } else if let decoded = try? JSONDecoder().decode([String: Value].self, from: data) {
+                result = decoded
+            }
         }
         storage = result
         return result
@@ -173,6 +191,8 @@ public final class PinnedDownloadQueue: Sendable {
     public struct Batch: Codable, Sendable, Equatable {
         public var ids: [String] = []
         public var overflow = false
+        /// ``StateFormat/version`` (absent in files of earlier builds).
+        public var v: Int? = StateFormat.version
         public init(ids: [String] = [], overflow: Bool = false) {
             self.ids = ids
             self.overflow = overflow

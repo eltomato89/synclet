@@ -16,6 +16,8 @@ struct ErrorLogEntry: Codable, Equatable, Hashable, Identifiable, Sendable {
     var itemIdentifier: String?
     /// Extra text of the message (a conflict copy's name).
     var detail: String?
+    /// ``StateFormat/version`` (absent in lines of earlier builds).
+    var v: Int? = StateFormat.version
 
     var id: String { "\(date.timeIntervalSince1970)|\(accountKey)|\(code)|\(fileName)" }
     /// A conflict copy is information, not an error.

@@ -52,7 +52,7 @@ public struct StoredAccount: Codable, Sendable, Hashable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case key, serverURL, userId, username, displayName, spaces, addedAt, deviceName, deviceId, email, signedInAt
+        case v, key, serverURL, userId, username, displayName, spaces, addedAt, deviceName, deviceId, email, signedInAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -72,6 +72,7 @@ public struct StoredAccount: Codable, Sendable, Hashable, Identifiable {
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(StateFormat.version, forKey: .v)
         try c.encode(key, forKey: .key)
         try c.encode(serverURL, forKey: .serverURL)
         try c.encode(userId, forKey: .userId)
@@ -92,6 +93,8 @@ public struct SpaceSyncState: Codable, Sendable, Hashable {
     /// Last change cursor the extension reported to the system.
     public var cursor: String
     public var updatedAt: Date
+    /// ``StateFormat/version`` (absent in files of earlier builds).
+    public var v: Int? = StateFormat.version
 
     public init(cursor: String, updatedAt: Date = Date()) {
         self.cursor = cursor

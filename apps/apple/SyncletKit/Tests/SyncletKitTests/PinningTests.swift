@@ -320,6 +320,43 @@ final class ParentMapTests: XCTestCase {
         XCTAssertEqual(map.count, 0)
     }
 
+    /// M11: the app-group JSON files carry `"v": 1`; files of earlier builds (no version,
+    /// bare map / array) are still read.
+    func testStateFilesAreVersionedAndUnversionedFilesStillRead() throws {
+        let dir = Fixtures.tempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // Earlier builds: bare map and bare array.
+        try Data(#"{"f_1":"v3"}"#.utf8).write(to: dir.appending(path: "pinned-content.json"))
+        try Data(#"[{"kind":"walk","id":"d_1","announce":true}]"#.utf8).write(to: dir.appending(path: "pin-queue.json"))
+        try Data(#"{"wholeSpace":true}"#.utf8).write(to: dir.appending(path: "pins.json"))
+        let ledger = PinnedContentLedger(fileURL: dir.appending(path: "pinned-content.json"))
+        let queue = PinWorkQueue(fileURL: dir.appending(path: "pin-queue.json"))
+        XCTAssertEqual(ledger.version(of: "f_1"), "v3")
+        XCTAssertFalse(queue.isEmpty)
+        XCTAssertFalse(queue.takeCorruption())
+        XCTAssertEqual(try JSONDecoder().decode(PinSet.self, from: Data(contentsOf: dir.appending(path: "pins.json"))),
+                       PinSet(wholeSpace: true))
+
+        // Written back versioned.
+        ledger.update(id: "f_2", version: "v1")
+        ledger.flush()
+        _ = queue.enqueue(PinTask(kind: .walk, id: "d_2", announce: true))
+        queue.flush()
+        for name in ["pinned-content.json", "pin-queue.json"] {
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: dir.appending(path: name))) as? [String: Any])
+            XCTAssertEqual(json["v"] as? Int, StateFormat.version, name)
+        }
+        XCTAssertEqual(PinnedContentLedger(fileURL: dir.appending(path: "pinned-content.json")).version(of: "f_1"), "v3")
+        XCTAssertEqual(PinWorkQueue(fileURL: dir.appending(path: "pin-queue.json")).tasks.count, 2)
+        let pinJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(PinSet())) as? [String: Any])
+        XCTAssertEqual(pinJSON["v"] as? Int, 1)
+        let account = StoredAccount(key: "k", serverURL: Fixtures.server, userId: "u", username: "j", displayName: "J", spaces: [])
+        let accountJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(account)) as? [String: Any])
+        XCTAssertEqual(accountJSON["v"] as? Int, 1)
+        let batch = try JSONDecoder().decode(PinnedDownloadQueue.Batch.self, from: Data(#"{"ids":["a"],"overflow":false}"#.utf8))
+        XCTAssertEqual(batch.ids, ["a"])
+    }
+
     func testNotePolicyReportsFlipsOnly() {
         let map = ParentMap(fileURL: nil)
         XCTAssertFalse(map.notePolicy("d_unknown", kept: true))

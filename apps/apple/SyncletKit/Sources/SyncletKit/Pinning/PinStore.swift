@@ -15,7 +15,7 @@ public struct PinSet: Codable, Sendable, Hashable {
 
     public var isEmpty: Bool { !wholeSpace && folders.isEmpty }
 
-    private enum CodingKeys: String, CodingKey { case wholeSpace, folders }
+    private enum CodingKeys: String, CodingKey { case v, wholeSpace, folders }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -25,6 +25,7 @@ public struct PinSet: Codable, Sendable, Hashable {
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(StateFormat.version, forKey: .v)
         try c.encode(wholeSpace, forKey: .wholeSpace)
         try c.encode(folders.sorted(), forKey: .folders)
     }

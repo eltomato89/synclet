@@ -15,6 +15,8 @@ public struct UploadState: Codable, Sendable, Hashable {
     /// ETag the change is based on (replace; `nil` for new files).
     public var baseEtag: String?
     public var createdAt: Date
+    /// ``StateFormat/version`` (absent in files of earlier builds).
+    public var v: Int? = StateFormat.version
 
     public init(uploadURL: URL, length: Int64, fileSize: Int64, fileMtime: Date, target: TusUploadMetadata,
                 baseEtag: String? = nil, createdAt: Date) {
