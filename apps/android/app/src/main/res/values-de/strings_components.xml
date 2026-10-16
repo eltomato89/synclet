@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="error_offline">Offline. Bitte Verbindung prüfen.</string>
+    <string name="error_sign_in_required">Bitte neu anmelden.</string>
+    <string name="error_changed">Wurde inzwischen geändert</string>
+    <string name="error_gone">Nicht mehr vorhanden</string>
+    <string name="error_name_taken">Hier gibt es bereits ein Element mit diesem Namen.</string>
+    <string name="error_invalid_name">Dieser Name ist nicht erlaubt.</string>
+    <string name="error_invalid_move">Ein Ordner kann nicht in sich selbst verschoben werden.</string>
+    <string name="error_forbidden">Nicht erlaubt (nur Lesezugriff).</string>
+    <string name="error_storage_full">Speicher voll</string>
+    <string name="error_space_unavailable">Dieser Bereich ist gerade nicht verfügbar.</string>
+    <string name="error_too_large">Die Datei ist zu groß für diesen Server.</string>
+    <string name="error_rate_limited">Zu viele Versuche. Bitte kurz warten.</string>
+    <string name="error_server">Serverfehler (%1$s).</string>
+    <string name="error_unexpected">Etwas ist schiefgegangen.</string>
+    <string name="upload_error_target_gone">Zielordner gelöscht</string>
+    <string name="upload_error_source_missing">Die hochzuladende Datei fehlt.</string>
+    <string name="upload_error_signed_out">Neu anmelden</string>
+    <string name="name_error_empty">Bitte einen Namen eingeben.</string>
+    <string name="name_error_dot">„.“ und „..“ sind nicht erlaubt.</string>
+    <string name="name_error_character">Diese Zeichen sind nicht erlaubt: &lt; &gt; : \" / \\ | ? *</string>
+    <string name="name_error_trailing">Ein Name darf nicht auf Leerzeichen oder Punkt enden.</string>
+    <string name="name_error_reserved">Dieser Name ist unter Windows reserviert.</string>
+    <string name="name_error_too_long">Der Name ist zu lang.</string>
+    <string name="name_error_ignored">Dateien mit diesem Namen werden nie synchronisiert.</string>
+    <string name="action_retry">Erneut versuchen</string>
+    <string name="action_cancel">Abbrechen</string>
+    <string name="picker_spaces">Bereiche</string>
+    <string name="picker_choose_here">Diesen Ordner wählen</string>
+    <string name="picker_empty">Keine Unterordner</string>
+</resources>
