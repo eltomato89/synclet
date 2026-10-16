@@ -2,16 +2,20 @@
 
 Quickstart, configuration and the other server topics are in the [top-level README](../README.md). This page covers what depends on your storage layout.
 
+## Upgrading: Office moved into compose.yml
+
+The Euro-Office `office` service is now part of `compose.yml` (profile `office`) and served below `/documentserver` by default. If you use Office on its own subdomain (`COMPOSE_FILE=compose.yml:compose.office.yml`), download the new `compose.office.yml` **together with** the new `compose.yml`: the new `compose.yml` with the old `compose.office.yml` fails with "depends on undefined service office". The new override keeps your subdomain setup (same variables, same volumes; needs Docker Compose 2.24 or newer). Or switch to `/documentserver`: remove `COMPOSE_FILE`, `SYNCLET_OFFICE_SITE_ADDRESS` and `SYNCLET_OFFICE_PUBLIC_URL` from `.env`, add `COMPOSE_PROFILES=office` and run `docker compose up -d --remove-orphans`. Details: [README, Office](../README.md#office-euro-office-editing).
+
 ## Files in this folder
 
 | File | Purpose |
 | --- | --- |
-| `compose.yml` | The stack. Works on its own (with `.env`): pulls `ghcr.io/eltomato89/synclet-server` and `synclet-web` in the version `SYNCLET_VERSION` (default `latest`). |
+| `compose.yml` | The stack. Works on its own (with `.env`): pulls `ghcr.io/eltomato89/synclet-server` and `synclet-web` in the version `SYNCLET_VERSION` (default `latest`). Includes the optional Euro-Office Document Server (profile `office`, served below `/documentserver`). |
 | `.env.example` | Template for `.env`, with every setting explained. |
-| `compose.office.yml` | Optional Euro-Office Document Server. Enable it with `COMPOSE_FILE=compose.yml:compose.office.yml` in `.env`, so that every command (`up`, `pull`, `logs`, `down -v`) includes it. Needs no other files: the office Caddy site is part of the `synclet-web` image. |
+| `compose.office.yml` | Optional: the Euro-Office Document Server on its **own subdomain** instead of the default `/documentserver` path (the `office` service itself is in `compose.yml`, enabled with `COMPOSE_PROFILES=office` and `OFFICE_JWT_SECRET`). Enable the override with `COMPOSE_FILE=compose.yml:compose.office.yml` in `.env`, so that every command (`up`, `pull`, `logs`, `down -v`) includes it. Needs no other files: the office Caddy site is part of the `synclet-web` image. |
 | `compose.build.yml` | Builds both images from a repository checkout (local tags `synclet/server:dev`, `synclet/caddy:dev`) instead of pulling them: `-f deploy/compose.yml -f deploy/compose.build.yml ... up -d --build`. |
 | `Dockerfile.server`, `server-entrypoint.sh` | Image `synclet-server` (server and worker). |
-| `Dockerfile.caddy`, `Caddyfile`, `Caddyfile.office` | Image `synclet-web` (Caddy with the built web app; the office site is enabled by `compose.office.yml`). |
+| `Dockerfile.caddy`, `Caddyfile`, `Caddyfile.office` | Image `synclet-web` (Caddy with the built web app; `/documentserver` is routed when `OFFICE_JWT_SECRET` is set, the office subdomain site is enabled by `compose.office.yml`). |
 | `compose.dev.yml` | Postgres for local development (`pnpm dev:db`). |
 
 ## Upgrading an existing source-built install
@@ -21,7 +25,7 @@ Before the prebuilt images, `compose.yml` built the images itself (`up -d --buil
 - **Switch to the prebuilt images:** run `docker compose -f deploy/compose.yml --env-file deploy/.env pull`, then the same command with `up -d` (no `--build`). Optionally set `SYNCLET_VERSION` in `deploy/.env` first. Your data, database and volumes stay as they are.
 - **Keep building from source:** add `deploy/compose.build.yml` after `compose.yml` and put your own override last: `docker compose -f deploy/compose.yml -f deploy/compose.build.yml -f <your override> --env-file deploy/.env up -d --build`.
 
-With Office, use the new `compose.office.yml` and remove any old bind mount of `Caddyfile.office` into `/etc/caddy/conf.d/office.caddy` from your own overrides: the office site is now built into the image and turned on by `compose.office.yml`, and mounting it as well defines the site twice, so Caddy does not start.
+With Office, use the new `compose.office.yml` (or switch to the default `/documentserver` setup, see "Upgrading from the subdomain-only setup" in the [README](../README.md#office-euro-office-editing)) and remove any old bind mount of `Caddyfile.office` into `/etc/caddy/conf.d/office.caddy` from your own overrides: the office site is now built into the image and turned on by `compose.office.yml`, and mounting it as well defines the site twice, so Caddy does not start.
 
 ## Team folders and external storage
 
@@ -38,7 +42,7 @@ Every direct subfolder of `/teams` is a team folder. `SYNCLET_TEAMS` (default `.
 
 ### External storage: `/storage/<name>`
 
-Every folder mounted under `/storage` becomes a space; the name is the folder name. Mount the same path in `server` (read/write) and `worker` (with `:ro`). `compose.yml` contains the examples, commented out; instead of editing it you can put the mounts into a `compose.override.yml` next to it, which `docker compose` picks up automatically when you pass no `-f` option (with `-f`, for example for Office, add `-f compose.override.yml` as the last file). A newly downloaded `compose.yml` then keeps them:
+Every folder mounted under `/storage` becomes a space; the name is the folder name. Mount the same path in `server` (read/write) and `worker` (with `:ro`). `compose.yml` contains the examples, commented out; instead of editing it you can put the mounts into a `compose.override.yml` next to it, which `docker compose` picks up automatically when you pass no `-f` option (with `-f`, for example for the office subdomain, add `-f compose.override.yml` as the last file). A newly downloaded `compose.yml` then keeps them:
 
 ```yaml
 services:

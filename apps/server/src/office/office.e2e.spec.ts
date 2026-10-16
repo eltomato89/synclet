@@ -382,6 +382,39 @@ describe('Office (Euro-Office) integration', () => {
       expect(ds.state.hits).toEqual(['/ds/cache/a?b=1', '/ds/cache/c']);
     });
 
+    it('maps a Document Server below a path of the Synclet site (/documentserver) to the internal URL', async () => {
+      await ctx.close();
+      const site = 'https://files.example.test';
+      await start({ officeUrl: `${site}/documentserver` });
+      const item = await upload('Offer.docx', 'abc');
+      const { key, callbackPath } = await open(item.id);
+      expect((await api('GET', `/items/${item.id}/office`)).json().documentServerUrl).toBe(`${site}/documentserver`);
+      // The public prefix is stripped: the Document Server itself has none.
+      expect((await callback(callbackPath, saveData(key, 6, `${site}/documentserver/cache/files/data/k_1/output.docx/output.docx?md5=x&expires=1`))).json()).toEqual({ error: 0 });
+      expect((await callback(callbackPath, saveData(key, 6, `${site}/DOCUMENTSERVER/cache/x`))).json()).toEqual({ error: 1 });
+      // The public origin is Synclet's own: nothing outside the prefix is fetched.
+      for (const bad of [`${site}/api/sync/v1/items`, `${site}/documentserverx/cache/a`, `${site}/documentserver/../api/x`, `${site}/`, `${site}/documentserver//evil.example/x`, `${site}/documentserver/\\evil.example/x`]) {
+        expect((await callback(callbackPath, saveData(key, 6, bad))).json()).toEqual({ error: 1 });
+      }
+      // The internal URL still works as is.
+      expect((await callback(callbackPath, saveData(key, 6, `${ds.origin}/cache/c`))).json()).toEqual({ error: 0 });
+      expect(ds.state.hits).toEqual(['/cache/files/data/k_1/output.docx/output.docx?md5=x&expires=1', '/cache/c']);
+      expect(await download(item.id)).toBe('edited');
+    });
+
+    it('combines a public and an internal path prefix', async () => {
+      await ctx.close();
+      await start({ officeUrl: 'https://files.example.test/documentserver/', officeInternalUrl: `${ds.origin}/ds` });
+      const item = await upload('Offer.docx', 'abc');
+      const { key, callbackPath } = await open(item.id);
+      expect((await callback(callbackPath, saveData(key, 6, 'https://files.example.test/documentserver/cache/a?b=1'))).json()).toEqual({ error: 0 });
+      expect((await callback(callbackPath, saveData(key, 6, 'https://files.example.test/cache/a'))).json()).toEqual({ error: 1 });
+      // A "//" left after stripping either prefix is refused as well.
+      expect((await callback(callbackPath, saveData(key, 6, 'https://files.example.test/documentserver//evil.example/x'))).json()).toEqual({ error: 1 });
+      expect((await callback(callbackPath, saveData(key, 6, `${ds.origin}/ds//evil.example/x`))).json()).toEqual({ error: 1 });
+      expect(ds.state.hits).toEqual(['/ds/cache/a?b=1']);
+    });
+
     it('answers {error:1} when the download fails or is too large', async () => {
       await ctx.close();
       await start({ maxUploadBytes: 4 });

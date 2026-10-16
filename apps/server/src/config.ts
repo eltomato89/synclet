@@ -31,7 +31,10 @@ export interface AppConfig {
   versions: boolean;
   /** Per-user cap for stored version bytes (0 = unlimited). */
   versionsMaxBytes: number;
-  /** Browser-facing Document Server URL, e.g. https://office.example.com (null = office disabled). */
+  /**
+   * Browser-facing Document Server URL, e.g. https://files.example.com/documentserver or
+   * https://office.example.com (null = office disabled).
+   */
   officeUrl: string | null;
   officeJwtSecret: string | null;
   /** This server as seen by the Document Server. */
@@ -65,6 +68,21 @@ const byteCount = (name: string, v: string | undefined, dflt: number) => {
   return Number(v);
 };
 
+/**
+ * OFFICE_URL, only together with OFFICE_JWT_SECRET (compose always passes a default URL below
+ * SYNCLET_PUBLIC_URL; without the secret office editing is off). It must be an absolute http(s)
+ * URL; it is returned without trailing slash and with repeated slashes collapsed (a
+ * SYNCLET_PUBLIC_URL ending in "/" plus "/documentserver").
+ */
+const officeUrl = (raw: string | undefined, secret: string | undefined): string | null => {
+  if (!raw || !secret) return null;
+  const invalid = () => new Error(`OFFICE_URL must be an absolute http(s) URL such as https://files.example.com/documentserver, got "${raw}" (set SYNCLET_PUBLIC_URL or SYNCLET_OFFICE_PUBLIC_URL)`);
+  let u: URL;
+  try { u = new URL(raw); } catch { throw invalid(); }
+  if ((u.protocol !== 'http:' && u.protocol !== 'https:') || u.username || u.password || u.search || u.hash) throw invalid();
+  return `${u.origin}${u.pathname.replace(/\/{2,}/g, '/').replace(/\/+$/, '')}`;
+};
+
 /** At least 1 s (0 and negative values mean 1 s); unparsable values fall back to 25 s. */
 const pingSeconds = (v: number) => (Number.isFinite(v) ? Math.max(1, v) : 25);
 
@@ -92,7 +110,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     previewMaxBytes: int(env.SYNCLET_PREVIEW_MAX_BYTES, 2 * 1024 ** 3),
     versions: bool(env.SYNCLET_VERSIONS, false),
     versionsMaxBytes: int(env.SYNCLET_VERSIONS_MAX_BYTES, 0),
-    officeUrl: env.OFFICE_URL || null,
+    officeUrl: officeUrl(env.OFFICE_URL, env.OFFICE_JWT_SECRET),
     officeJwtSecret: env.OFFICE_JWT_SECRET || null,
     officeApiUrl: env.OFFICE_API_URL || 'http://server:3000/api',
     officeInternalUrl: env.OFFICE_INTERNAL_URL || 'http://office',

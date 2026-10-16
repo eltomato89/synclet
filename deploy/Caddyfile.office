@@ -1,15 +1,16 @@
 # Euro-Office Document Server site. Baked into the web image (/etc/caddy/office/on/office.caddy) and
-# only imported when compose.office.yml sets SYNCLET_CADDY_OFFICE=on. TLS terminates here (domain address) or at an outer proxy (http:// address).
+# only imported when compose.office.yml sets SYNCLET_CADDY_OFFICE=on (the default setup serves the
+# Document Server below /documentserver on the Synclet site instead). TLS terminates here (domain address) or at an outer proxy (http:// address).
 {$SYNCLET_OFFICE_SITE_ADDRESS} {
 	request_body {
 		max_size 0
 	}
 
 	reverse_proxy office:80 {
-		# Document Server builds absolute URLs from these. {scheme} is https for a domain address;
-		# behind a TLS-terminating outer proxy set SYNCLET_TRUSTED_PROXIES so the outer proxy's
-		# X-Forwarded-Proto is honoured by Caddy.
-		header_up X-Forwarded-Proto {scheme}
+		# Document Server builds absolute URLs from X-Forwarded-Host/-Proto. X-Forwarded-Proto is
+		# Caddy's default: the connection's scheme, or the value sent by a proxy in
+		# SYNCLET_TRUSTED_PROXIES (an outer proxy terminating TLS); never set it to {scheme}, which
+		# would ignore the outer proxy and yield http:// URLs.
 		header_up X-Forwarded-Host {hostport}
 		# WebSocket upgrades are proxied automatically by Caddy; never buffer, no timeouts.
 		flush_interval -1
