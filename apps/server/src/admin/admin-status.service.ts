@@ -105,11 +105,11 @@ export class AdminStatusService {
   }
 
   async get(): Promise<AdminStatusWire> {
-    const [total, disabled, dataDisk, metaDisk, meta, jobs, reachable, version] = await Promise.all([
+    const [total, disabled, dataDisk, metaDisk, meta, jobs, reachable] = await Promise.all([
       this.prisma.user.count(), this.prisma.user.count({ where: { disabledAt: { not: null } } }),
       this.disk(this.config.dataRoot), this.disk(this.config.metaRoot), this.metaSizes(), this.jobs(), this.officeReachable(),
-      this.updates.info(),
     ]);
+    const version = this.updates.info();
     return {
       version, uptimeSec: Math.round(process.uptime()),
       watch: this.watcher.mode, lastFullScanAt: this.scheduler.lastFullScanAt?.toISOString() ?? null,

@@ -7,6 +7,7 @@ import * as apiMod from '@/lib/api';
 import i18n from '@/lib/i18n';
 import { testQueryClient } from '@/test/query';
 import { AdminLayout, RequireAdmin } from './AdminLayout';
+import { UPDATE_HINT_PENDING_MS } from './queries';
 
 let me: PublicUser | null = null;
 vi.mock('@/lib/auth', () => ({ useAuth: () => ({ user: me, logout: async () => {} }) }));
@@ -103,4 +104,30 @@ it('shows no update mark when up to date, and never asks for the status as a non
   await waitFor(() => expect(memberCalls).toContain('/sync/v1/account'));
   expect(memberCalls).not.toContain('/admin/status');
   expect(screen.queryByTestId('update-dot')).toBeNull();
+});
+
+it('asks again soon while the server has no update result yet', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  try {
+    let n = 0;
+    vi.spyOn(apiMod, 'api').mockImplementation(async (path: string) => {
+      if (path !== '/admin/status') return { usedBytes: 0, quotaBytes: 0 };
+      n += 1;
+      return n === 1
+        ? { version: { installed: '0.1.2', revision: null, latest: null, latestUrl: null, checkedAt: null, status: 'unavailable' } }
+        : { version: { installed: '0.1.2', revision: null, latest: '0.1.3', latestUrl: null, checkedAt: '2026-10-16T10:00:00Z', status: 'update-available' } };
+    });
+    const { wrapper: Wrapper } = testQueryClient();
+    me = admin;
+    render(<Wrapper><MemoryRouter><Sidebar /></MemoryRouter></Wrapper>);
+    await waitFor(() => expect(n).toBe(1));
+    expect(screen.queryByTestId('update-dot')).toBeNull();
+    await vi.advanceTimersByTimeAsync(UPDATE_HINT_PENDING_MS);
+    expect(await screen.findByTestId('update-dot')).toBeInTheDocument();
+    // A result exists now: no more polling.
+    await vi.advanceTimersByTimeAsync(UPDATE_HINT_PENDING_MS * 3);
+    expect(n).toBe(2);
+  } finally {
+    vi.useRealTimers();
+  }
 });

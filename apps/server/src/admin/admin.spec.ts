@@ -6,6 +6,7 @@ import { hashToken } from '../auth/crypto';
 import { DevicesService } from '../auth/devices.service';
 import { SharesService } from '../shares/shares.service';
 import { dirSize } from './admin-status.service';
+import { UpdateCheckService } from './update-check.service';
 
 describe('admin backend', () => {
   let ctx: TestContext;
@@ -266,6 +267,9 @@ describe('admin backend', () => {
         JSON.stringify({ tag_name: 'v0.1.10', html_url: 'https://github.com/me/fork/releases/tag/v0.1.10' }), { status: 200 },
       ));
       try {
+        // The first request does not wait for GitHub; the check runs in the background.
+        expect((await call('GET', '/admin/status')).json().version).toMatchObject({ installed: '0.1.2', status: 'unavailable', checkedAt: null });
+        await ctx.app.get(UpdateCheckService).idle();
         const s = (await call('GET', '/admin/status')).json();
         expect(s.version).toMatchObject({
           installed: '0.1.2', revision: 'abcdef0', latest: '0.1.10', latestUrl: 'https://github.com/me/fork/releases/tag/v0.1.10', status: 'update-available',
@@ -273,8 +277,9 @@ describe('admin backend', () => {
         expect(Date.parse(s.version.checkedAt)).not.toBeNaN();
         expect(gh).toHaveBeenCalledTimes(1);
         expect(gh.mock.calls[0][0]).toBe('https://api.github.com/repos/me/fork/releases/latest');
-        // Cached: the next status request does not ask GitHub again.
+        // Cached: further status requests do not ask GitHub again.
         await call('GET', '/admin/status');
+        await ctx.app.get(UpdateCheckService).idle();
         expect(gh).toHaveBeenCalledTimes(1);
       } finally {
         gh.mockRestore();
@@ -288,6 +293,7 @@ describe('admin backend', () => {
       const gh = jest.spyOn(global, 'fetch');
       try {
         expect((await call('GET', '/admin/status')).json().version).toMatchObject({ installed: '0.1.2', status: 'disabled', latest: null });
+        await ctx.app.get(UpdateCheckService).idle();
         expect(gh).not.toHaveBeenCalled();
       } finally {
         gh.mockRestore();

@@ -34,6 +34,12 @@ it('links the release notes of an available update in a new tab', () => {
   expect(link).toHaveAccessibleName('Update available: 0.1.3 (opens in a new tab)');
 });
 
+it('shows no link for release notes outside github.com', () => {
+  show({ latest: '0.1.3', latestUrl: 'https://evil.example/notes', status: 'update-available' });
+  expect(screen.queryByRole('link')).toBeNull();
+  expect(screen.getByText('Version').parentElement!).toHaveTextContent('Update available: 0.1.3');
+});
+
 it('shows a development build with its tag and short commit', () => {
   const row = show({ installed: 'edge', status: 'development', checkedAt: null });
   expect(row).toHaveTextContent('Development build');

@@ -159,6 +159,11 @@ function Overview({ s }: { s: AdminStatusWire }) {
   );
 }
 
+/** Release notes are linked only on github.com (the server already pins them to the checked repository). */
+function safeReleaseUrl(url: string | null): string | undefined {
+  return url?.startsWith('https://github.com/') ? url : undefined;
+}
+
 /** Installed version, update state (link to the release notes if newer) and uptime. */
 export function VersionReading({ version: v, uptimeSec }: { version: VersionInfoWire; uptimeSec: number }) {
   const { t, i18n } = useTranslation();
@@ -167,10 +172,10 @@ export function VersionReading({ version: v, uptimeSec }: { version: VersionInfo
   const checked = v.checkedAt ? t('admin.status.updateChecked', { time: formatDateTime(v.checkedAt, i18n.language) }) : undefined;
   const state = dev
     ? <span className="tabular-nums">{[v.installed, rev].filter(Boolean).join(' · ')}</span>
-    : v.status === 'update-available' && v.latest
+    : v.status === 'update-available' && v.latest && safeReleaseUrl(v.latestUrl)
       ? (
         <a
-          href={v.latestUrl ?? undefined}
+          href={safeReleaseUrl(v.latestUrl)}
           target="_blank"
           rel="noopener noreferrer"
           title={checked}
@@ -181,7 +186,7 @@ export function VersionReading({ version: v, uptimeSec }: { version: VersionInfo
           {' '}<span className="sr-only">{t('admin.status.newTab')}</span>
         </a>
       )
-      : <span title={checked}>{t(`admin.status.update.${v.status}`)}</span>;
+      : <span title={checked}>{t(`admin.status.update.${v.status}`, { latest: v.latest })}</span>;
   return (
     <Reading
       label={t('admin.status.server')}

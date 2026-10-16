@@ -31,6 +31,8 @@ interface Latest { version: string; url: string }
 /**
  * Asks GitHub for the latest release of SYNCLET_UPDATE_REPO, on demand (admin status), at most
  * every 12 hours (1 hour after a failure). Release builds only; never with SYNCLET_UPDATE_CHECK=off.
+ * Stale-while-revalidate: `info()` never waits for GitHub; a due check runs in the background and
+ * its result shows up with the next status request.
  */
 @Injectable()
 export class UpdateCheckService {
@@ -61,12 +63,20 @@ export class UpdateCheckService {
     const tag = typeof body.tag_name === 'string' ? body.tag_name.trim() : '';
     if (!parseVersion(tag)) throw new Error(`unexpected release tag ${JSON.stringify(body.tag_name)}`);
     const version = tag.replace(/^v/, '');
-    const url = typeof body.html_url === 'string' && body.html_url.startsWith('https://github.com/')
+    // Only release pages of the checked repository are linked.
+    const repoUrl = `https://github.com/${this.config.updateRepo}/`;
+    const url = typeof body.html_url === 'string' && body.html_url.startsWith(repoUrl)
       ? body.html_url
-      : `https://github.com/${this.config.updateRepo}/releases/tag/${encodeURIComponent(tag)}`;
+      : `${repoUrl}releases/tag/${encodeURIComponent(tag)}`;
     return { version, url };
   }
 
+  /** Resolves once a running check has finished (tests). */
+  idle(): Promise<void> {
+    return this.inflight ?? Promise.resolve();
+  }
+
+  /** Single-flight; never rejects. */
   private refresh(): Promise<void> {
     this.inflight ??= (async () => {
       const at = this.now();
@@ -81,16 +91,16 @@ export class UpdateCheckService {
     return this.inflight;
   }
 
-  async info(): Promise<VersionInfoWire> {
+  info(): VersionInfoWire {
     const { buildVersion, buildRevision, updateCheck } = this.config;
     const installed = buildVersion.replace(/^v(?=\d)/, '');
     const base = { installed, revision: buildRevision, latest: null, latestUrl: null, checkedAt: null };
     if (!parseVersion(installed)) return { ...base, status: 'development' };
     if (!updateCheck) return { ...base, status: 'disabled' };
-    if (this.due()) await this.refresh();
-    const checkedAt = this.attempt ? new Date(this.attempt.at).toISOString() : null;
-    // A failed retry keeps showing the last known release.
-    if (!this.latest) return { ...base, checkedAt, status: 'unavailable' };
+    if (this.due()) void this.refresh();
+    // Not checked successfully yet (or only failures so far). A failed retry keeps showing the last known release.
+    if (!this.latest) return { ...base, status: 'unavailable' };
+    const checkedAt = new Date(this.latest.at).toISOString();
     const status: UpdateStatus = (compareVersions(this.latest.version, installed) ?? 0) > 0 ? 'update-available' : 'up-to-date';
     return { ...base, latest: this.latest.version, latestUrl: this.latest.url, checkedAt, status };
   }
