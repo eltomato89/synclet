@@ -254,13 +254,33 @@ final class LiveAPITests: XCTestCase {
         let hello = try await log.wait(timeout: 5) { if case .connected = $0 { true } else { false } }
         let helloIndex = try XCTUnwrap(hello, "no hello within 5 s").index
 
+        // The head before the create: a `changes` signal still at this cursor (a catch-up of
+        // something older) does not count.
+        let before = try await live.api.cursor()
         let start = Date()
         let folder = try await live.api.createFolder(parentID: SyncItem.rootID, name: "live-sse-\(UUID().uuidString.prefix(8))")
         let changes = try await log.wait(timeout: 3, after: helloIndex + 1) {
-            if case .changes(let space, _) = $0 { space == "personal" } else { false }
+            if case .changes(let space, let cursor) = $0 { space == "personal" && cursor != before } else { false }
         }
         XCTAssertNotNil(changes, "no changes within 3 s")
-        if let changes { print("LIVE: changes \(String(format: "%.3f", changes.at.timeIntervalSince(start))) s after the create") }
+        if let changes {
+            print("LIVE: changes \(String(format: "%.3f", changes.at.timeIntervalSince(start))) s after the create")
+            // The signal's cursor covers the create (cursors are opaque: checked through /changes,
+            // never by comparing them): the create is after `before` but not after the signal's cursor.
+            guard case .changes(_, let cursor) = changes.signal else { return XCTFail("not a changes signal") }
+            func ids(since cursor: String) async throws -> Set<String> {
+                Set(try await live.api.changes(since: cursor).changes.map {
+                    switch $0 {
+                    case .upsert(let item): item.id
+                    case .delete(let id): id
+                    }
+                })
+            }
+            let sinceBefore = try await ids(since: before)
+            let sinceSignal = try await ids(since: cursor)
+            XCTAssertTrue(sinceBefore.contains(folder.id), "the create is a change after the old head")
+            XCTAssertFalse(sinceSignal.contains(folder.id), "the signal's cursor already covers the create")
+        }
         try await live.api.deleteItem(id: folder.id)
     }
 
@@ -332,12 +352,12 @@ private final class SignalLog: @unchecked Sendable {
     func fail(_ error: Error) { lock.withLock { failure = error } }
 
     func wait(timeout: TimeInterval, after start: Int = 0,
-              _ match: (StreamSignal) -> Bool) async throws -> (index: Int, at: Date)? {
+              _ match: (StreamSignal) -> Bool) async throws -> (index: Int, at: Date, signal: StreamSignal)? {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             let (signals, error) = lock.withLock { (entries, failure) }
             if let found = signals.indices.first(where: { $0 >= start && match(signals[$0].signal) }) {
-                return (found, signals[found].at)
+                return (found, signals[found].at, signals[found].signal)
             }
             if let error { throw error }
             try await Task.sleep(for: .milliseconds(20))
