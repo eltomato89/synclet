@@ -286,6 +286,47 @@ final class PinningModelTests: XCTestCase {
         XCTAssertEqual(content.requested, [["f_1"]])
     }
 
+    /// M7: the launch walks only when the pins changed since the last finished walk (or the
+    /// download queue overflowed); otherwise it restores the measured size and only drains
+    /// announced ids.
+    func testLaunchWalksOnlyWhenThePinsChangedOrTheQueueOverflowed() async throws {
+        let account = try addAccount(host: "a.test", serverId: "srvA")
+        let directory = harness.manager.accounts.accountDirectory(key: account.key)
+        let store = PinStore(stateDir: directory)
+        try store.setFolder("d_f", pinned: true, space: "personal")
+        content.bytes = ["d_f": 10, "d_g": 5]
+        let first = makeModel()
+        first.start()
+        await first.waitForRefreshes()
+        XCTAssertEqual(content.ensured.count, 1)
+
+        // Same pins: no walk, size restored, queued ids requested.
+        try PinnedDownloadQueue(accountDirectory: directory).append(["f_1"])
+        let second = makeModel()
+        second.start()
+        await second.waitForRefreshes()
+        await second.waitForAnnouncements()
+        XCTAssertEqual(content.ensured.count, 1, "no launch walk")
+        XCTAssertEqual(second.account(key: account.key)?.offlineBytes, 10)
+        XCTAssertEqual(content.requested, [["f_1"]])
+
+        // Overflowed queue: walk.
+        try PinnedDownloadQueue(accountDirectory: directory).append((0...PinnedDownloadQueue.maxEntries).map { "f_\($0)" })
+        let third = makeModel()
+        third.start()
+        await third.waitForAnnouncements()
+        await third.waitForRefreshes()
+        XCTAssertEqual(content.ensured.count, 2)
+
+        // Changed pins: walk.
+        try store.setFolder("d_g", pinned: true, space: "personal")
+        let fourth = makeModel()
+        fourth.start()
+        await fourth.waitForRefreshes()
+        XCTAssertEqual(content.ensured.count, 3)
+        XCTAssertEqual(content.ensured.last?.containers, ["d_f", "d_g"])
+    }
+
     func testFailedDownloadRequestsAreRetriedOnce() async throws {
         let account = try addAccount(host: "a.test", serverId: "srvA")
         let model = makeModel()
