@@ -1,8 +1,9 @@
 import SwiftUI
 import SyncletKit
 
-/// Tab "Offline": per account and space a "whole space" switch and one switch per
-/// first-level folder; the footer shows the size of the pinned content.
+/// Tab "Offline": per account and space (personal, team folders, external storages) a
+/// "whole space" switch and one switch per first-level folder; the footer shows the size of
+/// the pinned content.
 struct PinningSettingsView: View {
     let model: PinningModel
 
@@ -64,7 +65,7 @@ private struct SpacePinsSection: View {
                 HStack {
                     Text(error).font(.caption).foregroundStyle(.red)
                     Spacer()
-                    Button("Try Again") { Task { await model.load(key: account.key) } }
+                    Button("Try Again") { Task { await model.load(key: account.key, spaces: [space.id]) } }
                 }
             } else if space.folders.isEmpty {
                 Text("No folders").foregroundStyle(.secondary)
@@ -87,7 +88,12 @@ private struct SpacePinsSection: View {
                 .disabled(space.wholeSpace)
             }
         } header: {
-            Text(verbatim: "\(account.title) · \(space.title)")
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: "\(account.title) · \(space.title)")
+                if let detail = space.detail {
+                    Text(verbatim: detail).font(.caption).foregroundStyle(.secondary)
+                }
+            }
         }
     }
 }

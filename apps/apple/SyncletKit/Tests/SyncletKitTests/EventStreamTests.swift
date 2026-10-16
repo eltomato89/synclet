@@ -373,6 +373,31 @@ final class EventStreamTests: XCTestCase {
         XCTAssertEqual(signals, [.connected(cursor: "1234"), .changes(space: "personal", cursor: "2")])
     }
 
+    func testHelloCursorsPerSpaceAndAccountEvent() async throws {
+        let team = "6f1c0d2e-0000-4000-8000-000000000001"
+        SSEStubProtocol.reset { _ in
+            .events([
+                "event: hello\ndata: {\"cursor\":\"1234\",\"cursors\":{\"personal\":\"1234\",\"\(team)\":88}}\n\n",
+                "event: changes\ndata: {\"space\":\"\(team)\",\"cursor\":\"89\"}\n\n",
+                "event: account\ndata: {}\n\n",
+                "event: account\ndata:\n\n",   // an empty data line works too
+            ], keepOpen: true)
+        }
+        let signals = try await collect(stream(), count: 4)
+        XCTAssertEqual(signals, [
+            .connected(cursor: "1234", cursors: ["personal": "1234", team: "88"]),
+            .changes(space: team, cursor: "89"),
+            .account,
+            .account,
+        ])
+    }
+
+    func testHelloWithoutCursorsHasAnEmptyMap() async throws {
+        SSEStubProtocol.reset { _ in .events([Self.hello], keepOpen: true) }
+        let signals = try await collect(stream(), count: 1)
+        XCTAssertEqual(signals, [.connected(cursor: "1234", cursors: [:])])
+    }
+
     func testStoppingTheConsumerClosesTheConnection() async throws {
         SSEStubProtocol.reset { _ in .events([Self.hello], keepOpen: true) }
         _ = try await collect(stream(), count: 1)

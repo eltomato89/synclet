@@ -379,6 +379,26 @@ final class AccountManagerTests: XCTestCase {
         XCTAssertEqual(manager.accounts.account(key: stored.key)?.spaces, more)
     }
 
+    /// `account` event: `GET /account` with the device token, changed spaces are stored.
+    func testRefreshSpacesStoresChangedSpaces() async throws {
+        let (manager, _, _, _) = makeManager()
+        serve()
+        let stored = try await manager.add(server: Fixtures.server, tokens: tokens)
+        let unchanged = try await manager.refreshSpaces(key: stored.key)
+        XCTAssertFalse(unchanged)
+
+        let team = #"{"id":"6f1c","kind":"shared","name":"Marketing","rootId":"r_6f1c","canWrite":false}"#
+        serve(accountJSON: Fixtures.accountJSON(spaces: #"[{"id":"personal","kind":"personal","name":"Meine Dateien","rootId":"root","canWrite":true},\#(team)]"#))
+        let changed = try await manager.refreshSpaces(key: stored.key)
+        XCTAssertTrue(changed)
+        XCTAssertEqual(manager.accounts.account(key: stored.key)?.spaces.map(\.id), ["personal", "6f1c"])
+        XCTAssertEqual(manager.accounts.account(key: stored.key)?.spaces.last?.kind, .shared)
+        XCTAssertEqual(MockURLProtocol.requests.last?.header("Authorization"), "Bearer syd_1")
+        let again = try await manager.refreshSpaces(key: stored.key)
+        XCTAssertFalse(again)
+        await assertThrows(.unauthorized(message: "account removed")) { _ = try await manager.refreshSpaces(key: "unknown") }
+    }
+
     // MARK: - addRegistered (DEBUG test login of the iOS app)
 
     func testAddRegisteredStoresTokenAccountAndDomainWithoutRegistering() async throws {

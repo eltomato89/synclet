@@ -131,8 +131,9 @@ final class ChangeMonitorTests: XCTestCase {
 
     private func monitor(coalesce: Duration = .milliseconds(300), fallback: Duration = .seconds(60),
                          refresh: Duration = .seconds(3600), reconnectBase: Duration = .seconds(1),
-                         finder: FakeFinder? = nil) -> ChangeMonitor {
+                         finder: FakeFinder? = nil, spacesChanged: (@MainActor () -> Void)? = nil) -> ChangeMonitor {
         var dependencies = world.dependencies(storedSpaces: stored, authFailures: authFailures)
+        if let spacesChanged { dependencies.spacesChanged = spacesChanged }
         if let finder {
             dependencies.resolveErrors = {
                 await finder.resolveTransientErrors(domain: NSFileProviderDomain(
@@ -357,6 +358,40 @@ final class ChangeMonitorTests: XCTestCase {
         let signalled = await eventually { self.world.rootSignals == 1 }
         XCTAssertTrue(signalled)
         XCTAssertEqual(stored.value.map(\.id), ["personal", "s1"])
+    }
+
+    /// SSE `account`: `/account` is reloaded, the spaces stored, and the root container and
+    /// the working set are signalled (new feeds join, lost spaces are deleted).
+    func testAccountEventRefreshesSpacesAndSignalsRootAndWorkingSet() async throws {
+        let changes = Counter()
+        let monitor = monitor(coalesce: .milliseconds(1), spacesChanged: { changes.increment() })
+        monitor.start()
+        defer { monitor.stop() }
+        _ = await eventually { self.world.streamCount == 1 }
+        world.send(.connected(cursor: "1", cursors: ["personal": "1"]))
+        _ = await eventually { self.world.accountFetches == 1 && self.world.workingSetSignals == 1 }
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(world.rootSignals, 0)
+        XCTAssertEqual(changes.value, 0)
+
+        let team = SyncSpace(id: "6f1c", kind: .shared, name: "Marketing", rootId: "r_6f1c", canWrite: true)
+        world.spaces.append(team)
+        world.send(.account)
+        let refreshed = await eventually {
+            self.world.accountFetches == 2 && self.world.rootSignals == 1 && self.world.workingSetSignals == 2
+        }
+        XCTAssertTrue(refreshed, "fetches \(world.accountFetches), signals \(world.signalled)")
+        XCTAssertEqual(stored.value, world.spaces)
+        XCTAssertEqual(changes.value, 1)
+        XCTAssertEqual(monitor.state, .connected)
+
+        // Lost membership: the space disappears again.
+        world.spaces.removeLast()
+        world.send(.account)
+        let lost = await eventually { self.world.rootSignals == 2 && self.world.workingSetSignals == 3 }
+        XCTAssertTrue(lost)
+        XCTAssertEqual(stored.value.map(\.id), ["personal"])
+        XCTAssertEqual(changes.value, 2)
     }
 
     func testAccountIsRefreshedPeriodically() async throws {

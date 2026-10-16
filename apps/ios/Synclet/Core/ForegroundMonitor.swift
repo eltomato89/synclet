@@ -158,7 +158,7 @@ final class ForegroundMonitor {
 
     private func handle(_ signal: StreamSignal) {
         switch signal {
-        case .connected(let cursor):
+        case .connected(let cursor, _):
             reconnectAttempt = 0
             setState(.connected)
             let moved = advance(to: cursor)
@@ -173,6 +173,13 @@ final class ForegroundMonitor {
         case .changes(_, let cursor):
             if state != .connected { setState(.connected) }
             _ = advance(to: cursor)
+            notify(change: true)
+        case .account:
+            // The spaces or rights changed (Task 9 refines the iOS handling): reload them and
+            // let the browser and the extension catch up.
+            if state != .connected { setState(.connected) }
+            accountTask?.cancel()
+            accountTask = Task { [weak self] in await self?.refreshSpaces() }
             notify(change: true)
         case .disconnected(let reason):
             Self.log.debug("stream disconnected: \(String(describing: reason), privacy: .public)")

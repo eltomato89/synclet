@@ -110,12 +110,16 @@ public struct SyncItem: Codable, Sendable, Hashable, Identifiable {
     public var capabilities: SyncCapabilities
     /// Files only; absent = unknown.
     public var preview: SyncPreview?
+    /// API id of the item's space (`personal` or the space uuid); absent on servers before
+    /// Phase 4.
+    public var spaceId: String?
 
     public init(id: String, parentId: String?, type: SyncItemType, kind: SyncItemKind,
                 name: String, size: Int64 = 0, mime: String? = nil, version: Int? = nil,
                 sha256: String? = nil, etag: String, contentEtag: String? = nil,
                 createdAt: String, modifiedAt: String, documentId: String? = nil,
-                capabilities: SyncCapabilities = SyncCapabilities(), preview: SyncPreview? = nil) {
+                capabilities: SyncCapabilities = SyncCapabilities(), preview: SyncPreview? = nil,
+                spaceId: String? = nil) {
         self.id = id
         self.parentId = parentId
         self.type = type
@@ -132,6 +136,7 @@ public struct SyncItem: Codable, Sendable, Hashable, Identifiable {
         self.documentId = documentId
         self.capabilities = capabilities
         self.preview = preview
+        self.spaceId = spaceId
     }
 
     public var isFolder: Bool { type == .folder }
