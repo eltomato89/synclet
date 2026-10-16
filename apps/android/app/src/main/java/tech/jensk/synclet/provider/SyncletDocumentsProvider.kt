@@ -1,5 +1,6 @@
 package tech.jensk.synclet.provider
 
+import android.content.Context
 import android.content.res.AssetFileDescriptor
 import android.database.Cursor
 import android.database.MatrixCursor
@@ -13,9 +14,9 @@ import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
 import android.provider.DocumentsContract.Root
-import android.provider.DocumentsProvider
 import android.util.Log
 import android.webkit.MimeTypeMap
+import androidx.core.content.MimeTypeFilter
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
@@ -33,25 +34,22 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import tech.jensk.synclet.R
 import tech.jensk.synclet.core.account.AccountSession
 import tech.jensk.synclet.core.api.ErrorCodes
 import tech.jensk.synclet.core.api.NameRules
 import tech.jensk.synclet.core.api.OnConflict
 import tech.jensk.synclet.core.api.SyncError
-import tech.jensk.synclet.core.api.SyncApi
 import tech.jensk.synclet.core.api.SyncItem
 import tech.jensk.synclet.core.api.SyncSpace
 import tech.jensk.synclet.core.api.recent
 import tech.jensk.synclet.core.api.search
 import tech.jensk.synclet.core.api.sha256Hex
+import tech.jensk.synclet.core.api.shortKey
 import tech.jensk.synclet.core.layout.DocumentIds
 import tech.jensk.synclet.core.layout.SpaceLayout
-import tech.jensk.synclet.core.upload.TusClient
-import tech.jensk.synclet.core.upload.UploadKind
+import tech.jensk.synclet.core.upload.dropReplacesOf
 import tech.jensk.synclet.core.upload.UploadNotifications
-import tech.jensk.synclet.core.upload.UploadStatus
 import tech.jensk.synclet.ui.components.nameProblemMessage
 import tech.jensk.synclet.ui.components.syncErrorMessage
 
@@ -69,10 +67,16 @@ import tech.jensk.synclet.ui.components.syncErrorMessage
  * through the close channel, which the listener sees as an error – its edit is dropped like a crashed writer's
  * (with an "upload failed" notification), because the provider can no longer tell when the content is final.
  */
-class SyncletDocumentsProvider : DocumentsProvider() {
+class SyncletDocumentsProvider : NullSafeSearchDocumentsProvider() {
     internal var environmentOverride: ProviderEnvironment? = null
     private val env: ProviderEnvironment
-        get() = environmentOverride ?: (requireContext().applicationContext as ProviderEnvironment.Owner).providerEnvironment
+        get() = environmentOverride ?: (ctx.applicationContext as ProviderEnvironment.Owner).providerEnvironment
+    /** `requireContext()` is API 30; minSdk is 29. */
+    private val ctx: Context
+        get() = context ?: throw IllegalStateException("provider not attached")
+    /** Opens a writer's working copy; tests replace it to report a crashed writer through the close listener. */
+    internal var openWritable: (File, Int, Handler, ParcelFileDescriptor.OnCloseListener) -> ParcelFileDescriptor =
+        { file, mode, handler, listener -> ParcelFileDescriptor.open(file, mode, handler, listener) }
     private val loader = Executors.newFixedThreadPool(3)
     private val loading: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val closeHandler: Handler by lazy { Handler(HandlerThread("synclet-documents-close").apply { start() }.looper) }
@@ -90,14 +94,14 @@ class SyncletDocumentsProvider : DocumentsProvider() {
             val row = cursor.newRow()
             row.add(Root.COLUMN_ROOT_ID, account.key)
             row.add(Root.COLUMN_DOCUMENT_ID, DocumentIds.top(account.key))
-            row.add(Root.COLUMN_TITLE, requireContext().getString(R.string.app_name))
+            row.add(Root.COLUMN_TITLE, ctx.getString(R.string.app_name))
             row.add(Root.COLUMN_SUMMARY, if (account.needsSignIn) "${account.title} · ${env.signInRequiredSummary()}" else account.title)
             row.add(Root.COLUMN_FLAGS, Root.FLAG_SUPPORTS_CREATE or Root.FLAG_SUPPORTS_SEARCH or
                 Root.FLAG_SUPPORTS_RECENTS or Root.FLAG_SUPPORTS_IS_CHILD)
             row.add(Root.COLUMN_ICON, R.mipmap.ic_launcher)
             if (account.quotaBytes > 0) row.add(Root.COLUMN_AVAILABLE_BYTES, (account.quotaBytes - account.usedBytes).coerceAtLeast(0))
         }
-        cursor.setNotificationUri(requireContext().contentResolver, DocumentsContract.buildRootsUri(ProviderContract.AUTHORITY))
+        cursor.setNotificationUri(ctx.contentResolver, DocumentsContract.buildRootsUri(ProviderContract.AUTHORITY))
         return cursor
     }
 
@@ -122,7 +126,7 @@ class SyncletDocumentsProvider : DocumentsProvider() {
         val session = session(ref.accountKey)
         val layout = session.layout
         val cursor = MatrixCursor(projection ?: DOCUMENT_PROJECTION)
-        cursor.setNotificationUri(requireContext().contentResolver,
+        cursor.setNotificationUri(ctx.contentResolver,
             DocumentsContract.buildChildDocumentsUri(ProviderContract.AUTHORITY, parentDocumentId))
         if (ref.isTop) {
             layout.spaces.forEach { addSpace(cursor, ref.accountKey, it, layout) }
@@ -153,7 +157,7 @@ class SyncletDocumentsProvider : DocumentsProvider() {
                 env.listingCache.put(ref.accountKey, ref.syncId, items)
             } catch (e: Exception) {
                 // Recorded with a timestamp: the next query shows EXTRA_ERROR and does not reload for 30 s.
-                env.listingCache.putError(ref.accountKey, ref.syncId, requireContext().syncErrorMessage(e))
+                env.listingCache.putError(ref.accountKey, ref.syncId, ctx.syncErrorMessage(e))
             } finally {
                 loading.remove(key)
                 env.notifier.childrenChanged(ref.accountKey, ref.syncId)
@@ -164,22 +168,44 @@ class SyncletDocumentsProvider : DocumentsProvider() {
     override fun querySearchDocuments(rootId: String, query: String, projection: Array<out String>?): Cursor =
         serverList(rootId, projection) { it.api.search(query, limit = 50).hits.map { hit -> hit.item } }
 
+    /**
+     * Android 10+ DocumentsUI searches through the Bundle variant (via [NullSafeSearchDocumentsProvider]). The term is QUERY_ARG_DISPLAY_NAME, else the URI's
+     * `query` parameter if a caller copied it into the arguments (callers of the old URI-only API still reach the
+     * String variant above). QUERY_ARG_MIME_TYPES is applied here: the server search knows no MIME filter.
+     */
+    override fun searchDocuments(rootId: String, projection: Array<out String>?, queryArgs: Bundle?): Cursor {
+        val term = (queryArgs?.getString(DocumentsContract.QUERY_ARG_DISPLAY_NAME) ?: queryArgs?.getString(URI_QUERY_PARAM))
+            ?.trim()?.takeIf { it.isNotEmpty() }
+        if (term == null) {
+            ready()
+            session(rootId)
+            return MatrixCursor(projection ?: DOCUMENT_PROJECTION)
+        }
+        val mimeTypes = queryArgs?.getStringArray(DocumentsContract.QUERY_ARG_MIME_TYPES)?.takeIf { it.isNotEmpty() }
+        return serverList(rootId, projection, accept = { mimeTypes == null || MimeTypeFilter.matches(mimeOf(it), mimeTypes) != null }) {
+            it.api.search(term, limit = 50).hits.map { hit -> hit.item }
+        }
+    }
+
     override fun queryRecentDocuments(rootId: String, projection: Array<out String>?): Cursor =
         serverList(rootId, projection) { it.api.recent(limit = 64) }
 
-    private fun serverList(accountKey: String, projection: Array<out String>?, load: suspend (AccountSession) -> List<SyncItem>): Cursor {
+    private fun serverList(
+        accountKey: String, projection: Array<out String>?, accept: (SyncItem) -> Boolean = { true },
+        load: suspend (AccountSession) -> List<SyncItem>,
+    ): Cursor {
         ready()
         val session = session(accountKey)
         val cursor = MatrixCursor(projection ?: DOCUMENT_PROJECTION)
         try {
             blocking(null, timeoutMs = 10_000) { load(session) }.forEach {
                 env.listingCache.putItem(accountKey, it)
-                addItem(cursor, accountKey, session.layout, it)
+                if (accept(it)) addItem(cursor, accountKey, session.layout, it)
             }
         } catch (e: OperationCanceledException) {
             throw e
         } catch (e: Exception) {
-            val message = if (e is FileNotFoundException) e.message else requireContext().syncErrorMessage(e)
+            val message = if (e is FileNotFoundException) e.message else ctx.syncErrorMessage(e)
             cursor.extras = Bundle().apply { putString(DocumentsContract.EXTRA_ERROR, message) }
         }
         return cursor
@@ -245,7 +271,7 @@ class SyncletDocumentsProvider : DocumentsProvider() {
         } catch (e: Exception) {
             throw notFound(e)
         }
-        if (item.isFolder) throw FileNotFoundException(requireContext().getString(R.string.provider_error_folder))
+        if (item.isFolder) throw FileNotFoundException(ctx.getString(R.string.provider_error_folder))
         if (writing && !item.capabilities.write) throw FileNotFoundException(forbidden())
 
         // A writer that just closed may still be handing its copy to the queue: wait for it, so this open sees it.
@@ -260,7 +286,7 @@ class SyncletDocumentsProvider : DocumentsProvider() {
             return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
         }
 
-        val work = File(workDir(), UUID.randomUUID().toString())
+        val work = File(workDir(ref.accountKey), UUID.randomUUID().toString())
         // "w" truncates like "wt" (as ParcelFileDescriptor.parseMode does on devices); "rw" and "wa" start from the content.
         val truncate = accessMode and ParcelFileDescriptor.MODE_TRUNCATE != 0 || mode == "w"
         val baseSha = try {
@@ -273,14 +299,21 @@ class SyncletDocumentsProvider : DocumentsProvider() {
         val accountKey = ref.accountKey
         val ifMatch = item.contentEtag ?: item.etag
         val parentId = item.parentId ?: SyncItem.ROOT_ID
-        val parentName = env.listingCache.item(accountKey, parentId)?.name ?: ""
-        val appContext = requireContext().applicationContext
+        // A file directly in a space root: its parent is the space (the root item itself is never listed).
+        val parentName = session.layout.spaceForRootId(parentId)?.let { session.layout.displayName(it, env.personalSpaceName()) }
+            ?: env.listingCache.item(accountKey, parentId)?.name ?: ""
+        val appContext = ctx.applicationContext
         writes.begin(writeKey)
         try {
-            return ParcelFileDescriptor.open(work, accessMode, closeHandler) { error ->
+            return openWritable(work, accessMode, closeHandler) { error ->
                 try {
                     when {
-                        error != null -> work.delete()                                   // the other app crashed: never upload half a file
+                        error != null -> {
+                            // The other app crashed (or detached the descriptor): never upload half a file, but say so.
+                            work.delete()
+                            runCatching { UploadNotifications.failed(appContext, item.name) }
+                        }
+                        env.session(accountKey) == null -> work.delete()                 // signed out meanwhile
                         baseSha != null && sha256Hex(work) == baseSha -> work.delete()   // opened rw, nothing changed
                         else -> {
                             runBlocking {
@@ -322,14 +355,18 @@ class SyncletDocumentsProvider : DocumentsProvider() {
             throw notFound(e)
         }
 
-    /** Working copies of open writers; leftovers of a killed process (older than a day) are removed once. */
-    private fun workDir(): File {
-        val dir = File(requireContext().cacheDir, WORK_DIR).apply { mkdirs() }
+    /**
+     * Working copies of open writers, one directory per account (sign-out clears it, [clearWorkCopies]); leftovers of
+     * a killed process (older than a day) are removed once.
+     */
+    private fun workDir(accountKey: String): File {
+        val root = File(ctx.cacheDir, WORK_DIR)
         if (workDirSwept.compareAndSet(false, true)) {
             val cutoff = System.currentTimeMillis() - 24 * 3_600_000L
-            dir.listFiles()?.filter { it.lastModified() < cutoff }?.forEach { it.delete() }
+            root.walkBottomUp().filter { it != root && it.lastModified() < cutoff && (it.isFile || it.list().isNullOrEmpty()) }
+                .forEach { it.delete() }
         }
-        return dir
+        return File(root, shortKey(accountKey)).apply { mkdirs() }
     }
 
     override fun openDocumentThumbnail(documentId: String, sizeHint: Point?, signal: CancellationSignal?): AssetFileDescriptor {
@@ -346,9 +383,9 @@ class SyncletDocumentsProvider : DocumentsProvider() {
     override fun createDocument(parentDocumentId: String, mimeType: String, displayName: String): String {
         ready()
         val parent = parse(parentDocumentId)
-        if (parent.isTop) throw UnsupportedOperationException(requireContext().getString(R.string.provider_error_top))
+        if (parent.isTop) throw UnsupportedOperationException(ctx.getString(R.string.provider_error_top))
         val name = if (mimeType == Document.MIME_TYPE_DIR) displayName.trim() else withExtension(displayName.trim(), mimeType)
-        NameRules.check(name)?.let { throw IllegalArgumentException(requireContext().nameProblemMessage(it)) }
+        NameRules.check(name)?.let { throw IllegalArgumentException(ctx.nameProblemMessage(it)) }
         val session = session(parent.accountKey)
         val folder = item(parent, null)
         if (!session.layout.canCreateIn(folder)) throw UnsupportedOperationException(forbidden())
@@ -356,7 +393,7 @@ class SyncletDocumentsProvider : DocumentsProvider() {
             if (mimeType == Document.MIME_TYPE_DIR) session.api.createFolder(folder.id, name, OnConflict.RENAME)
             else {
                 // A new file gets its id right away; the app's writes then arrive as `replace` (Spec §2.7).
-                val empty = File.createTempFile("new", null, requireContext().cacheDir)
+                val empty = File.createTempFile("new", null, ctx.cacheDir)
                 try { session.api.uploadNew(folder.id, name, empty, OnConflict.RENAME) } finally { empty.delete() }
             }
         }
@@ -369,7 +406,7 @@ class SyncletDocumentsProvider : DocumentsProvider() {
         ready()
         val ref = parse(documentId)
         val name = displayName.trim()
-        NameRules.check(name)?.let { throw IllegalArgumentException(requireContext().nameProblemMessage(it)) }
+        NameRules.check(name)?.let { throw IllegalArgumentException(ctx.nameProblemMessage(it)) }
         val session = session(ref.accountKey)
         val item = item(ref, null)
         if (!item.capabilities.rename) throw UnsupportedOperationException(forbidden())
@@ -384,8 +421,8 @@ class SyncletDocumentsProvider : DocumentsProvider() {
         ready()
         val source = parse(sourceDocumentId)
         val target = parse(targetParentDocumentId)
-        if (source.accountKey != target.accountKey) throw UnsupportedOperationException(requireContext().getString(R.string.provider_error_cross_account))
-        if (target.isTop || source.isTop) throw UnsupportedOperationException(requireContext().getString(R.string.provider_error_top))
+        if (source.accountKey != target.accountKey) throw UnsupportedOperationException(ctx.getString(R.string.provider_error_cross_account))
+        if (target.isTop || source.isTop) throw UnsupportedOperationException(ctx.getString(R.string.provider_error_top))
         val session = session(source.accountKey)
         val item = item(source, null)
         val folder = item(target, null)
@@ -400,7 +437,7 @@ class SyncletDocumentsProvider : DocumentsProvider() {
     override fun deleteDocument(documentId: String) {
         ready()
         val ref = parse(documentId)
-        if (ref.isTop) throw UnsupportedOperationException(requireContext().getString(R.string.provider_error_top))
+        if (ref.isTop) throw UnsupportedOperationException(ctx.getString(R.string.provider_error_top))
         val session = session(ref.accountKey)
         val item = item(ref, null)
         if (!item.capabilities.delete) throw UnsupportedOperationException(forbidden())
@@ -418,25 +455,14 @@ class SyncletDocumentsProvider : DocumentsProvider() {
 
     /**
      * An explicitly deleted file must not come back: queued replaces of it would hit 404 and be re-uploaded as a new
-     * file (Spec-Klärung 9). Waiting ones are removed; a running one is removed too (the uploader stops when its entry
-     * is gone) and its tus upload terminated, best effort.
+     * file (Spec-Klärung 9). Shared with the app's delete (UploadQueue.dropReplacesOf): waiting and running replaces
+     * go (their tus upload is terminated, best effort); conflict copies stay, they hold the user's edit as a new file.
      */
     private fun dropPendingReplaces(session: AccountSession, accountKey: String, itemId: String) {
-        blocking(null) { env.uploadQueue.load() }
-        val doomed = env.uploadQueue.entries.value.filter {
-            it.accountKey == accountKey && it.itemId == itemId && it.kind == UploadKind.REPLACE &&
-                (it.status == UploadStatus.WAITING || it.status == UploadStatus.UPLOADING)
-        }
-        for (entry in doomed) {
-            try {
-                blocking(null) {
-                    env.uploadQueue.remove(entry.id)
-                    val tus = entry.tusUrl?.toHttpUrlOrNull()?.takeIf { SyncApi.sameOrigin(it, session.api.origin) }
-                    if (entry.status == UploadStatus.UPLOADING && tus != null) runCatching { TusClient(session.api).terminate(tus) }
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "could not drop a queued replace of a deleted file", e)
-            }
+        try {
+            blocking(null) { env.uploadQueue.dropReplacesOf(session.api, accountKey, itemId) }
+        } catch (e: Exception) {
+            Log.w(TAG, "could not drop a queued replace of a deleted file", e)
         }
     }
 
@@ -451,7 +477,7 @@ class SyncletDocumentsProvider : DocumentsProvider() {
         DocumentIds.parse(documentId) ?: throw FileNotFoundException(documentId)
 
     private fun session(accountKey: String): AccountSession =
-        env.session(accountKey) ?: throw FileNotFoundException(requireContext().getString(R.string.provider_error_no_account))
+        env.session(accountKey) ?: throw FileNotFoundException(ctx.getString(R.string.provider_error_no_account))
 
     /** The item from the listing cache, else from the server (and cached). */
     private fun item(ref: DocumentIds.Parsed, signal: CancellationSignal?): SyncItem {
@@ -478,10 +504,10 @@ class SyncletDocumentsProvider : DocumentsProvider() {
         if (e.status == 412) e.item?.let { env.listingCache.putItem(accountKey, it) } ?: itemId?.let { env.listingCache.removeItem(accountKey, it) }
         if (e.status == 404) itemId?.let { env.listingCache.removeItem(accountKey, it) }
         if (e.status == 412 || e.status == 404) parentId?.let { changed(accountKey, it) }
-        throw if (e.status == 404) FileNotFoundException(requireContext().syncErrorMessage(e))
-              else IllegalStateException(requireContext().syncErrorMessage(e))
+        throw if (e.status == 404) FileNotFoundException(ctx.syncErrorMessage(e))
+              else IllegalStateException(ctx.syncErrorMessage(e))
     } catch (e: SyncError) {
-        throw IllegalStateException(requireContext().syncErrorMessage(e))
+        throw IllegalStateException(ctx.syncErrorMessage(e))
     }
 
     private fun changed(accountKey: String, folderId: String) {
@@ -489,9 +515,9 @@ class SyncletDocumentsProvider : DocumentsProvider() {
         env.notifier.childrenChanged(accountKey, folderId)
     }
 
-    private fun forbidden() = requireContext().syncErrorMessage(SyncError.Http(403, ErrorCodes.FORBIDDEN, null))
+    private fun forbidden() = ctx.syncErrorMessage(SyncError.Http(403, ErrorCodes.FORBIDDEN, null))
 
-    private fun notFound(e: Throwable) = FileNotFoundException(requireContext().syncErrorMessage(e))
+    private fun notFound(e: Throwable) = FileNotFoundException(ctx.syncErrorMessage(e))
 
     private fun <T> blocking(signal: CancellationSignal?, timeoutMs: Long? = null, block: suspend () -> T): T {
         try {
@@ -501,7 +527,7 @@ class SyncletDocumentsProvider : DocumentsProvider() {
                 if (timeoutMs != null) withTimeout(timeoutMs) { block() } else block()
             }
         } catch (e: TimeoutCancellationException) {
-            throw FileNotFoundException(requireContext().syncErrorMessage(SyncError.Transport(IOException("timeout"))))
+            throw FileNotFoundException(ctx.syncErrorMessage(SyncError.Transport(IOException("timeout"))))
         } catch (e: CancellationException) {
             if (signal?.isCanceled == true) throw OperationCanceledException()
             throw e
@@ -519,7 +545,7 @@ class SyncletDocumentsProvider : DocumentsProvider() {
     private fun addTop(cursor: MatrixCursor, accountKey: String) {
         cursor.newRow()
             .add(Document.COLUMN_DOCUMENT_ID, DocumentIds.top(accountKey))
-            .add(Document.COLUMN_DISPLAY_NAME, env.accounts().firstOrNull { it.key == accountKey }?.title ?: requireContext().getString(R.string.app_name))
+            .add(Document.COLUMN_DISPLAY_NAME, env.accounts().firstOrNull { it.key == accountKey }?.title ?: ctx.getString(R.string.app_name))
             .add(Document.COLUMN_MIME_TYPE, Document.MIME_TYPE_DIR)
             .add(Document.COLUMN_FLAGS, 0)
     }
@@ -530,7 +556,7 @@ class SyncletDocumentsProvider : DocumentsProvider() {
             .add(Document.COLUMN_DISPLAY_NAME, layout.displayName(space, env.personalSpaceName()))
             .add(Document.COLUMN_MIME_TYPE, Document.MIME_TYPE_DIR)
             .add(Document.COLUMN_FLAGS, if (space.canWrite && !space.isMissing) Document.FLAG_DIR_SUPPORTS_CREATE else 0)
-            .add(Document.COLUMN_SUMMARY, if (space.isMissing) requireContext().getString(R.string.provider_space_unavailable) else null)
+            .add(Document.COLUMN_SUMMARY, if (space.isMissing) ctx.getString(R.string.provider_space_unavailable) else null)
     }
 
     private fun addItem(cursor: MatrixCursor, accountKey: String, layout: SpaceLayout, item: SyncItem) {
@@ -538,11 +564,13 @@ class SyncletDocumentsProvider : DocumentsProvider() {
         cursor.newRow()
             .add(Document.COLUMN_DOCUMENT_ID, DocumentIds.of(accountKey, item.id))
             .add(Document.COLUMN_DISPLAY_NAME, item.name)
-            .add(Document.COLUMN_MIME_TYPE, DocumentRows.mime(item) { MimeTypeMap.getSingleton().getMimeTypeFromExtension(it) })
+            .add(Document.COLUMN_MIME_TYPE, mimeOf(item))
             .add(Document.COLUMN_SIZE, if (item.isFolder) null else item.size)
             .add(Document.COLUMN_LAST_MODIFIED, runCatching { Instant.parse(item.modifiedAt).toEpochMilli() }.getOrNull())
             .add(Document.COLUMN_FLAGS, DocumentRows.flags(item, layout))
     }
+
+    private fun mimeOf(item: SyncItem): String = DocumentRows.mime(item) { MimeTypeMap.getSingleton().getMimeTypeFromExtension(it) }
 
     /** Writers per document whose close has not been handed to the upload queue yet. */
     private class OpenWrites {
@@ -580,6 +608,13 @@ class SyncletDocumentsProvider : DocumentsProvider() {
         private const val HAND_OVER_WAIT_MS = 1_000L
         private const val CANCEL_POLL_MS = 20L
         private const val WORK_DIR = "provider-work"
+        /** The `query` parameter of a search URI (DocumentsContract.buildSearchDocumentsUri). */
+        private const val URI_QUERY_PARAM = "query"
+
+        /** Sign-out: the account's working copies of open writers go too (their close then uploads nothing). */
+        fun clearWorkCopies(context: Context, accountKey: String) {
+            File(File(context.cacheDir, WORK_DIR), shortKey(accountKey)).deleteRecursively()
+        }
         private val ROOT_PROJECTION = arrayOf(Root.COLUMN_ROOT_ID, Root.COLUMN_DOCUMENT_ID, Root.COLUMN_TITLE, Root.COLUMN_SUMMARY,
             Root.COLUMN_FLAGS, Root.COLUMN_ICON, Root.COLUMN_AVAILABLE_BYTES)
         private val DOCUMENT_PROJECTION = arrayOf(Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME, Document.COLUMN_MIME_TYPE,

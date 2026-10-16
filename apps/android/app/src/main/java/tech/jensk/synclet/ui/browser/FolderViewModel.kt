@@ -26,6 +26,8 @@ import tech.jensk.synclet.core.api.SyncError
 import tech.jensk.synclet.core.api.SyncItem
 import tech.jensk.synclet.core.cache.ListingCache
 import tech.jensk.synclet.core.events.FolderChange
+import tech.jensk.synclet.core.upload.UploadQueue
+import tech.jensk.synclet.core.upload.dropReplacesOf
 import tech.jensk.synclet.ui.components.UiMessage
 
 class FolderViewModel(
@@ -35,6 +37,7 @@ class FolderViewModel(
     private val settings: AppSettings,
     changes: Flow<FolderChange>,
     private val publish: (FolderChange) -> Unit,
+    private val uploadQueue: UploadQueue,
     private val pageSize: Int = 200,
 ) : ViewModel() {
     data class State(
@@ -177,6 +180,8 @@ class FolderViewModel(
                 } catch (e: SyncError.Http) {
                     if (e.status != 404) throw e                    // already gone counts as deleted
                 }
+                // Queued edits of the file must not bring it back as a new file (Spec-Klärung 9); conflict copies stay.
+                uploadQueue.dropReplacesOf(session.api, key, item.id)
                 mutable.update { s -> s.copy(items = s.items.filterNot { it.id == item.id }, selection = s.selection - item.id) }
             }
         } finally {

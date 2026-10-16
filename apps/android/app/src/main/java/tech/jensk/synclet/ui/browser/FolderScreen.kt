@@ -149,7 +149,8 @@ private fun FolderContent(
     onOpenPreview: (PreviewRoute) -> Unit, onSearch: (SearchRoute) -> Unit, onBack: () -> Unit,
 ) {
     val vm: FolderViewModel = viewModel(key = "${route.accountKey}/${route.folderId}") {
-        FolderViewModel(session, route.folderId, graph.listingCache, graph.settings, graph.folderChanges, graph::publishLocalChange)
+        FolderViewModel(session, route.folderId, graph.listingCache, graph.settings, graph.folderChanges, graph::publishLocalChange,
+            graph.uploadQueue)
     }
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current

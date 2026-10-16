@@ -46,6 +46,7 @@ import tech.jensk.synclet.provider.ContentResolverNotifier
 import tech.jensk.synclet.provider.ProviderEnvironment
 import tech.jensk.synclet.share.ShareIntentParser
 import tech.jensk.synclet.provider.ProviderNotifier
+import tech.jensk.synclet.provider.SyncletDocumentsProvider
 import tech.jensk.synclet.sync.ForegroundSync
 import tech.jensk.synclet.core.R as CoreR
 
@@ -104,6 +105,7 @@ class AppGraph(private val app: Application) : UploadEnvironment, ProviderEnviro
         }
     }
 
+    /** Ready gate shared by the provider, the upload worker (cold start by WorkManager) and the activities. */
     override suspend fun awaitReady() = ready.await()
     override fun accounts(): List<Account> = accounts.accounts.value
     override fun session(accountKey: String): AccountSession? = accounts.session(accountKey)
@@ -197,6 +199,7 @@ class AppGraph(private val app: Application) : UploadEnvironment, ProviderEnviro
         UploadScheduler.cancel(app, key)
         uploadQueue.removeAccount(key)
         fileCache.clearAccount(key)
+        withContext(Dispatchers.IO) { SyncletDocumentsProvider.clearWorkCopies(app, key) }
         listingCache.clear(key)
         withContext(Dispatchers.IO) {
             imageLoader.diskCache?.clear()

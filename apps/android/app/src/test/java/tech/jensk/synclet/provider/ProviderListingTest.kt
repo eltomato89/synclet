@@ -1,6 +1,8 @@
 package tech.jensk.synclet.provider
 
 import android.content.Context
+import android.os.Bundle
+import android.webkit.MimeTypeMap
 import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
 import android.provider.DocumentsContract.Root
@@ -12,10 +14,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import tech.jensk.synclet.R
 import tech.jensk.synclet.testing.D1
 import tech.jensk.synclet.testing.F1
+import tech.jensk.synclet.testing.F2
 import tech.jensk.synclet.testing.error
 import tech.jensk.synclet.testing.fileItem
 import tech.jensk.synclet.testing.folderItem
@@ -121,6 +125,28 @@ class ProviderListingTest : ProviderTestBase() {
             assertEquals(listOf("report.txt"), names(c))
         }
         assertTrue(server.takeRequest().path!!.startsWith("/api/sync/v1/search?q=rep&limit=50"))
+    }
+
+    @Test fun bundleSearchUsesTheDisplayNameAndFiltersMimeTypes() {
+        shadowOf(MimeTypeMap.getSingleton()).addExtensionMimeTypeMapping("jpg", "image/jpeg")
+        val hits = listOf(fileItem(F1, "report.txt"), fileItem(F2, "photo.jpg"), folderItem(D1, "reports"))
+            .joinToString(",") { """{"item":${itemJson(it)},"path":"/${it.name}","matched":"name"}""" }
+        server.json("""{"hits":[$hits],"total":3}""")
+        val args = Bundle().apply {
+            putString(DocumentsContract.QUERY_ARG_DISPLAY_NAME, "rep")
+            putStringArray(DocumentsContract.QUERY_ARG_MIME_TYPES, arrayOf("image/*"))
+        }
+        provider.querySearchDocuments("srv:u1", null, args)!!.use { c -> assertEquals(listOf("photo.jpg"), names(c)) }
+        assertTrue(server.takeRequest().path!!.startsWith("/api/sync/v1/search?q=rep&limit=50"))
+    }
+
+    @Test fun bundleSearchWithoutAMimeFilterKeepsEverythingAndNullArgsAreSafe() {
+        server.json("""{"hits":[{"item":${itemJson(fileItem(F1, "report.txt"))},"path":"/report.txt","matched":"name"}],"total":1}""")
+        val args = Bundle().apply { putString(DocumentsContract.QUERY_ARG_DISPLAY_NAME, "rep") }
+        provider.querySearchDocuments("srv:u1", null, args)!!.use { c -> assertEquals(listOf("report.txt"), names(c)) }
+        provider.querySearchDocuments("srv:u1", null, null as Bundle?)!!.use { c -> assertEquals(0, c.count) }
+        provider.querySearchDocuments("srv:u1", null, Bundle())!!.use { c -> assertEquals(0, c.count) }
+        assertEquals(1, server.requestCount)                // no search without a term
     }
 
     @Test fun failedSearchReportsALocalizedError() {

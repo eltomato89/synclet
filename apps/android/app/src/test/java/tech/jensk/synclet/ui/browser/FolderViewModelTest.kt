@@ -35,6 +35,8 @@ import tech.jensk.synclet.core.api.SyncError
 import tech.jensk.synclet.core.api.SyncItem
 import tech.jensk.synclet.core.cache.ListingCache
 import tech.jensk.synclet.core.events.FolderChange
+import tech.jensk.synclet.core.upload.UploadQueue
+import tech.jensk.synclet.core.upload.UploadStatus
 import tech.jensk.synclet.testing.D1
 import tech.jensk.synclet.testing.D2
 import tech.jensk.synclet.testing.F1
@@ -113,7 +115,13 @@ class FolderViewModelTest {
         return AccountSession(key, SyncApi(server.url("/"), okhttp3.OkHttpClient(), tokens), tokens) { null }
     }
 
-    private fun vm() = FolderViewModel(session(), D1, listingCache, settings, changes, { published += it })
+    private val uploadQueue by lazy { UploadQueue(File(tmp.root, "uploads")) }
+
+    private fun vm() = FolderViewModel(session(), D1, listingCache, settings, changes, { published += it }, uploadQueue)
+
+    private fun queuedReplace(itemId: String, text: String) = runBlocking {
+        uploadQueue.enqueueReplace(key, itemId, D1, "Docs", "x.txt", "v1", tmp.newFile().apply { writeText(text) }, null)
+    }
 
     private fun FolderViewModel.await(predicate: (FolderViewModel.State) -> Boolean): FolderViewModel.State =
         runBlocking { withTimeout(5_000) { state.first(predicate) } }
@@ -274,11 +282,28 @@ class FolderViewModelTest {
 
     @Test fun deleteForbiddenShowsMessage() {
         mutationResponse = { errorBody(403, "forbidden") }
+        val edit = queuedReplace(F1, "edit")
         val vm = vm()
         vm.loaded()
         vm.delete(listOf(fileB))
         val s = vm.await { it.message != null }
         assertEquals(403, ((s.message as UiMessage.Error).error as SyncError.Http).status)
+        assertEquals(listOf(edit.id), uploadQueue.entries.value.map { it.id })     // not deleted: the edit stays queued
+    }
+
+    @Test fun deleteDropsQueuedReplacesOfTheItemButKeepsConflictCopies() {
+        mutationResponse = { MockResponse().setResponseCode(204) }
+        val copy = queuedReplace(F1, "mine")
+        runBlocking { uploadQueue.update(copy.id) { it.copy(status = UploadStatus.UPLOADING, conflictCopyName = "b (Conflict Pixel).txt") } }
+        val edit = queuedReplace(F1, "edit")
+        val other = queuedReplace(F2, "other")
+        val vm = vm()
+        vm.loaded()
+        vm.delete(listOf(fileB))
+        vm.await { it.message != null }
+        // Otherwise the waiting replace hits 404 and comes back as a new file (Spec-Klärung 9).
+        assertEquals(setOf(copy.id, other.id), uploadQueue.entries.value.map { it.id }.toSet())
+        assertFalse(uploadQueue.copyFile(edit.id).exists())
     }
 
     @Test fun refreshDropsAPageTwoOfTheOldListing() {
