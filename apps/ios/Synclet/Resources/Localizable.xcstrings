@@ -61,6 +61,46 @@
         }
       }
     },
+    "All items in the trash will be deleted forever. This can’t be undone.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alle Objekte im Papierkorb werden endgültig gelöscht. Das kann nicht rückgängig gemacht werden."
+          }
+        }
+      }
+    },
+    "Allow Download": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download erlauben"
+          }
+        }
+      }
+    },
+    "Allow Upload": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Upload erlauben"
+          }
+        }
+      }
+    },
+    "Anyone with the link can open this item.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alle mit dem Link können dieses Objekt öffnen."
+          }
+        }
+      }
+    },
     "Cancel": {
       "localizations": {
         "de": {
@@ -77,6 +117,36 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ordner kann nicht geladen werden"
+          }
+        }
+      }
+    },
+    "Can’t Load Link": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Link kann nicht geladen werden"
+          }
+        }
+      }
+    },
+    "Can’t Load Recent Files": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zuletzt geänderte Dateien können nicht geladen werden"
+          }
+        }
+      }
+    },
+    "Can’t Load Trash": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Papierkorb kann nicht geladen werden"
           }
         }
       }
@@ -131,12 +201,52 @@
         }
       }
     },
+    "Create Link": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Link erstellen"
+          }
+        }
+      }
+    },
     "Date Modified": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
             "value": "Änderungsdatum"
+          }
+        }
+      }
+    },
+    "Delete Forever": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Endgültig löschen"
+          }
+        }
+      }
+    },
+    "Delete “%@” forever?": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "„%@“ endgültig löschen?"
+          }
+        }
+      }
+    },
+    "Deleted files and folders appear here.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gelöschte Dateien und Ordner erscheinen hier."
           }
         }
       }
@@ -161,12 +271,82 @@
         }
       }
     },
+    "Empty Trash": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Papierkorb leeren"
+          }
+        }
+      }
+    },
+    "Empty the Trash?": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Papierkorb leeren?"
+          }
+        }
+      }
+    },
+    "Enter at least two characters to search names and contents.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gib mindestens zwei Zeichen ein, um Namen und Inhalte zu durchsuchen."
+          }
+        }
+      }
+    },
+    "Everywhere": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Überall"
+          }
+        }
+      }
+    },
+    "Expires": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ablaufdatum"
+          }
+        }
+      }
+    },
+    "Expires On": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Läuft ab am"
+          }
+        }
+      }
+    },
     "Files": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
             "value": "Dateien"
+          }
+        }
+      }
+    },
+    "Files you change appear here.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hier erscheinen Dateien, die zuletzt geändert wurden."
           }
         }
       }
@@ -341,6 +521,16 @@
         }
       }
     },
+    "Names and Contents": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Namen und Inhalte"
+          }
+        }
+      }
+    },
     "Names can’t contain / \\ : * ? \" < > |": {
       "localizations": {
         "de": {
@@ -357,6 +547,26 @@
           "stringUnit": {
             "state": "translated",
             "value": "Neuer Ordner"
+          }
+        }
+      }
+    },
+    "New Password (optional)": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neues Passwort (optional)"
+          }
+        }
+      }
+    },
+    "No Recent Files": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keine zuletzt geänderten Dateien"
           }
         }
       }
@@ -401,6 +611,16 @@
         }
       }
     },
+    "Password": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Passwort"
+          }
+        }
+      }
+    },
     "Please enter a name.": {
       "localizations": {
         "de": {
@@ -421,6 +641,16 @@
         }
       }
     },
+    "Recent": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zuletzt"
+          }
+        }
+      }
+    },
     "Rename": {
       "localizations": {
         "de": {
@@ -431,12 +661,112 @@
         }
       }
     },
+    "Restore": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wiederherstellen"
+          }
+        }
+      }
+    },
+    "Restored to “%@”": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wiederhergestellt in „%@“"
+          }
+        }
+      }
+    },
+    "Restored to “%@” as “%@”": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wiederhergestellt in „%1$@“ als „%2$@“"
+          }
+        }
+      }
+    },
+    "Revoke Link": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Link widerrufen"
+          }
+        }
+      }
+    },
+    "Revoke this link?": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diesen Link widerrufen?"
+          }
+        }
+      }
+    },
+    "Search": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Suche"
+          }
+        }
+      }
+    },
+    "Search Failed": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Suche fehlgeschlagen"
+          }
+        }
+      }
+    },
+    "Search in Folder": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Im Ordner suchen"
+          }
+        }
+      }
+    },
     "Server": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
             "value": "Server"
+          }
+        }
+      }
+    },
+    "Share": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Teilen"
+          }
+        }
+      }
+    },
+    "Share Link": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Link teilen"
           }
         }
       }
@@ -561,6 +891,16 @@
         }
       }
     },
+    "The link stops working for everyone who has it.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Link funktioniert danach für niemanden mehr."
+          }
+        }
+      }
+    },
     "The login window could not be opened.": {
       "localizations": {
         "de": {
@@ -601,12 +941,42 @@
         }
       }
     },
+    "This can’t be undone.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Das kann nicht rückgängig gemacht werden."
+          }
+        }
+      }
+    },
     "This folder is empty.": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
             "value": "Dieser Ordner ist leer."
+          }
+        }
+      }
+    },
+    "Trash": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Papierkorb"
+          }
+        }
+      }
+    },
+    "Trash Is Empty": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Papierkorb ist leer"
           }
         }
       }
