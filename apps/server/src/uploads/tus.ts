@@ -6,13 +6,14 @@ import type { Server as TusServer, ServerOptions, Upload } from '@tus/server';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { randomBytes } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import type { IncomingMessage } from 'node:http';
 import path from 'node:path';
 import type { Readable } from 'node:stream';
 import { AuthGuard } from '../auth/auth.guard';
 import { APP_CONFIG, AppConfig } from '../config';
 import { validateName } from '../common/names';
+import { InsufficientStorageError, isStorageFull } from '../common/storage-errors';
 import { SyncError } from '../common/sync-error';
 import type { AuthUser } from '../common/types';
 import { FilesService, OnConflict } from '../files/files.service';
@@ -42,7 +43,16 @@ function loadTus(): Promise<TusModules> {
 
 const tusError = (status_code: number, body: string): TusError => ({ status_code, body });
 
-/** Resolved, validated `Upload-Metadata`. */
+/** Resolved, validated `Upload-Metadata` of a replace (`itemId` + `ifMatch`). */
+interface ReplaceMeta {
+  /** Live file row id. */
+  itemId: string;
+  /** Expected content version (`ifMatch` = `v<n>`). */
+  version: number;
+  modifiedAt: Date | null;
+}
+
+/** Resolved, validated `Upload-Metadata` of a create. */
 interface UploadMeta {
   /** Sync id as sent (default `root`). */
   parentId: string;
@@ -68,6 +78,8 @@ export class TusService implements OnModuleInit {
   private readonly finishing = new Set<string>();
   /** Upload published by a request; its staged part is dropped once tus has answered. */
   private readonly published = new WeakMap<IncomingMessage, string>();
+  /** Upload created by a POST request, so a failed creation can drop its staged part. */
+  private readonly created = new WeakMap<IncomingMessage, string>();
   readonly directory: string;
 
   constructor(
@@ -102,11 +114,23 @@ export class TusService implements OnModuleInit {
         if (this.finishing.has(id) && (req.method === 'PATCH' || req.method === 'DELETE')) throw tusError(423, 'Upload is being finished\n');
       },
       onUploadCreate: async (req, upload) => {
+        const raw = this.rawRequest(req);
+        if (raw) this.created.set(raw, upload.id);
         const meta = await this.validateMeta(this.caller(req), upload.metadata);
+        if ('itemId' in meta) return { metadata: upload.metadata };
         return { metadata: { ...upload.metadata, parentId: meta.parentId, onConflict: meta.onConflict } };
       },
       onUploadFinish: (req, upload) => this.finish(req, upload),
       onResponseError: async (_req, err) => {
+        // Full disk while tus stages a chunk (POST with body, PATCH): the offset stays consistent, the client resumes later.
+        if (isStorageFull(err)) {
+          // Creation-with-upload: the client never got a Location, so nobody can resume this upload.
+          const raw = this.rawRequest(_req);
+          const id = raw && this.created.get(raw);
+          if (id && _req.method === 'POST') await this.discard(id);
+          const full = new InsufficientStorageError();
+          return { status_code: full.status, body: JSON.stringify({ statusCode: full.status, message: full.message, code: full.code }) };
+        }
         if (!(err instanceof SyncError)) return undefined;
         const body: Record<string, unknown> = { statusCode: err.status, message: err.message, code: err.code };
         if (err.itemRow) {
@@ -179,8 +203,38 @@ export class TusService implements OnModuleInit {
     return row.id;
   }
 
-  private async validateMeta(user: AuthUser, metadata: Upload['metadata']): Promise<UploadMeta> {
+  private parseModifiedAt(raw: string | null | undefined): Date | null {
+    if (!raw) return null;
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) throw new SyncError('invalid_request', 'invalid modifiedAt');
+    return d;
+  }
+
+  /** Replace of an existing file: same checks as `PUT /items/:id/content` with If-Match, at creation time. */
+  private async validateReplaceMeta(user: AuthUser, m: NonNullable<Upload['metadata']>): Promise<ReplaceMeta> {
+    for (const key of ['name', 'parentId', 'onConflict']) {
+      if (m[key] !== undefined) throw new SyncError('invalid_request', `${key} cannot be combined with itemId`);
+    }
+    const parsed = parseSyncId(m.itemId);
+    if (!parsed || parsed.kind !== 'file') throw new SyncError('invalid_request', 'itemId must be a file id');
+    const ifMatch = m.ifMatch;
+    if (!ifMatch) throw new SyncError('precondition_required', 'ifMatch required with itemId');
+    const modifiedAt = this.parseModifiedAt(m.modifiedAt);
+    const row = await this.prisma.item.findFirst({ where: { id: parsed.uuid, ownerId: user.id, deletedAt: null, type: 'file' } });
+    if (!row) throw new SyncError('not_found', 'item not found');
+    const match = /^v(\d+)$/.exec(ifMatch);
+    if (!match) throw new SyncError('conflict', 'unknown etag', row);
+    const version = Number(match[1]);
+    if (row.version !== version) throw new SyncError('conflict', 'version mismatch', row);
+    return { itemId: row.id, version, modifiedAt };
+  }
+
+  private async validateMeta(user: AuthUser, metadata: Upload['metadata']): Promise<UploadMeta | ReplaceMeta> {
     const m = metadata ?? {};
+    if (m.itemId !== undefined || m.ifMatch !== undefined) {
+      if (m.itemId === undefined) throw new SyncError('invalid_request', 'ifMatch requires itemId');
+      return this.validateReplaceMeta(user, m);
+    }
     const name = m.name ?? '';
     const nameError = validateName(name);
     if (nameError) throw new SyncError('invalid_name', `invalid name (${nameError})`);
@@ -188,11 +242,7 @@ export class TusService implements OnModuleInit {
     const parent = await this.resolveParent(user, parentId);
     const onConflict = m.onConflict || 'rename';
     if (onConflict !== 'fail' && onConflict !== 'rename') throw new SyncError('invalid_request', 'invalid onConflict');
-    let modifiedAt: Date | null = null;
-    if (m.modifiedAt) {
-      modifiedAt = new Date(m.modifiedAt);
-      if (Number.isNaN(modifiedAt.getTime())) throw new SyncError('invalid_request', 'invalid modifiedAt');
-    }
+    const modifiedAt = this.parseModifiedAt(m.modifiedAt);
     return { parentId, parent, name, onConflict, modifiedAt };
   }
 
@@ -206,12 +256,16 @@ export class TusService implements OnModuleInit {
     try {
       const meta = await this.validateMeta(user, upload.metadata);
       const source = createReadStream(path.join(this.directory, upload.id));
-      const row = await this.files.upload(user, meta.parent, meta.name, source, { onConflict: meta.onConflict, modifiedAt: meta.modifiedAt });
+      // A replace re-checks the base version under the user lock (412 → upload dropped below).
+      const row = 'itemId' in meta
+        ? await this.files.replaceContent(user, meta.itemId, source, { ifMatchVersion: meta.version, modifiedAt: meta.modifiedAt })
+        : await this.files.upload(user, meta.parent, meta.name, source, { onConflict: meta.onConflict, modifiedAt: meta.modifiedAt });
       item = (await this.serializer.toSyncItems(user, [row]))[0];
     } catch (e) {
       // Client errors (conflict, parent gone) cannot be fixed by retrying this upload: drop it.
-      // Anything else (I/O, database) keeps it; an empty PATCH at the final offset retries.
-      if (e instanceof SyncError) await this.discard(upload.id);
+      // Anything else (I/O, database, full disk = 507) keeps it; an empty PATCH at the final offset retries.
+      // A 507 on a creation-with-upload POST has no Location the client could resume: drop it too.
+      if (e instanceof SyncError && (!(e instanceof InsufficientStorageError) || req.method === 'POST')) await this.discard(upload.id);
       this.finishing.delete(upload.id);
       throw e;
     }
@@ -235,6 +289,8 @@ export class TusService implements OnModuleInit {
 
   private async discard(id: string): Promise<void> {
     await this.store.remove(id).catch((e) => this.log.warn(`cannot remove staged upload ${id}: ${(e as Error).message ?? JSON.stringify(e)}`));
+    // tus may write the info file after the data file was dropped (a POST that completes the upload).
+    await rm(path.join(this.directory, `${id}.json`), { force: true });
   }
 
   /** Removes unfinished uploads older than 24 h from /meta/uploads. */

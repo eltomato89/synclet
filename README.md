@@ -14,6 +14,7 @@ Synclet is a self-hosted, Dropbox-like file server. Your folder stays a normal f
 - **Versions (optional):** keep previous contents of overwritten files, see [Versions](#versions).
 - **Single sign-on (optional):** OIDC (Authentik, Keycloak, Authelia, ...) and forward-auth, see [Single sign-on](#single-sign-on). Native apps sign in through the browser, see [App login](#app-login).
 - **Admin area:** users, sessions and devices, shares, SSO settings and server status, see [Admin area](#admin-area).
+- **macOS client:** your files in Finder with on-demand download, live updates and offline folders, see [macOS client](#macos-client).
 
 ## Quickstart
 
@@ -101,9 +102,17 @@ All settings go into `deploy/.env` (read by `docker compose --env-file deploy/.e
 
 Search needs the Postgres extensions `pg_trgm` and `unaccent`; the first migration creates them (`CREATE EXTENSION IF NOT EXISTS`). The bundled `postgres:16-alpine` image ships both, and its `synclet` user may create them. With an **external PostgreSQL** the database user either needs the right to create extensions (superuser, or a trusted extension on Postgres 13+), or an administrator creates both in the Synclet database beforehand (`CREATE EXTENSION pg_trgm; CREATE EXTENSION unaccent;`). Otherwise the server's migration fails at startup.
 
+### PostgreSQL connection for live change notifications
+
+The server keeps one extra connection per server process open with `LISTEN` to learn about committed changes and tell sync clients over `/api/sync/v1/events`. It uses `DATABASE_URL` with the same meaning Prisma gives it: `sslmode=require`/`prefer` encrypt without verifying the certificate (as in libpq), `sslmode=verify-full` or `sslaccept=strict` verify it. The connection is checked every 30 s and re-established automatically.
+
+- `DATABASE_URL` must reach PostgreSQL directly or through a pooler in **session** mode. A **transaction-pooling** pgbouncer (Prisma's `pgbouncer=true`) accepts `LISTEN` but never delivers notifications; the server logs a warning at startup. Sync still works, because the server re-checks every open event stream at each keep-alive ping: clients then learn about remote changes up to 25 s late instead of at once.
+
 ### Behind another reverse proxy
 
 The rate limits for login, setup and public share links count requests per client IP. Caddy only uses the client IP from `X-Forwarded-For` when the request comes from a proxy listed in `SYNCLET_TRUSTED_PROXIES`; otherwise it uses the address of the connecting peer. If you run Synclet behind another reverse proxy (nginx, Traefik, a router) and leave `SYNCLET_TRUSTED_PROXIES` empty, every client appears with the proxy's IP and they **all share one rate-limit bucket**, so one misbehaving client can lock everybody out of logging in. Set `SYNCLET_TRUSTED_PROXIES` to the address of that proxy (for example `192.168.1.10/32`, or its address on a Docker network shared with Caddy). Avoid broad values such as `private_ranges`: with Docker's userland proxy even outside clients can appear with a private gateway address. Caddy reads the header right to left and stops at the first untrusted address, so a client cannot spoof its IP through a proxy that appends to `X-Forwarded-For`. Only trust addresses that really are proxies: anyone connecting directly from a trusted range can claim any IP.
+
+**Live change notifications (SSE).** Sync clients keep one long-lived connection open to `/api/sync/v1/events` (Server-Sent Events, `text/event-stream`) to learn about changes immediately. The bundled Caddy passes it through unbuffered and uncompressed. An outer proxy needs no special settings as long as its read/idle timeout for upstream responses is **longer than 25 s** (the server sends a keep-alive comment every 25 s). Nginx Proxy Manager, Traefik and Caddy work with their defaults; with plain nginx keep `proxy_read_timeout` at its default (60 s) or higher, and buffering is already off because the server sends `X-Accel-Buffering: no`. If the stream is cut anyway, clients reconnect and fall back to polling, so nothing is lost, only delayed.
 
 ## Office (Euro-Office editing)
 
@@ -310,6 +319,19 @@ Only registered redirect URIs are accepted, matched exactly:
 | `windows`, `linux` | `http://127.0.0.1:<any port>/callback` (loopback, per RFC 8252) |
 
 An outer proxy or SSO gate must let `/api/auth/app/*` through (see the forward-auth example). All app-login routes are rate-limited per client IP; this needs a correct client IP, see [Behind another reverse proxy](#behind-another-reverse-proxy).
+
+## macOS client
+
+The Mac app (`apps/macos`, macOS 26 or later) is a menu bar app with a File Provider extension:
+
+- **Finder:** each account appears in Finder under **Locations** as "Synclet – `<user>@<host>`". Inside it is "Meine Dateien" with your files. Files download when you open them.
+- **Sign-in:** through the browser ([App login](#app-login)), so SSO works. The app keeps only a device token, which you can revoke in the admin area under "Sessions and devices".
+- **Live updates:** changes made on the web or by other devices appear in Finder within seconds over a live event stream (`GET /api/sync/v1/events`, server-sent events). A reverse proxy in front of Synclet must not buffer that response, and its idle timeout must be above 25 s. Otherwise the app falls back to polling every 60 s.
+- **Large files:** files over 32 MiB upload resumably (tus), new files and replaced ones alike. When the same file changed on the server meanwhile, your version is kept as a "(Konflikt …)" copy.
+- **Offline folders:** choose folders, or a whole space, under Settings → Offline. They stay downloaded, including new files.
+- **More:** server thumbnails for files that are not downloaded yet; a status menu with recent problems; several accounts at once.
+
+Build, tests, signing and notarization, plus the manual Finder checklist: [apps/macos/README.md](apps/macos/README.md). Distribution is a notarized DMG (`apps/macos/build_and_notarize.sh`).
 
 ## Admin area
 

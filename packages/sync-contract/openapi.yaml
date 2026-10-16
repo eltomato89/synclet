@@ -355,6 +355,39 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /sync/v1/events:
+    get:
+      tags: [changes]
+      operationId: getEvents
+      summary: Change wake-ups as Server-Sent Events
+      description: |
+        A long-lived `text/event-stream` (SYNC_API.md "Events"). Events are wake-up signals only:
+        on `hello` (after every (re)connect) and on `changes`, drain `GET /sync/v1/changes`.
+
+        - `event: hello` – first event, `data` = `EventHello`.
+        - `event: changes` – the journal advanced, `data` = `EventChanges` (coalesced, at most one
+          per 250 ms).
+        - `event: bye` – the server ends the stream, `data` = `EventBye`.
+        - `: ping` comment every 25 s; the token is re-checked before each ping and the stream
+          ends (`bye`, `unauthorized`) when it is no longer valid. A change the server did not
+          signal at once (notification lost) is signalled with the next ping at the latest.
+
+        At most 10 open streams per user (opening another closes the oldest with `bye`,
+        `too_many_streams`); at most 30 stream opens per user and minute.
+      responses:
+        '200':
+          description: The event stream (never ends on its own while the token stays valid).
+          headers:
+            Cache-Control:
+              schema: { type: string, const: 'no-cache, no-transform' }
+            X-Accel-Buffering:
+              schema: { type: string, const: 'no' }
+          content:
+            text/event-stream:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
   /sync/v1/items:
     post:
       tags: [items]
@@ -474,6 +507,7 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/NameConflict' }
         '413': { $ref: '#/components/responses/TooLarge' }
+        '507': { $ref: '#/components/responses/InsufficientStorage' }
   /sync/v1/items/{id}/content:
     parameters:
       - $ref: '#/components/parameters/ItemId'
@@ -552,6 +586,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '507': { $ref: '#/components/responses/InsufficientStorage' }
   /sync/v1/items/{id}/download-token:
     parameters:
       - $ref: '#/components/parameters/ItemId'
@@ -683,6 +718,7 @@ paths:
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '507': { $ref: '#/components/responses/InsufficientStorage' }
 
   /sync/v1/search:
     get:
@@ -743,7 +779,7 @@ paths:
         - name: Upload-Metadata
           in: header
           required: true
-          description: 'tus metadata: `name` (required), `parentId` (default `root`), `onConflict` (`rename` (default) | `fail`), `modifiedAt` (ISO 8601).'
+          description: 'tus metadata. Create: `name` (required), `parentId` (default `root`), `onConflict` (`rename` (default) | `fail`), `modifiedAt` (ISO 8601). Replace an existing file: `itemId` (a file id `f_…`) and `ifMatch` (its content etag `v<n>`, required), optional `modifiedAt`; `name`/`parentId`/`onConflict` must then be absent (`400 invalid_request`). Replace re-checks `ifMatch` at publish like `PUT /items/{id}/content` (mismatch → `412`, upload dropped).'
           schema: { type: string }
       requestBody:
         required: false
@@ -767,7 +803,10 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/NameConflict' }
+        '412': { $ref: '#/components/responses/Conflict' }
         '413': { description: '`Upload-Length` above `Tus-Max-Size`.' }
+        '428': { description: '`precondition_required` – `itemId` without `ifMatch`.', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '507': { $ref: '#/components/responses/InsufficientStorage' }
   /sync/v1/uploads/{uploadId}:
     parameters:
       - { name: uploadId, in: path, required: true, schema: { type: string } }
@@ -819,6 +858,7 @@ paths:
         '410': { description: Expired. }
         '413': { $ref: '#/components/responses/TooLarge' }
         '423': { description: 'The upload is being published by another request right now; check with HEAD shortly.' }
+        '507': { $ref: '#/components/responses/InsufficientStorage' }
     delete:
       tags: [uploads]
       operationId: tusTerminate
@@ -884,6 +924,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/TrashBusy' }
+        '507': { $ref: '#/components/responses/InsufficientStorage' }
 
 components:
   securitySchemes:
@@ -976,6 +1017,11 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
+    InsufficientStorage:
+      description: '`insufficient_storage` – the server''s disk (or the user''s disk quota) is full. Nothing was changed; retry later and tell the user. A tus upload whose completion hits `507` stays resumable: an empty `PATCH` at the final offset retries the publish.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
     RangeNotSatisfiable:
       description: '`range_not_satisfiable`.'
       content:
@@ -1029,6 +1075,7 @@ components:
         - office_disabled
         - sso_not_allowed
         - password_login_disabled
+        - insufficient_storage
     Error:
       type: object
       required: [statusCode, message, code]
@@ -1083,7 +1130,7 @@ components:
         preview: { $ref: '#/components/schemas/PreviewInfo' }
     SyncAccount:
       type: object
-      required: [userId, email, displayName, organizationId, organizationName, slug, canWrite, areas, quotaBytes, usedBytes, maxUploadBytes, cursor]
+      required: [userId, email, displayName, organizationId, organizationName, slug, canWrite, spaces, areas, quotaBytes, usedBytes, maxUploadBytes, cursor]
       properties:
         userId: { type: string, format: uuid }
         email: { type: [string, 'null'] }
@@ -1092,6 +1139,10 @@ components:
         organizationName: { type: string, const: Synclet }
         slug: { type: string, description: The username (= folder name on the server). }
         canWrite: { type: boolean }
+        spaces:
+          type: array
+          description: Top-level spaces. Phase 2 servers return exactly the personal space. Clients keep sync state per space and show an unknown `kind` as an ordinary folder.
+          items: { $ref: '#/components/schemas/SyncSpace' }
         areas:
           type: object
           required: [personal, shared, customers, projects]
@@ -1104,6 +1155,15 @@ components:
         usedBytes: { type: integer, minimum: 0 }
         maxUploadBytes: { type: integer, minimum: 0 }
         cursor: { $ref: '#/components/schemas/Cursor' }
+    SyncSpace:
+      type: object
+      required: [id, kind, name, rootId, canWrite]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [personal, shared, external] }
+        name: { type: string }
+        rootId: { type: string, description: The space's root folder id (`root` for the personal space). }
+        canWrite: { type: boolean }
     ServerCapabilities:
       type: object
       required: [versions, office]
@@ -1160,6 +1220,29 @@ components:
       required: [cursor]
       properties:
         cursor: { $ref: '#/components/schemas/Cursor' }
+    EventHello:
+      description: '`data` of `event: hello` (`GET /sync/v1/events`).'
+      type: object
+      required: [cursor]
+      properties:
+        cursor: { $ref: '#/components/schemas/Cursor' }
+    EventChanges:
+      description: '`data` of `event: changes` (`GET /sync/v1/events`).'
+      type: object
+      required: [space, cursor]
+      properties:
+        space:
+          type: string
+          description: The space whose journal advanced; currently always `personal`.
+        cursor: { $ref: '#/components/schemas/Cursor' }
+    EventBye:
+      description: '`data` of `event: bye` (`GET /sync/v1/events`); the server closes the stream next.'
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          description: '`too_many_streams` (another stream of the user was opened), `unauthorized` (token no longer valid: reconnect to learn the error code) or `server_shutdown` (reconnect after a short delay). Clients must accept other values.'
     SyncChange:
       oneOf:
         - type: object

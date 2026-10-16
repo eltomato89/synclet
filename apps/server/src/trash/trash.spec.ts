@@ -236,6 +236,17 @@ describe('TrashService', () => {
       expect(await tree(root)).toEqual(['Docs', 'Docs/Projekt', 'Docs/Projekt/Sub', 'Docs/Projekt/Sub/b.txt', 'Docs/Projekt/a.txt']);
     });
 
+    it('ENOSPC while restoring answers 507, keeps the entry and leaves no temp folder', async () => {
+      const proto = TrashService.prototype as unknown as { moveIn(src: string, dst: string): Promise<void> };
+      jest.spyOn(proto, 'moveIn').mockRejectedValue(Object.assign(new Error('no space'), { code: 'ENOSPC' }));
+      const { proj } = await project();
+      await files.remove(user, proj.id);
+      const e = await trashOf(proj.id);
+      await expect(trash.restore(user, e.id)).rejects.toMatchObject({ status: 507, code: 'insufficient_storage' });
+      expect(await tree(root)).toEqual(['Docs']);
+      expect(await ctx.prisma.trashEntry.count()).toBe(1);
+    });
+
     it('a failing copy removes its temp folder', async () => {
       const proto = TrashService.prototype as unknown as { moveIn(src: string, dst: string): Promise<void> };
       jest.spyOn(proto, 'moveIn').mockRejectedValue(Object.assign(new Error('EXDEV'), { code: 'EXDEV' }));

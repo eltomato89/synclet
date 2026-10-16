@@ -36,6 +36,7 @@ pnpm --filter @synclet/sync-contract typecheck
 | `SYNCLET_CONTRACT_LENIENT=1` | Allow response properties that `openapi.yaml` does not document (default: strict, they fail) |
 | `SYNCLET_SKIP_THUMBNAILS=1` | Skip the thumbnail test (no derivatives worker running) |
 | `SYNCLET_THUMBNAIL_TIMEOUT_MS` | How long to poll for a thumbnail (default 60000) |
+| `SYNCLET_EVENTS_PING_SECONDS` | Ping interval of the server under test (default 25); the event-stream test waits that long plus 5 s for a `: ping`. Start the server with a small value (e.g. `2`) for fast runs |
 
 `SYNCLET_TOKEN` takes precedence over `SYNCLET_USER`/`SYNCLET_PASSWORD` for authentication.
 

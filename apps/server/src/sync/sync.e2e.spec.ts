@@ -302,6 +302,11 @@ describe('Sync API v1', () => {
     expect((await api('GET', '/devices')).json()).toEqual([]);
   });
 
+  it('account lists exactly the personal space', async () => {
+    const acc = (await api('GET', '/account')).json();
+    expect(acc.spaces).toEqual([{ id: 'personal', kind: 'personal', name: 'Meine Dateien', rootId: 'root', canWrite: true }]);
+    expect(acc).toMatchObject({ canWrite: true, areas: { personal: true, shared: false, customers: false, projects: false }, organizationName: 'Synclet' });
+  });
   it('account reports usage and limits', async () => {
     await api('POST', '/items/upload?parentId=root&name=a.bin', { body: '12345' });
     const acc = (await api('GET', '/account')).json();

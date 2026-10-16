@@ -52,10 +52,22 @@ DocumentsProvider, Linux). All clients build on this document; change it only by
 | `precondition_required` | 428 | `If-Match` missing on `PUT /items/:id/content` |
 | `too_large` | 413 | Body above `maxUploadBytes` (a 413 from a reverse proxy with the same limit may have no JSON body; treat any 413 as too large) |
 | `range_not_satisfiable` | 416 | `Range` outside the file (`Content-Range: bytes */<size>`) |
+| `insufficient_storage` | 507 | The server's disk (or the user's quota) is full; see below. Retry later and show the problem to the user |
 | `rate_limited` | 429 | Too many attempts on a public auth route; wait `Retry-After` seconds |
 | `password_login_disabled` | 403 | Password login is disabled for non-admin users (SSO only) → use the browser login (§2.1) |
 | `setup_done` | 409 | `POST /api/setup` after the first user exists |
 | `sso_not_allowed`, `office_disabled`, `share_*`, `upload_not_allowed` | – | Web-only routes (SSO, Office, public shares); never returned by the routes in this document |
+
+### Insufficient storage (`507`)
+
+Every route that writes file content (upload, replace, tus completion, version restore, trash
+restore, office save) answers `507 { code: "insufficient_storage", message }` when the server's file
+system reports a full disk or an exceeded disk quota (`ENOSPC` / `EDQUOT`). Nothing was changed: no
+item, version or journal entry exists for the failed write and no temporary file is left behind. A
+tus upload whose completion hits `507` stays resumable: the uploaded bytes are kept, and an empty
+`PATCH` at the final offset retries the publish once space is free. Clients treat `507` as
+retryable with backoff, do not mark the item as failed for good, and tell the user that the server
+is out of space.
 
 Codes Buro had and Synclet never returns: `feature_disabled` (no modules).
 
@@ -172,13 +184,32 @@ SyncAccount = {
   organizationName: "Synclet",
   slug: string,                // the username (= the user's folder name on the server)
   canWrite: true,
+  spaces: SyncSpace[],         // top-level spaces, see below
   areas: { personal: true, shared: false, customers: false, projects: false },
   quotaBytes: number,          // 0 = no quota
   usedBytes: number,           // sum of the sizes of the user's live files
   maxUploadBytes: number,      // per file (upload, replace, tus)
   cursor: string               // current change cursor
 }
+
+SyncSpace = {
+  id: string,                  // stable per account; "personal" for the user's own files
+  kind: "personal" | "shared" | "external",
+  name: string,                // display name; the server has no UI language, so "Meine Dateien" – localize by `kind`
+  rootId: string,              // the space's root folder id; use as `parentId` / `children` id ("root" for personal)
+  canWrite: boolean
+}
 ```
+
+Spaces (Phase 2):
+
+- Currently every account has exactly one space: `[{ id: "personal", kind: "personal", name: "Meine Dateien", rootId: "root", canWrite: true }]`.
+  Future servers may add `shared` and `external` spaces.
+- The virtual top level that lists the spaces is client-side and read-only: a client never creates, moves or
+  renames anything into or out of it, only inside a space.
+- A client that meets an unknown `kind` shows the space as an ordinary folder.
+- Clients store sync state (cursor, pins) per space.
+- `areas` stays for Buro compatibility; new clients use `spaces`.
 
 - The client's domain / sync-root identifier is `organizationId`. `serverId` is generated once per
   installation, so two Synclet servers (or a reinstalled one) never share a domain.
@@ -355,8 +386,64 @@ by order or compute with it. A cursor is per user, not per device.
 
 **Recommended client loop:** on first sync take `account.cursor` (or the first `children` page's
 cursor), enumerate, then poll `/changes` (File Provider: on `enumerateChanges`; Windows: on a timer,
-e.g. every 30 s, and after local writes). A push channel (`GET /events`, SSE) and APNs follow in
-Phase 2/3; until then clients poll.
+e.g. every 30 s, and after local writes). To learn about remote changes without delay, keep the
+event stream open (§5a) and drain `/changes` on each event; poll only while it is disconnected.
+APNs pushes follow in Phase 3.
+
+---
+
+## 5a. Events
+
+`GET /sync/v1/events` is a long-lived [Server-Sent Events](https://html.spec.whatwg.org/multipage/server-sent-events.html)
+stream that tells a client **that** its journal advanced. It never carries the changes themselves.
+
+- **Authentication:** device token (`Authorization: Bearer syd_…`) or web access token.
+  `401 unauthorized` / `401 device_revoked` as for every other route.
+- **Response:** `200`, `Content-Type: text/event-stream`, `Cache-Control: no-cache, no-transform`,
+  `X-Accel-Buffering: no`. UTF-8, one event per block, blocks separated by a blank line:
+
+  ```
+  event: hello
+  data: {"cursor":"1234"}
+
+  event: changes
+  data: {"space":"personal","cursor":"1240"}
+
+  : ping
+
+  event: bye
+  data: {"reason":"too_many_streams"}
+  ```
+
+| Event | `data` | Meaning |
+|---|---|---|
+| `hello` | `{ cursor }` | First event of every stream; `cursor` is the user's current head (as in `GET /account`). |
+| `changes` | `{ space, cursor }` | New journal entries of the user were committed. `space` is currently always `"personal"`; `cursor` is the head at the time of the event. Bursts are coalesced: at most one event per 250 ms. |
+| `bye` | `{ reason }` | The server ends the stream right after this event. `too_many_streams`: the user opened another stream (see limits). `unauthorized`: the token is no longer valid (device revoked, user disabled, access token expired); reconnecting returns the matching `401`. `server_shutdown`: the server is stopping; reconnect after a short delay (with backoff). Clients must accept unknown reasons. |
+
+- **Ping:** a comment line `: ping` every 25 s (`SYNCLET_EVENTS_PING_SECONDS` on the server).
+  Before each ping the server re-checks the token; a revoked device or disabled user's stream ends
+  at the latest at the next ping. It also compares the user's cursor with the last one it sent on
+  the stream and sends `changes` first if they differ, so a change whose notification was lost
+  inside the server is signalled at the latest with the next ping. A client that has seen nothing (no event, no ping) for about
+  60 s should treat the connection as dead and reconnect.
+- **Wake-up only.** An event is a hint, never data: on `hello` and on every `changes`, drain
+  `GET /sync/v1/changes?cursor=<stored cursor>` as usual (§5) and store the resulting cursor. The
+  event's `cursor` may only be used to skip a drain when it equals the stored cursor. Events can be
+  lost (proxy restarts, server restarts, network changes); because the client drains once after
+  every (re)connect, a lost event only delays a change, it never loses one. Changes made directly
+  on the server's disk are signalled once the server's indexer has noticed them (§5).
+- **Reconnect:** on any disconnect, reconnect with exponential backoff from 1 s up to 60 s (with
+  jitter), reset after a stream stayed open for a while. Honour a `retry:` field if the server ever
+  sends one. Do not reconnect on `401` (sign-in required) and back off to the maximum on
+  `404` (server without events), `429` or a response that is not `text/event-stream` (e.g. an HTML
+  page from a misconfigured proxy); keep polling `/changes` meanwhile.
+- **Limits:** at most 10 open streams per user (per server); opening an 11th closes the oldest
+  with `bye` `too_many_streams`. At most 30 stream opens per user per minute; more yield
+  `429 rate_limited` with `Retry-After`. One stream per signed-in account and device is enough.
+- **Proxies:** the stream must not be buffered or compressed. The bundled Caddy flushes
+  immediately and does not compress `/api/*`. Outer reverse proxies work unchanged as long as their
+  upstream read timeout exceeds 25 s (see README, "Behind another reverse proxy").
 
 ---
 
@@ -456,6 +543,25 @@ covered by this contract). Authentication: `Authorization: Bearer`
    - `parentId` (default `root`; unknown → `404 not_found`, malformed or a file → `400`),
    - `onConflict`: `rename` (**default for tus**) or `fail`,
    - `modifiedAt`: ISO 8601 (invalid → `400`).
+
+   **Replace an existing file** (resumable `PUT /items/:id/content`, for large files): send
+   `itemId` (a file id `f_…`) and `ifMatch` (the file's content etag `v<n>`) instead of
+   `name`/`parentId`/`onConflict`; `modifiedAt` is optional.
+   - `name`, `parentId` or `onConflict` together with `itemId` → `400 invalid_request`; `ifMatch`
+     without `itemId` → `400 invalid_request`; a malformed or non-file `itemId` (folder, `root`) → `400`.
+   - `itemId` without `ifMatch` → `428 precondition_required`.
+   - Unknown, trashed or foreign item → `404 not_found`. No upload is created for any of these errors.
+   - `ifMatch` not matching the current version (also an unknown etag format) already at creation →
+     `412 { code: "conflict", item }`.
+   - At completion the server checks `ifMatch` again under the same rules as §6.3 (including the
+     unindexed host edit rule). Mismatch → `412 { code: "conflict", item }`, the staged upload is
+     dropped (`HEAD` → `404`) and the file is untouched: the client takes the conflict path of §6.3.
+     Match → the content replaces the file atomically (`version + 1`, new `contentEtag`, journal
+     upsert, previous content becomes a version when enabled, §10).
+   - The completing request answers like a create (step 4) with the updated `SyncItem` (same
+     `id`; `X-Synclet-Item` = that id). `507` at completion keeps the upload resumable (below).
+   - `Tus-Max-Size` applies as for creates.
+   - `ifMatch: *` is not supported for tus: only `v<n>` (anything else → `412`).
    → `201` with a path-only `Location: /api/sync/v1/uploads/<uploadId>`. `Upload-Length` above
    `Tus-Max-Size` (= `maxUploadBytes`) → `413`.
 2. `PATCH <Location>` with `Upload-Offset: <current offset>` and
@@ -604,7 +710,6 @@ a folder id is `400 invalid_request` whether versions are on or off.
 
 ## 12. Not part of this contract (yet)
 
-- `GET /sync/v1/events` (Server-Sent Events change signal) – Phase 2; until then poll `/changes`.
 - APNs pushes – Phase 3 (`PUT /devices/current/push` is already accepted).
 - Office editing (`GET /sync/v1/items/:id/office`, `POST /sync/v1/items/new-office`), share links
   (`/api/shares`, `/api/public/shares`), admin routes (`/api/admin/*`) and SSO (`/api/auth/oidc/*`,
@@ -638,7 +743,7 @@ a folder id is `400 invalid_request` whether versions are on or off.
 | Changes | trigger-based journal, BIGSERIAL cursor | journal written in the same transaction as the change; per-user sequence; same `410` semantics |
 | Subtree delete in `/changes` | folder only | folder **and** every descendant |
 | Name validation | Buro rules | Windows-safe rules of §4.3 (reserved names, trailing dot/space, 255 bytes), ignored names |
-| Error codes | – | adds `rate_limited`, `password_login_disabled`, `setup_done` and web-only codes; drops `feature_disabled` |
+| Error codes | – | adds `rate_limited`, `password_login_disabled`, `setup_done`, `insufficient_storage` (507) and web-only codes; drops `feature_disabled` |
 | Conflict copy name | `(Konflikt <device> …)` | `(Conflict <device> …)` (translatable) |
 
 ---

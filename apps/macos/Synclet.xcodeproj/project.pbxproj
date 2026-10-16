@@ -1,0 +1,764 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		003D3093ACFB98AEAA31D7A4 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1134399FB18B2F00CD3A86B1 /* Assets.xcassets */; };
+		03CD7451B882E670BE53CEEF /* BrowserLogin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F21569AA77C665C13230E0D /* BrowserLogin.swift */; };
+		1456A5996BBCE3E3EAA8B070 /* SyncletApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32D73CFA702E4FE76780D862 /* SyncletApp.swift */; };
+		1866A9D5D2851D9D590E45EF /* SystemIntegration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98CDF2ADD7967B204D325FDF /* SystemIntegration.swift */; };
+		190ED6BF5373EDBCB3FA9A63 /* LoginModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7B95538C4E2F3B17506ED94 /* LoginModelTests.swift */; };
+		1F4D23B1BF33782B565492D3 /* LoginModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25E1633E6ACB75BECC4645B5 /* LoginModel.swift */; };
+		2BACE763045072E41D574C9D /* AccountsModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DEFD96AA4B8F7CC31E78232 /* AccountsModelTests.swift */; };
+		381D9332E767282701B8AE68 /* SignallingEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0549D1707523ADE628BAE012 /* SignallingEnumerator.swift */; };
+		386D65F16AD4BFE59389D3CA /* ChangeMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDA45935F8FDAC9C7C8FC8D5 /* ChangeMonitor.swift */; };
+		448E51CE094CEC5AB88F2FBD /* SyncletKit in Frameworks */ = {isa = PBXBuildFile; productRef = 8FC63EFAA00022D3F750C6C8 /* SyncletKit */; };
+		4A1E92D64853EC51BA0C07CE /* MenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A53080418DFB6AA2F6F65AA3 /* MenuView.swift */; };
+		53BC004437864D6975D62982 /* AuthFailureSignal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5285317D0F802AD01B1EA5B2 /* AuthFailureSignal.swift */; };
+		5EB9D35B01838B40E74F2AD9 /* MenuStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89A3DC5BF17F409309EB8197 /* MenuStatus.swift */; };
+		67E862FB5E814B07A1A499E6 /* MenuStatusTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5978CDE2723F53AC909B6B79 /* MenuStatusTests.swift */; };
+		693120E912C16A0675CEE8B3 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68C462B589EC6802F050E35E /* AppDelegate.swift */; };
+		7130DA8E6D354CE99859FAF3 /* SignallingEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0549D1707523ADE628BAE012 /* SignallingEnumerator.swift */; };
+		7AA86A6C6460FCC8321D16F4 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D134E3930D82ED2895EDC4D7 /* SettingsView.swift */; };
+		82F53068C179070714B3B032 /* SyncletKit in Frameworks */ = {isa = PBXBuildFile; productRef = 31C6B0D708CD10A4CDEDDE83 /* SyncletKit */; };
+		84D815A35C2E4209FDB800EB /* FileProviderExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4A29675CD5201E8AD9E062E /* FileProviderExtension.swift */; };
+		8D340D99550639CD0A30659C /* ErrorListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAEA078AEE7D57C64CA496FF /* ErrorListView.swift */; };
+		93412FA29BF91A46D7199779 /* PinningSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9735C722DDB146A9F5A82A5F /* PinningSettingsView.swift */; };
+		9A3AA15C41860550080179EE /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 7788E4FC410E32DE5F3596B2 /* Localizable.xcstrings */; };
+		9A5ECA2B9A5A3F2825F7C538 /* AccountStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B8FD84890A5F384DE1FEC59 /* AccountStatusView.swift */; };
+		9B05458DB28CD8440CC9CE2F /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDAC27E1128135FBE8D78967 /* LoginView.swift */; };
+		A940851430FF07AF09FE196A /* TestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEA2F48FC6AB5EA7576D6295 /* TestSupport.swift */; };
+		BB7CBB5A5EFB4EC2344AAD0D /* ProblemsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A7F4EAC4E5D9D936E80E73C /* ProblemsModel.swift */; };
+		C61BDD75B35DCAD3D4413E2E /* AuthFailureSignal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5285317D0F802AD01B1EA5B2 /* AuthFailureSignal.swift */; };
+		C6BE5942DD6C874061ACC06A /* ErrorLogTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95FDA675DF54DA8C1DDAFFD8 /* ErrorLogTests.swift */; };
+		D2AE771EC377AC5329F09DEC /* SyncletFileProvider.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 10A946F058FF4E8C71C14E8B /* SyncletFileProvider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		D861CC1351AC35897C9A446A /* PinningModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B90A721D2F5C4F0CC408F7F /* PinningModel.swift */; };
+		E01E5CED37753F88E04EBE1C /* ErrorLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = C95786A53E075B934AECD82F /* ErrorLog.swift */; };
+		E6A89E445D27C8CE8B9B33B1 /* PinningModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E1C09F4365D1A544933145F /* PinningModelTests.swift */; };
+		EA7DD7F0654ACBEA47801208 /* ErrorLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = C95786A53E075B934AECD82F /* ErrorLog.swift */; };
+		EEA44006D1FCA7BF0F7DBD0F /* ChangeMonitorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C72D8D5CBEEA1E36AFC7D73 /* ChangeMonitorTests.swift */; };
+		F122E0681201886798E85226 /* AccountsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A82B142571A22CAECE450756 /* AccountsModel.swift */; };
+		FAF7E7D7833704D492C732E0 /* ExtensionSupportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 695619BB11A1624ED456C238 /* ExtensionSupportTests.swift */; };
+		FF2AE58D1D4DBDEDC0404970 /* AccountsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6168701B33DB1A48BB8DBA61 /* AccountsSettingsView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		65700F90F1CBCD063476F8F3 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4F6A6FA85EBA4C383463F969 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B93EA93265BB4D0621251BF5;
+			remoteInfo = Synclet;
+		};
+		87140B44F204CE2C51731399 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4F6A6FA85EBA4C383463F969 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 504A62BA4E2FA11AF3B04E3C;
+			remoteInfo = SyncletFileProvider;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		3285C11915B61F29C366A21F /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				D2AE771EC377AC5329F09DEC /* SyncletFileProvider.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		0549D1707523ADE628BAE012 /* SignallingEnumerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignallingEnumerator.swift; sourceTree = "<group>"; };
+		086E1EDA4C761957CD43E37C /* Synclet.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Synclet.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0C72D8D5CBEEA1E36AFC7D73 /* ChangeMonitorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChangeMonitorTests.swift; sourceTree = "<group>"; };
+		10A946F058FF4E8C71C14E8B /* SyncletFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = SyncletFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		1134399FB18B2F00CD3A86B1 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		1B8FD84890A5F384DE1FEC59 /* AccountStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountStatusView.swift; sourceTree = "<group>"; };
+		1BD7CA4D5152ACE00B194079 /* SyncletKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SyncletKit; path = ../apple/SyncletKit; sourceTree = SOURCE_ROOT; };
+		25E1633E6ACB75BECC4645B5 /* LoginModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginModel.swift; sourceTree = "<group>"; };
+		32D73CFA702E4FE76780D862 /* SyncletApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncletApp.swift; sourceTree = "<group>"; };
+		44B0638D5C6607F60934556B /* SyncletFileProvider.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = SyncletFileProvider.entitlements; sourceTree = "<group>"; };
+		5285317D0F802AD01B1EA5B2 /* AuthFailureSignal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthFailureSignal.swift; sourceTree = "<group>"; };
+		5978CDE2723F53AC909B6B79 /* MenuStatusTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuStatusTests.swift; sourceTree = "<group>"; };
+		5B90A721D2F5C4F0CC408F7F /* PinningModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinningModel.swift; sourceTree = "<group>"; };
+		5C012770316EF6E044EF2A5B /* SyncletTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SyncletTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		6168701B33DB1A48BB8DBA61 /* AccountsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountsSettingsView.swift; sourceTree = "<group>"; };
+		68C462B589EC6802F050E35E /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		695619BB11A1624ED456C238 /* ExtensionSupportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtensionSupportTests.swift; sourceTree = "<group>"; };
+		6E1C09F4365D1A544933145F /* PinningModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinningModelTests.swift; sourceTree = "<group>"; };
+		7788E4FC410E32DE5F3596B2 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
+		7CE60D5DF08CAA3126DCF28D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		89A3DC5BF17F409309EB8197 /* MenuStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuStatus.swift; sourceTree = "<group>"; };
+		8B2A65C0ACD904F9A9ED2771 /* Synclet.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Synclet.entitlements; sourceTree = "<group>"; };
+		95FDA675DF54DA8C1DDAFFD8 /* ErrorLogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorLogTests.swift; sourceTree = "<group>"; };
+		9735C722DDB146A9F5A82A5F /* PinningSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinningSettingsView.swift; sourceTree = "<group>"; };
+		98CDF2ADD7967B204D325FDF /* SystemIntegration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemIntegration.swift; sourceTree = "<group>"; };
+		9A7F4EAC4E5D9D936E80E73C /* ProblemsModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProblemsModel.swift; sourceTree = "<group>"; };
+		9DEFD96AA4B8F7CC31E78232 /* AccountsModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountsModelTests.swift; sourceTree = "<group>"; };
+		9F21569AA77C665C13230E0D /* BrowserLogin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserLogin.swift; sourceTree = "<group>"; };
+		A53080418DFB6AA2F6F65AA3 /* MenuView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuView.swift; sourceTree = "<group>"; };
+		A82B142571A22CAECE450756 /* AccountsModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountsModel.swift; sourceTree = "<group>"; };
+		BDAC27E1128135FBE8D78967 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
+		BEA2F48FC6AB5EA7576D6295 /* TestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestSupport.swift; sourceTree = "<group>"; };
+		C95786A53E075B934AECD82F /* ErrorLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorLog.swift; sourceTree = "<group>"; };
+		CAEA078AEE7D57C64CA496FF /* ErrorListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorListView.swift; sourceTree = "<group>"; };
+		CDA45935F8FDAC9C7C8FC8D5 /* ChangeMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChangeMonitor.swift; sourceTree = "<group>"; };
+		D134E3930D82ED2895EDC4D7 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		D4A29675CD5201E8AD9E062E /* FileProviderExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderExtension.swift; sourceTree = "<group>"; };
+		E7B95538C4E2F3B17506ED94 /* LoginModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginModelTests.swift; sourceTree = "<group>"; };
+		EC952CD368A166FD6AA98466 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		66B2C43E948C67955D3B5D0B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				448E51CE094CEC5AB88F2FBD /* SyncletKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		722153DE8B47AC18D62C3CEF /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				82F53068C179070714B3B032 /* SyncletKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		126DDC3338EF83F435CD8007 /* Synclet */ = {
+			isa = PBXGroup;
+			children = (
+				EC952CD368A166FD6AA98466 /* Info.plist */,
+				8B2A65C0ACD904F9A9ED2771 /* Synclet.entitlements */,
+				42A7F5A09AF243BF0BC39B99 /* App */,
+				9AF6C3722B74A95BE6854C73 /* Core */,
+				A95573A7D7073D4249C02BAD /* Resources */,
+				8BA9F13F748D1F1BC70453AC /* Views */,
+			);
+			path = Synclet;
+			sourceTree = "<group>";
+		};
+		1592F873359EA654F6169D9A /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				5285317D0F802AD01B1EA5B2 /* AuthFailureSignal.swift */,
+				0549D1707523ADE628BAE012 /* SignallingEnumerator.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		24A2C56902237E7445549375 /* SyncletFileProvider */ = {
+			isa = PBXGroup;
+			children = (
+				D4A29675CD5201E8AD9E062E /* FileProviderExtension.swift */,
+				7CE60D5DF08CAA3126DCF28D /* Info.plist */,
+				44B0638D5C6607F60934556B /* SyncletFileProvider.entitlements */,
+			);
+			path = SyncletFileProvider;
+			sourceTree = "<group>";
+		};
+		42A7F5A09AF243BF0BC39B99 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				68C462B589EC6802F050E35E /* AppDelegate.swift */,
+				32D73CFA702E4FE76780D862 /* SyncletApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		81770ADFDF2605087006997D /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				1BD7CA4D5152ACE00B194079 /* SyncletKit */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		8BA9F13F748D1F1BC70453AC /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				6168701B33DB1A48BB8DBA61 /* AccountsSettingsView.swift */,
+				1B8FD84890A5F384DE1FEC59 /* AccountStatusView.swift */,
+				CAEA078AEE7D57C64CA496FF /* ErrorListView.swift */,
+				BDAC27E1128135FBE8D78967 /* LoginView.swift */,
+				A53080418DFB6AA2F6F65AA3 /* MenuView.swift */,
+				9735C722DDB146A9F5A82A5F /* PinningSettingsView.swift */,
+				D134E3930D82ED2895EDC4D7 /* SettingsView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		8F1EA580B25A3146A631365B = {
+			isa = PBXGroup;
+			children = (
+				81770ADFDF2605087006997D /* Packages */,
+				1592F873359EA654F6169D9A /* Shared */,
+				126DDC3338EF83F435CD8007 /* Synclet */,
+				24A2C56902237E7445549375 /* SyncletFileProvider */,
+				F50D74A27765D25035464475 /* SyncletTests */,
+				DDAEB03A071D31EA5C1D595C /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		9AF6C3722B74A95BE6854C73 /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				A82B142571A22CAECE450756 /* AccountsModel.swift */,
+				9F21569AA77C665C13230E0D /* BrowserLogin.swift */,
+				CDA45935F8FDAC9C7C8FC8D5 /* ChangeMonitor.swift */,
+				C95786A53E075B934AECD82F /* ErrorLog.swift */,
+				25E1633E6ACB75BECC4645B5 /* LoginModel.swift */,
+				89A3DC5BF17F409309EB8197 /* MenuStatus.swift */,
+				5B90A721D2F5C4F0CC408F7F /* PinningModel.swift */,
+				9A7F4EAC4E5D9D936E80E73C /* ProblemsModel.swift */,
+				98CDF2ADD7967B204D325FDF /* SystemIntegration.swift */,
+			);
+			path = Core;
+			sourceTree = "<group>";
+		};
+		A95573A7D7073D4249C02BAD /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				1134399FB18B2F00CD3A86B1 /* Assets.xcassets */,
+				7788E4FC410E32DE5F3596B2 /* Localizable.xcstrings */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		DDAEB03A071D31EA5C1D595C /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				086E1EDA4C761957CD43E37C /* Synclet.app */,
+				10A946F058FF4E8C71C14E8B /* SyncletFileProvider.appex */,
+				5C012770316EF6E044EF2A5B /* SyncletTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		F50D74A27765D25035464475 /* SyncletTests */ = {
+			isa = PBXGroup;
+			children = (
+				9DEFD96AA4B8F7CC31E78232 /* AccountsModelTests.swift */,
+				0C72D8D5CBEEA1E36AFC7D73 /* ChangeMonitorTests.swift */,
+				95FDA675DF54DA8C1DDAFFD8 /* ErrorLogTests.swift */,
+				695619BB11A1624ED456C238 /* ExtensionSupportTests.swift */,
+				E7B95538C4E2F3B17506ED94 /* LoginModelTests.swift */,
+				5978CDE2723F53AC909B6B79 /* MenuStatusTests.swift */,
+				6E1C09F4365D1A544933145F /* PinningModelTests.swift */,
+				BEA2F48FC6AB5EA7576D6295 /* TestSupport.swift */,
+			);
+			path = SyncletTests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		3FBD70012D43D9752B1138F2 /* SyncletTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D7B5B188684AE77A229D31E5 /* Build configuration list for PBXNativeTarget "SyncletTests" */;
+			buildPhases = (
+				700AA4E351E48D4B401C0F08 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				4206BF8F3C8B819B208094EB /* PBXTargetDependency */,
+			);
+			name = SyncletTests;
+			packageProductDependencies = (
+			);
+			productName = SyncletTests;
+			productReference = 5C012770316EF6E044EF2A5B /* SyncletTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		504A62BA4E2FA11AF3B04E3C /* SyncletFileProvider */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DA6068C377EDBB0CC056F08B /* Build configuration list for PBXNativeTarget "SyncletFileProvider" */;
+			buildPhases = (
+				E530DD0E4D050C3344BC3F25 /* Sources */,
+				722153DE8B47AC18D62C3CEF /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SyncletFileProvider;
+			packageProductDependencies = (
+				31C6B0D708CD10A4CDEDDE83 /* SyncletKit */,
+			);
+			productName = SyncletFileProvider;
+			productReference = 10A946F058FF4E8C71C14E8B /* SyncletFileProvider.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		B93EA93265BB4D0621251BF5 /* Synclet */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7220843FBE9AAC273117E1C3 /* Build configuration list for PBXNativeTarget "Synclet" */;
+			buildPhases = (
+				8E112D79FDB12AC548B0AD5C /* Sources */,
+				DC13C730BEFA98B6A33F5E99 /* Resources */,
+				66B2C43E948C67955D3B5D0B /* Frameworks */,
+				3285C11915B61F29C366A21F /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				FEDB92D11B9F5A6BA4468EFD /* PBXTargetDependency */,
+			);
+			name = Synclet;
+			packageProductDependencies = (
+				8FC63EFAA00022D3F750C6C8 /* SyncletKit */,
+			);
+			productName = Synclet;
+			productReference = 086E1EDA4C761957CD43E37C /* Synclet.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		4F6A6FA85EBA4C383463F969 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					3FBD70012D43D9752B1138F2 = {
+						DevelopmentTeam = JC32M95WLZ;
+						ProvisioningStyle = Automatic;
+					};
+					504A62BA4E2FA11AF3B04E3C = {
+						DevelopmentTeam = JC32M95WLZ;
+						ProvisioningStyle = Automatic;
+					};
+					B93EA93265BB4D0621251BF5 = {
+						DevelopmentTeam = JC32M95WLZ;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 30D8BC282889EAE9BAA948FE /* Build configuration list for PBXProject "Synclet" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				de,
+				en,
+			);
+			mainGroup = 8F1EA580B25A3146A631365B;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				F7CD4FB79A07B2242D9FE47A /* XCLocalSwiftPackageReference "../apple/SyncletKit" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = DDAEB03A071D31EA5C1D595C /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				B93EA93265BB4D0621251BF5 /* Synclet */,
+				504A62BA4E2FA11AF3B04E3C /* SyncletFileProvider */,
+				3FBD70012D43D9752B1138F2 /* SyncletTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		DC13C730BEFA98B6A33F5E99 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				003D3093ACFB98AEAA31D7A4 /* Assets.xcassets in Resources */,
+				9A3AA15C41860550080179EE /* Localizable.xcstrings in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		700AA4E351E48D4B401C0F08 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2BACE763045072E41D574C9D /* AccountsModelTests.swift in Sources */,
+				EEA44006D1FCA7BF0F7DBD0F /* ChangeMonitorTests.swift in Sources */,
+				C6BE5942DD6C874061ACC06A /* ErrorLogTests.swift in Sources */,
+				FAF7E7D7833704D492C732E0 /* ExtensionSupportTests.swift in Sources */,
+				190ED6BF5373EDBCB3FA9A63 /* LoginModelTests.swift in Sources */,
+				67E862FB5E814B07A1A499E6 /* MenuStatusTests.swift in Sources */,
+				E6A89E445D27C8CE8B9B33B1 /* PinningModelTests.swift in Sources */,
+				A940851430FF07AF09FE196A /* TestSupport.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8E112D79FDB12AC548B0AD5C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				9A5ECA2B9A5A3F2825F7C538 /* AccountStatusView.swift in Sources */,
+				F122E0681201886798E85226 /* AccountsModel.swift in Sources */,
+				FF2AE58D1D4DBDEDC0404970 /* AccountsSettingsView.swift in Sources */,
+				693120E912C16A0675CEE8B3 /* AppDelegate.swift in Sources */,
+				C61BDD75B35DCAD3D4413E2E /* AuthFailureSignal.swift in Sources */,
+				03CD7451B882E670BE53CEEF /* BrowserLogin.swift in Sources */,
+				386D65F16AD4BFE59389D3CA /* ChangeMonitor.swift in Sources */,
+				8D340D99550639CD0A30659C /* ErrorListView.swift in Sources */,
+				E01E5CED37753F88E04EBE1C /* ErrorLog.swift in Sources */,
+				1F4D23B1BF33782B565492D3 /* LoginModel.swift in Sources */,
+				9B05458DB28CD8440CC9CE2F /* LoginView.swift in Sources */,
+				5EB9D35B01838B40E74F2AD9 /* MenuStatus.swift in Sources */,
+				4A1E92D64853EC51BA0C07CE /* MenuView.swift in Sources */,
+				D861CC1351AC35897C9A446A /* PinningModel.swift in Sources */,
+				93412FA29BF91A46D7199779 /* PinningSettingsView.swift in Sources */,
+				BB7CBB5A5EFB4EC2344AAD0D /* ProblemsModel.swift in Sources */,
+				7AA86A6C6460FCC8321D16F4 /* SettingsView.swift in Sources */,
+				381D9332E767282701B8AE68 /* SignallingEnumerator.swift in Sources */,
+				1456A5996BBCE3E3EAA8B070 /* SyncletApp.swift in Sources */,
+				1866A9D5D2851D9D590E45EF /* SystemIntegration.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E530DD0E4D050C3344BC3F25 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				53BC004437864D6975D62982 /* AuthFailureSignal.swift in Sources */,
+				EA7DD7F0654ACBEA47801208 /* ErrorLog.swift in Sources */,
+				84D815A35C2E4209FDB800EB /* FileProviderExtension.swift in Sources */,
+				7130DA8E6D354CE99859FAF3 /* SignallingEnumerator.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		4206BF8F3C8B819B208094EB /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B93EA93265BB4D0621251BF5 /* Synclet */;
+			targetProxy = 65700F90F1CBCD063476F8F3 /* PBXContainerItemProxy */;
+		};
+		FEDB92D11B9F5A6BA4468EFD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 504A62BA4E2FA11AF3B04E3C /* SyncletFileProvider */;
+			targetProxy = 87140B44F204CE2C51731399 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		0A6788674EF89F4F0F9826CE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = SyncletFileProvider/SyncletFileProvider.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_APP_SANDBOX = YES;
+				INFOPLIST_FILE = SyncletFileProvider/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = tech.jensk.synclet.mac.fileprovider;
+				PRODUCT_NAME = SyncletFileProvider;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		4AF0F99DAC3DA0E23FE01996 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = SyncletFileProvider/SyncletFileProvider.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_APP_SANDBOX = YES;
+				INFOPLIST_FILE = SyncletFileProvider/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = tech.jensk.synclet.mac.fileprovider;
+				PRODUCT_NAME = SyncletFileProvider;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
+		4D74ED1EFC8C0A83ACD5BBCF /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = tech.jensk.synclet.mac.tests;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Synclet.app/Contents/MacOS/Synclet";
+			};
+			name = Release;
+		};
+		541DA574DB2B7BEE1247A899 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Synclet/Synclet.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = Synclet/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = tech.jensk.synclet.mac;
+				PRODUCT_NAME = Synclet;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		7845E4F3D86A8A5E90F3AB06 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = JC32M95WLZ;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+				SYNCLET_APP_GROUP = "$(DEVELOPMENT_TEAM).group.tech.jensk.synclet";
+				SYNCLET_KEYCHAIN_GROUP = "$(DEVELOPMENT_TEAM).tech.jensk.synclet.shared";
+			};
+			name = Debug;
+		};
+		7F38AC35637805A20541B799 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Synclet/Synclet.entitlements;
+				COMBINE_HIDPI_IMAGES = YES;
+				INFOPLIST_FILE = Synclet/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = tech.jensk.synclet.mac;
+				PRODUCT_NAME = Synclet;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		BE94018FC653067EE0A1D6E9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = tech.jensk.synclet.mac.tests;
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Synclet.app/Contents/MacOS/Synclet";
+			};
+			name = Debug;
+		};
+		CFBB41A66F6AF42F39063300 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = JC32M95WLZ;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+				SYNCLET_APP_GROUP = "$(DEVELOPMENT_TEAM).group.tech.jensk.synclet";
+				SYNCLET_KEYCHAIN_GROUP = "$(DEVELOPMENT_TEAM).tech.jensk.synclet.shared";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		30D8BC282889EAE9BAA948FE /* Build configuration list for PBXProject "Synclet" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7845E4F3D86A8A5E90F3AB06 /* Debug */,
+				CFBB41A66F6AF42F39063300 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		7220843FBE9AAC273117E1C3 /* Build configuration list for PBXNativeTarget "Synclet" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				541DA574DB2B7BEE1247A899 /* Debug */,
+				7F38AC35637805A20541B799 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		D7B5B188684AE77A229D31E5 /* Build configuration list for PBXNativeTarget "SyncletTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BE94018FC653067EE0A1D6E9 /* Debug */,
+				4D74ED1EFC8C0A83ACD5BBCF /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		DA6068C377EDBB0CC056F08B /* Build configuration list for PBXNativeTarget "SyncletFileProvider" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0A6788674EF89F4F0F9826CE /* Debug */,
+				4AF0F99DAC3DA0E23FE01996 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		F7CD4FB79A07B2242D9FE47A /* XCLocalSwiftPackageReference "../apple/SyncletKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../apple/SyncletKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		31C6B0D708CD10A4CDEDDE83 /* SyncletKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SyncletKit;
+		};
+		8FC63EFAA00022D3F750C6C8 /* SyncletKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SyncletKit;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 4F6A6FA85EBA4C383463F969 /* Project object */;
+}
