@@ -167,7 +167,8 @@ export class WatcherService implements OnApplicationBootstrap, OnModuleDestroy {
     if (this.subs.has(dir) || this.pending.has(dir)) return;
     const entry = { done: Promise.resolve(), timedOut: false };
     this.pending.set(dir, entry);
-    entry.done = this.serial(() => this.subscribeNow(dir, entry));
+    entry.done = this.serial(() => this.subscribeNow(dir, entry))
+      .catch((e) => this.log.warn(`file watcher setup for ${dir} failed: ${(e as Error).message}`));
   }
 
   private async subscribeNow(dir: string, entry: { timedOut: boolean }): Promise<void> {
@@ -273,9 +274,11 @@ export class WatcherService implements OnApplicationBootstrap, OnModuleDestroy {
     this.pending.clear();
     this.started = false;
     // Not queued, but bounded: unsubscribes wait for the backend mutex while a tree walk runs.
+    // One after another, so at most one threadpool worker blocks on it.
     let timer: NodeJS.Timeout | undefined;
+    const all = subs.reduce<Promise<void>>((p, s) => p.then(() => s.unsubscribe()).catch(() => {}), Promise.resolve());
     await Promise.race([
-      Promise.all(subs.map((s) => s.unsubscribe().catch(() => {}))),
+      all,
       new Promise<void>((r) => { timer = setTimeout(r, this.shutdownUnsubscribeMs); timer.unref(); }),
     ]);
     clearTimeout(timer);
