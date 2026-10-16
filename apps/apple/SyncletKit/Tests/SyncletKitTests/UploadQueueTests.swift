@@ -192,4 +192,31 @@ final class UploadQueueTests: XCTestCase {
         XCTAssertEqual(q.all().map(\.id), [e.id])
         XCTAssertEqual(q.entry(id: e.id)?.name, "a.txt")
     }
+
+    func testEntryWithoutOwnerFieldsDecodes() throws {
+        let dir = Fixtures.tempDirectory()
+        // Written by a build before `owner`/`leaseUntil` existed.
+        let json = #"{"v":1,"entries":[{"id":"e1","accountKey":"k","parentId":"root","parentName":"M","name":"a.txt","size":5,"status":"uploading","attempts":0,"tusOffset":0,"createdAt":"2026-10-16T08:00:00.000Z"}]}"#
+        try Data(json.utf8).write(to: dir.appending(path: "queue.json"))
+        let e = try XCTUnwrap(UploadQueue(directory: dir).entry(id: "e1"))
+        XCTAssertEqual(e.status, .uploading)
+        XCTAssertNil(e.owner)
+        XCTAssertNil(e.leaseUntil)
+    }
+
+    func testOwnerAndLeaseRoundTripAndRetryClearsThem() throws {
+        let dir = Fixtures.tempDirectory(); let q = UploadQueue(directory: dir)
+        let e = try enqueue(q)
+        let lease = Date(timeIntervalSince1970: 1_800_000_600)
+        q.update(id: e.id) { $0.status = .uploading; $0.owner = "tech.jensk.synclet.upload.share"; $0.leaseUntil = lease }
+        let read = try XCTUnwrap(UploadQueue(directory: dir).entry(id: e.id))
+        XCTAssertEqual(read.owner, "tech.jensk.synclet.upload.share")
+        XCTAssertEqual(read.leaseUntil, lease)
+        XCTAssertTrue(q.runnable().isEmpty, "uploading entries are never runnable")
+        q.update(id: e.id) { $0.status = .failed }
+        q.retry(id: e.id)
+        let retried = try XCTUnwrap(q.entry(id: e.id))
+        XCTAssertNil(retried.owner); XCTAssertNil(retried.leaseUntil)
+        XCTAssertEqual(q.runnable().map(\.id), [e.id])
+    }
 }

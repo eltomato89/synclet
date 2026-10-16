@@ -7,13 +7,17 @@ import Synchronization
 ///
 /// - Every request is an upload task from a file (single: the queue's copy; tus `PATCH`:
 ///   a chunk file `<queue>/chunks/<id>-<offset>`) or a download task (tus `POST` create and
-///   `HEAD`, which have no body; background sessions only run upload and download tasks
-///   while the app is suspended). The task's `taskDescription` holds ``TaskTag`` JSON, so
+///   `HEAD`, which have no body). Deliberately not data tasks (as first planned): background
+///   sessions only run upload and download tasks while the app is suspended. The task's `taskDescription` holds ``TaskTag`` JSON, so
 ///   completions delivered after a relaunch are routed to their entry and step.
 /// - At most ``maxConcurrent`` entries per process are in flight. An entry is claimed
 ///   (`waiting` → `uploading`) under the queue's file lock, so the app and the Share
 ///   extension never start the same entry twice.
 /// - The device token is read from the ``CredentialStore`` for every request.
+/// - A claim records `owner` (this session's identifier) and `leaseUntil` (now + 10 min,
+///   renewed on progress at most every 30 s and on every handled completion). After a
+///   launch only abandoned `uploading` entries go back to `waiting`: our own without a live
+///   task, or any whose lease expired – never one the other process is still running.
 public final class BackgroundUploader: NSObject, Sendable {
     /// In-flight entries per process.
     public static let maxConcurrent = 2
@@ -21,6 +25,10 @@ public final class BackgroundUploader: NSObject, Sendable {
     public static let maxAttempts = 10
     /// Upper bound of the retry delay (seconds).
     public static let maxBackoff: TimeInterval = 300
+    /// How long a claim (`owner` + `leaseUntil`) holds without being renewed.
+    public static let leaseDuration: TimeInterval = 10 * 60
+    /// Minimum spacing of lease renewals on progress.
+    public static let leaseRenewalInterval: TimeInterval = 30
 
     /// `taskDescription` of every task: which entry and which step it belongs to.
     struct TaskTag: Codable, Hashable {
@@ -51,6 +59,8 @@ public final class BackgroundUploader: NSObject, Sendable {
         var bodies: [Int: Data] = [:]
         /// Entries cancelled while in flight; their completions are dropped.
         var cancelled: Set<String> = []
+        /// Last lease write per entry (throttles renewals on progress).
+        var leaseRenewedAt: [String: Date] = [:]
         var recovered = false
         var backgroundCompletion: (@Sendable () -> Void)?
         var session: URLSession?
@@ -159,27 +169,48 @@ public final class BackgroundUploader: NSObject, Sendable {
                 s.tasks[id] = s.tasks[id] ?? task
             }
         }
+        let at = now()
         for entry in queue.all() where entry.status == .uploading {
             guard !state.withLock({ $0.inFlight.contains(entry.id) }) else { continue }
-            Log.upload.info("upload without a live task after launch; back to waiting")
-            if let updated = queue.update(id: entry.id, { e in
-                if e.status == .uploading { e.status = .waiting; e.nextAttemptAt = nil }
-            }) {
+            var reset = false
+            let updated = queue.update(id: entry.id) { e in
+                guard e.status == .uploading, self.isAbandoned(e, at: at) else { return }
+                e.status = .waiting
+                e.nextAttemptAt = nil
+                e.owner = nil
+                e.leaseUntil = nil
+                reset = true
+            }
+            if reset, let updated {
+                Log.upload.info("upload without a live task or lease after launch; back to waiting")
                 onChange(updated)
             }
         }
     }
 
+    /// An `uploading` entry nobody runs any more: ours without a live task in this session
+    /// (the caller checked that), or one whose lease ran out (its process died). An entry of
+    /// another process (the Share extension) with a valid lease is left alone.
+    private func isAbandoned(_ entry: UploadEntry, at date: Date) -> Bool {
+        if entry.owner == identifier { return true }
+        guard let lease = entry.leaseUntil else { return true }
+        return lease < date
+    }
+
     /// Claims a picked entry (`waiting` → `uploading`) and starts its first step.
     private func begin(_ candidate: UploadEntry) {
         var claimed = false
+        let at = now()
         let entry = queue.update(id: candidate.id) { e in
             guard e.status == .waiting else { return }
             e.status = .uploading
             e.failure = nil
             e.failureMessage = nil
+            e.owner = identifier
+            e.leaseUntil = at.addingTimeInterval(Self.leaseDuration)
             claimed = true
         }
+        if claimed { state.withLock { $0.leaseRenewedAt[candidate.id] = at } }
         guard claimed, let entry else {
             release(candidate.id)
             return
@@ -288,7 +319,7 @@ public final class BackgroundUploader: NSObject, Sendable {
                 }
                 // Cancelled by the system (session invalidated): try again later without counting.
                 let updated = queue.update(id: tag.entryId) { e in
-                    if e.status == .uploading { e.status = .waiting }
+                    if e.status == .uploading { e.status = .waiting; e.owner = nil; e.leaseUntil = nil }
                 }
                 release(tag.entryId)
                 if let updated { onChange(updated) }
@@ -328,6 +359,9 @@ public final class BackgroundUploader: NSObject, Sendable {
             return
         }
         var next: UploadStep?
+        let at = now()
+        let lease = at.addingTimeInterval(Self.leaseDuration)
+        let identifier = identifier
         let updated: UploadEntry?
         switch result {
         case .finished(let itemId, let name):
@@ -341,6 +375,8 @@ public final class BackgroundUploader: NSObject, Sendable {
                 e.nextAttemptAt = nil
                 e.tusURL = nil
                 e.tusOffset = e.size
+                e.owner = nil
+                e.leaseUntil = nil
             }
             try? FileManager.default.removeItem(at: queue.fileURL(for: entryId))
             removeChunks(of: entryId)
@@ -349,18 +385,24 @@ public final class BackgroundUploader: NSObject, Sendable {
             updated = queue.update(id: entryId) { e in
                 e.tusURL = url
                 e.tusOffset = 0
+                e.owner = identifier
+                e.leaseUntil = lease
             }
             if let updated { next = Self.patch(from: 0, size: updated.size) }
         case .tusOffset(let offset):
             updated = queue.update(id: entryId) { e in
                 if offset <= e.size {
                     e.tusOffset = offset
+                    e.owner = identifier
+                    e.leaseUntil = lease
                 } else {
                     e.status = .failed
                     e.failure = .other
                     e.failureMessage = "tus: offset beyond the file"
                     e.tusURL = nil
                     e.tusOffset = 0
+                    e.owner = nil
+                    e.leaseUntil = nil
                 }
             }
             if let updated, updated.status == .uploading { next = Self.patch(from: offset, size: updated.size) }
@@ -368,19 +410,24 @@ public final class BackgroundUploader: NSObject, Sendable {
             updated = queue.update(id: entryId) { e in
                 e.tusURL = nil
                 e.tusOffset = 0
+                e.owner = identifier
+                e.leaseUntil = lease
             }
             next = .tusCreate
         case .retry:
-            let at = now()
             updated = queue.update(id: entryId) { e in
+                // Delay 2 s · 2^n, n = retries before this one (2, 4, 8 … 300 s).
+                let delay = Self.backoff(retriesBefore: e.attempts)
                 e.attempts += 1
+                e.owner = nil
+                e.leaseUntil = nil
                 if e.attempts >= Self.maxAttempts {
                     e.status = .failed
                     e.failure = .network
                     e.nextAttemptAt = nil
                 } else {
                     e.status = .waiting
-                    e.nextAttemptAt = at.addingTimeInterval(Self.backoff(attempts: e.attempts))
+                    e.nextAttemptAt = at.addingTimeInterval(delay)
                 }
             }
         case .fail(let failure, let message):
@@ -389,6 +436,8 @@ public final class BackgroundUploader: NSObject, Sendable {
                 e.failure = failure
                 e.failureMessage = message
                 e.nextAttemptAt = nil
+                e.owner = nil
+                e.leaseUntil = nil
             }
             Log.upload.error("upload failed: \(failure.rawValue, privacy: .public)")
         }
@@ -398,6 +447,7 @@ public final class BackgroundUploader: NSObject, Sendable {
             pumpLater()
             return
         }
+        if updated.status == .uploading { state.withLock { $0.leaseRenewedAt[entryId] = at } }
         onChange(updated)
         if let next, updated.status == .uploading {
             start(updated, next)
@@ -407,9 +457,26 @@ public final class BackgroundUploader: NSObject, Sendable {
         }
     }
 
-    /// `min(2 · 2^attempts, 300)` seconds.
-    static func backoff(attempts: Int) -> TimeInterval {
-        min(2 * pow(2, Double(attempts)), maxBackoff)
+    /// `min(2 s · 2^n, 300 s)`, `n` = retries already done before this one.
+    static func backoff(retriesBefore n: Int) -> TimeInterval {
+        min(2 * pow(2, Double(n)), maxBackoff)
+    }
+
+    /// Extends the claim while bytes flow, at most every ``leaseRenewalInterval``.
+    private func renewLease(of entryId: String) {
+        let at = now()
+        let due = state.withLock { s -> Bool in
+            guard s.inFlight.contains(entryId), !s.cancelled.contains(entryId) else { return false }
+            if let last = s.leaseRenewedAt[entryId], at.timeIntervalSince(last) < Self.leaseRenewalInterval { return false }
+            s.leaseRenewedAt[entryId] = at
+            return true
+        }
+        guard due else { return }
+        let identifier = identifier
+        queue.update(id: entryId) { e in
+            guard e.status == .uploading, e.owner == identifier else { return }
+            e.leaseUntil = at.addingTimeInterval(Self.leaseDuration)
+        }
     }
 
     private static func patch(from offset: Int64, size: Int64) -> UploadStep {
@@ -421,6 +488,7 @@ public final class BackgroundUploader: NSObject, Sendable {
             s.inFlight.remove(entryId)
             s.tasks.removeValue(forKey: entryId)
             s.cancelled.remove(entryId)
+            s.leaseRenewedAt.removeValue(forKey: entryId)
         }
     }
 
@@ -481,6 +549,12 @@ extension BackgroundUploader: URLSessionDataDelegate, URLSessionDownloadDelegate
     public func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
         let data = (try? Data(contentsOf: location)) ?? Data()
         state.withLock { $0.bodies[downloadTask.taskIdentifier] = data }
+    }
+
+    /// Progress renews the entry's lease (throttled).
+    public func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64,
+                           totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
+        if let tag = TaskTag(task.taskDescription) { renewLease(of: tag.entryId) }
     }
 
     public func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {

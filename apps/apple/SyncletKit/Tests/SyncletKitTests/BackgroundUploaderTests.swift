@@ -229,7 +229,9 @@ final class BackgroundUploaderTests: XCTestCase {
             let e = try XCTUnwrap(queue.entry(id: entry.id))
             if attempt < 10 {
                 XCTAssertEqual(e.status, .waiting)
-                let delay = min(2 * pow(2, Double(attempt)), 300)
+                // 2 s · 2^n, n = retries before this one: 2, 4, 8 … capped at 300.
+                let delay = min(2 * pow(2, Double(attempt - 1)), 300)
+                XCTAssertNil(e.owner); XCTAssertNil(e.leaseUntil)
                 XCTAssertEqual(e.nextAttemptAt, clock.now.addingTimeInterval(delay), "attempt \(attempt)")
                 // Not runnable before its time.
                 await uploader.pump()
@@ -297,6 +299,68 @@ final class BackgroundUploaderTests: XCTestCase {
             return entries.allSatisfy { status($0.id) == .done }
         }
         XCTAssertEqual(HoldingURLProtocol.count, 3)
+    }
+
+    func testBackoffSequence() {
+        XCTAssertEqual((0..<10).map { BackgroundUploader.backoff(retriesBefore: $0) },
+                       [2, 4, 8, 16, 32, 64, 128, 256, 300, 300])
+    }
+
+    func testClaimSetsOwnerAndLeaseAndDoneClearsThem() async throws {
+        MockURLProtocol.reset { _ in .json(201, Fixtures.itemJSON(id: "f_1")) }
+        let entry = try enqueueSmall()
+        await uploader.pump()
+        await waitUntil("done") { status(entry.id) == .done }
+        let claim = try XCTUnwrap(changes.all.first { $0.id == entry.id && $0.status == .uploading })
+        XCTAssertEqual(claim.owner, "tech.jensk.synclet.upload.test")
+        XCTAssertEqual(claim.leaseUntil, clock.now.addingTimeInterval(600))
+        let done = try XCTUnwrap(queue.entry(id: entry.id))
+        XCTAssertNil(done.owner)
+        XCTAssertNil(done.leaseUntil)
+    }
+
+    private func markUploading(_ id: String, owner: String?, leaseUntil: Date?) {
+        queue.update(id: id) { e in e.status = .uploading; e.owner = owner; e.leaseUntil = leaseUntil }
+    }
+
+    func testRecoveryLeavesEntryOfOtherProcessWithValidLease() async throws {
+        MockURLProtocol.reset { _ in .json(201, Fixtures.itemJSON(id: "f_1")) }
+        let entry = try enqueueSmall()
+        markUploading(entry.id, owner: "tech.jensk.synclet.upload.share", leaseUntil: clock.now.addingTimeInterval(300))
+        await uploader.pump()
+        try await Task.sleep(for: .milliseconds(200))
+        let e = try XCTUnwrap(queue.entry(id: entry.id))
+        XCTAssertEqual(e.status, .uploading)
+        XCTAssertEqual(e.owner, "tech.jensk.synclet.upload.share")
+        XCTAssertTrue(MockURLProtocol.requests.isEmpty)
+    }
+
+    func testRecoveryTakesOverEntryWithExpiredLease() async throws {
+        MockURLProtocol.reset { _ in .json(201, Fixtures.itemJSON(id: "f_1")) }
+        let entry = try enqueueSmall()
+        markUploading(entry.id, owner: "tech.jensk.synclet.upload.share", leaseUntil: clock.now.addingTimeInterval(-1))
+        await uploader.pump()
+        await waitUntil("done") { status(entry.id) == .done }
+        XCTAssertTrue(changes.all.contains { $0.id == entry.id && $0.status == .waiting && $0.owner == nil })
+        XCTAssertEqual(MockURLProtocol.requests.count, 1)
+    }
+
+    func testRecoveryTakesOverEntryWithoutLease() async throws {
+        MockURLProtocol.reset { _ in .json(201, Fixtures.itemJSON(id: "f_1")) }
+        let entry = try enqueueSmall()
+        markUploading(entry.id, owner: nil, leaseUntil: nil)
+        await uploader.pump()
+        await waitUntil("done") { status(entry.id) == .done }
+    }
+
+    func testRecoveryResetsOwnEntryWithoutLiveTask() async throws {
+        MockURLProtocol.reset { _ in .json(201, Fixtures.itemJSON(id: "f_1")) }
+        let entry = try enqueueSmall()
+        // Ours (same session identifier), lease still valid, but no task survived.
+        markUploading(entry.id, owner: "tech.jensk.synclet.upload.test", leaseUntil: clock.now.addingTimeInterval(300))
+        await uploader.pump()
+        await waitUntil("done") { status(entry.id) == .done }
+        XCTAssertEqual(MockURLProtocol.requests.count, 1)
     }
 
     func testTaskDescriptionRoutesCompletion() throws {

@@ -23,16 +23,23 @@ public struct UploadEntry: Codable, Sendable, Hashable, Identifiable {
     public var itemId: String?
     public var createdAt: Date
     public var finishedAt: Date?
+    /// Session identifier of the ``BackgroundUploader`` running this entry (only while `uploading`).
+    public var owner: String?
+    /// Until when the owner's claim holds; it renews it while the upload makes progress.
+    /// An `uploading` entry with an expired lease may be taken over (its process died).
+    public var leaseUntil: Date?
 
     public init(id: String = UUID().uuidString, accountKey: String, parentId: String, parentName: String,
                 name: String, size: Int64, status: UploadStatus = .waiting, failure: UploadFailure? = nil,
                 failureMessage: String? = nil, attempts: Int = 0, nextAttemptAt: Date? = nil, tusURL: URL? = nil,
-                tusOffset: Int64 = 0, itemId: String? = nil, createdAt: Date = Date(), finishedAt: Date? = nil) {
+                tusOffset: Int64 = 0, itemId: String? = nil, createdAt: Date = Date(), finishedAt: Date? = nil,
+                owner: String? = nil, leaseUntil: Date? = nil) {
         self.id = id; self.accountKey = accountKey; self.parentId = parentId; self.parentName = parentName
         self.name = name; self.size = size; self.status = status; self.failure = failure
         self.failureMessage = failureMessage; self.attempts = attempts; self.nextAttemptAt = nextAttemptAt
         self.tusURL = tusURL; self.tusOffset = tusOffset; self.itemId = itemId
         self.createdAt = createdAt; self.finishedAt = finishedAt
+        self.owner = owner; self.leaseUntil = leaseUntil
     }
 }
 
@@ -146,6 +153,7 @@ public final class UploadQueue: Sendable {
         update(id: id) { e in
             guard e.status == .failed else { return }
             e.status = .waiting; e.attempts = 0; e.failure = nil; e.failureMessage = nil; e.nextAttemptAt = nil
+            e.owner = nil; e.leaseUntil = nil
         }
     }
 

@@ -88,6 +88,10 @@ public enum UploadRequestBuilder {
 
     /// Maps a finished request to the next step. `requestURL` resolves a path-only tus
     /// `Location` and is the origin it must stay on (the token never goes elsewhere).
+    ///
+    /// Note: `requestURL` is an addition to the planned signature (Phase 3 T5) – without it a
+    /// path-only `Location` (§7) can neither be resolved nor origin-checked. The uploader
+    /// passes `task.originalRequest?.url`.
     public static func interpret(status: Int, headers: [String: String], body: Data, for step: UploadStep,
                                  requestURL: URL? = nil) -> UploadStepResult {
         let header = { (name: String) -> String? in
