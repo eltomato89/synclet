@@ -8,7 +8,8 @@
 #   - a "Developer ID Application" certificate of team JC32M95WLZ in the login keychain
 #   - xcrun notarytool store-credentials synclet-notary --apple-id <id> --team-id JC32M95WLZ
 #
-# Env: SYNCLET_SKIP_NOTARIZE=1 builds build/Synclet-<version>-unnotarized.dmg without the notary
+# Env: SYNCLET_NOTARY_PROFILE=<name> uses another notarytool keychain profile of the same team
+# (e.g. buro-notary). SYNCLET_SKIP_NOTARIZE=1 builds build/Synclet-<version>-unnotarized.dmg without the notary
 # steps (local testing only: Gatekeeper rejects it on other Macs). The DMG window layout uses
 # Finder via AppleScript (needs an unlocked GUI session); without it the DMG still works, the
 # script warns that the background could not be applied.
@@ -16,7 +17,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 HERE=$(pwd)
 TEAM=JC32M95WLZ
-PROFILE=synclet-notary
+PROFILE=${SYNCLET_NOTARY_PROFILE:-synclet-notary}
 BUILD="$HERE/build"
 ARCHIVE="$BUILD/Synclet.xcarchive"
 EXPORT="$BUILD/export"
@@ -155,13 +156,24 @@ hdiutil detach "$MOUNT" -quiet
 MOUNT=""
 hdiutil convert "$RW" -format UDZO -imagekey zlib-level=9 -o "$DMG" -quiet
 
-codesign --sign "$AUTHORITY" --timestamp "$DMG"
+# Xcode's cloud signing only signs the exported app; a disk image can only be signed with a local
+# identity. Without one the DMG stays unsigned – the app inside is Developer ID signed and the
+# DMG's notarization ticket is stapled, which is what Gatekeeper checks for downloaded images.
+DMG_SIGNED=0
+if security find-identity -v -p codesigning | grep -qF "$AUTHORITY"; then
+  codesign --sign "$AUTHORITY" --timestamp "$DMG"
+  DMG_SIGNED=1
+else
+  echo "NOTE: no local '$AUTHORITY' identity – the DMG itself stays unsigned (the app inside is signed)" >&2
+fi
 if [ "$SKIP_NOTARIZE" != 1 ]; then
   step "notarize the DMG"
   notarize "$DMG"
   xcrun stapler staple "$DMG"
   xcrun stapler validate "$DMG"
-  spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
+  if [ "$DMG_SIGNED" = 1 ]; then
+    spctl --assess --type open --context context:primary-signature --verbose=2 "$DMG"
+  fi
 fi
 step "done"
 echo "$DMG"
