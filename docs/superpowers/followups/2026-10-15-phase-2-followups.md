@@ -88,3 +88,8 @@ Stand: 2026-10-16, Branch phase-2 (T1–T8, T5b, T9, T10, Final-Fixwelle).
 - **M3 – Rest:** ein 401 einer Operation, die vor dem Speichern des neuen Tokens begann, aber das neue Token schon las, wird einmal ignoriert (wird beim nächsten Fehler gemeldet). Toleranz 1 ms wegen der Millisekunden im Marker.
 - **M6 – Rest:** ohne Pins und oberhalb von 50.000 Ordnern wird die Parent-Map geleert. Ein Ordner, den die Map danach nicht kennt und der remote in einen Pin verschoben wird, löst keinen Re-Walk seines Teilbaums aus (seine schon gemeldeten Kinder behalten `.inherited`, bis sie erneut gemeldet werden). Vorher galt das nur für nie gesehene Ordner.
 - **M7 – Rest:** der Launch-Walk entfällt nur, wenn die Pins dem letzten abgeschlossenen Walk entsprechen. Von macOS doch verdrängte gepinnte Dateien (sollte mit `keepDownloaded` nicht passieren) werden dann erst beim nächsten Walk (Umschalten, Offline-Tab) erneut angefordert.
+
+## Re-Review der Final-Fixwelle (neu, nicht blockierend)
+- **N1:** 413 (`.tooLarge`) wird bei jedem Aufheben von `.insufficientQuota` einmal erneut versucht. Besser: 413 auf einen Fehler abbilden, den das System nicht wiederholt.
+- **N2:** Die Wiederverwendung einer „(n)“-Kopie per sha256 kann eine schon vorher vorhandene, inhaltsgleiche Kopie übernehmen (der tus-Pfad macht das ebenso). Harmlos, weil inhaltsgleich.
+- **N3:** `AccountStore.upsert` leert das Kontoverzeichnis, wenn `account.json` beschädigt ist (Pins/Zustand dieses Kontos gehen dann verloren).
