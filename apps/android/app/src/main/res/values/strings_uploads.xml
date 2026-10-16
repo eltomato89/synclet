@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="uploads_title">Uploads</string>
+    <string name="uploads_empty">No uploads</string>
+    <string name="uploads_waiting">Waiting</string>
+    <string name="uploads_progress">%1$s of %2$s</string>
+    <string name="uploads_done">Uploaded</string>
+    <string name="uploads_conflict_copy">Saved as a conflict copy: %1$s</string>
+    <string name="uploads_retry">Try Again</string>
+    <string name="uploads_remove">Remove</string>
+    <string name="uploads_cancel">Cancel</string>
+    <string name="uploads_clear_done">Remove Finished</string>
+    <string name="uploads_to">To %1$s</string>
+    <string name="uploads_menu">Menu</string>
+    <string name="share_sign_in_hint">Sign in to Synclet in the app first.</string>
+    <string name="share_open_app">Open Synclet</string>
+    <string name="share_destination">Destination</string>
+    <string name="share_choose_folder">Choose Folder</string>
+    <string name="share_upload">Upload</string>
+    <string name="share_account">Account</string>
+    <string name="share_cancel">Cancel</string>
+    <string name="share_checking">Checking destination</string>
+    <plurals name="share_queued">
+        <item quantity="one">%d file is being uploaded</item>
+        <item quantity="other">%d files are being uploaded</item>
+    </plurals>
+    <plurals name="share_items">
+        <item quantity="one">%d item</item>
+        <item quantity="other">%d items</item>
+    </plurals>
+    <string name="settings_view">View</string>
+    <string name="settings_view_list">List</string>
+    <string name="settings_view_grid">Grid</string>
+    <string name="settings_storage">Storage</string>
+    <string name="settings_cache_size">Opened files and thumbnails: %1$s</string>
+    <string name="settings_clear_cache">Clear Cache</string>
+    <string name="settings_accounts">Accounts</string>
+    <plurals name="settings_accounts_count">
+        <item quantity="one">%d account signed in. Manage accounts under More.</item>
+        <item quantity="other">%d accounts signed in. Manage accounts under More.</item>
+    </plurals>
+    <string name="settings_about">About</string>
+    <string name="settings_version">Version %1$s</string>
+    <string name="settings_project_page">Project page</string>
+</resources>

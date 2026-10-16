@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="uploads_title">Uploads</string>
+    <string name="uploads_empty">Keine Uploads</string>
+    <string name="uploads_waiting">Wartet</string>
+    <string name="uploads_progress">%1$s von %2$s</string>
+    <string name="uploads_done">Hochgeladen</string>
+    <string name="uploads_conflict_copy">Als Konfliktkopie gesichert: %1$s</string>
+    <string name="uploads_retry">Erneut versuchen</string>
+    <string name="uploads_remove">Entfernen</string>
+    <string name="uploads_cancel">Abbrechen</string>
+    <string name="uploads_clear_done">Erledigte entfernen</string>
+    <string name="uploads_to">Nach %1$s</string>
+    <string name="uploads_menu">Menü</string>
+    <string name="share_sign_in_hint">In der Synclet-App anmelden.</string>
+    <string name="share_open_app">Synclet öffnen</string>
+    <string name="share_destination">Ziel</string>
+    <string name="share_choose_folder">Ordner wählen</string>
+    <string name="share_upload">Hochladen</string>
+    <string name="share_account">Konto</string>
+    <string name="share_cancel">Abbrechen</string>
+    <string name="share_checking">Ziel wird geprüft</string>
+    <plurals name="share_queued">
+        <item quantity="one">%d Datei wird hochgeladen</item>
+        <item quantity="other">%d Dateien werden hochgeladen</item>
+    </plurals>
+    <plurals name="share_items">
+        <item quantity="one">%d Element</item>
+        <item quantity="other">%d Elemente</item>
+    </plurals>
+    <string name="settings_view">Ansicht</string>
+    <string name="settings_view_list">Liste</string>
+    <string name="settings_view_grid">Raster</string>
+    <string name="settings_storage">Speicher</string>
+    <string name="settings_cache_size">Geöffnete Dateien und Vorschaubilder: %1$s</string>
+    <string name="settings_clear_cache">Cache leeren</string>
+    <string name="settings_accounts">Konten</string>
+    <plurals name="settings_accounts_count">
+        <item quantity="one">%d Konto angemeldet. Konten verwaltest du unter „Mehr“.</item>
+        <item quantity="other">%d Konten angemeldet. Konten verwaltest du unter „Mehr“.</item>
+    </plurals>
+    <string name="settings_about">Über</string>
+    <string name="settings_version">Version %1$s</string>
+    <string name="settings_project_page">Projektseite</string>
+</resources>
