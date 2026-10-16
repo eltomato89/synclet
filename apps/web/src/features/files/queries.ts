@@ -16,11 +16,15 @@ export function folderPath(folderId: string): string {
   return folderId === ROOT_ID ? '/files' : `/files/${folderId}`;
 }
 
-export async function fetchAllChildren(folderId: string): Promise<SyncItem[]> {
+/**
+ * All children of a folder. `folderThumbnails`: folders carry their mosaic thumbnail info
+ * (`preview.thumbnailKey`) – only for the folder view, where the grid shows them.
+ */
+export async function fetchAllChildren(folderId: string, opts: { folderThumbnails?: boolean } = {}): Promise<SyncItem[]> {
   const out: SyncItem[] = [];
   let token: string | null = null;
   do {
-    const qs: string = `limit=1000${token ? `&pageToken=${encodeURIComponent(token)}` : ''}`;
+    const qs: string = `limit=1000${opts.folderThumbnails ? '&folderThumbnails=1' : ''}${token ? `&pageToken=${encodeURIComponent(token)}` : ''}`;
     const page: SyncChildrenPage = await api<SyncChildrenPage>(`/sync/v1/items/${folderId}/children?${qs}`);
     out.push(...page.items);
     token = page.nextPageToken;
@@ -46,7 +50,7 @@ export function useFolder(folderId: string) {
   return useQuery({
     queryKey: ['folder', folderId],
     queryFn: async () => {
-      const [folder, items] = await Promise.all([api<SyncItem>(`/sync/v1/items/${folderId}`), fetchAllChildren(folderId)]);
+      const [folder, items] = await Promise.all([api<SyncItem>(`/sync/v1/items/${folderId}`), fetchAllChildren(folderId, { folderThumbnails: true })]);
       return { folder, items };
     },
     refetchInterval: 15_000,

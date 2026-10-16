@@ -1,7 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { createHash } from 'node:crypto';
-import { utimes } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { type FileHandle, open, utimes } from 'node:fs/promises';
 import sharp from 'sharp';
 import { PrismaService } from '../prisma/prisma.service';
 import { DerivativesGc } from './derivatives-gc';
@@ -72,9 +73,22 @@ export function mosaicCells(n: number, width: number, height: number, gap: numbe
 }
 
 /**
- * The children each folder's thumbnail is made of: up to four live direct children of the same
- * space with a finished thumbnail, one per distinct content, most recently modified first.
- * Folders without any are missing from the map. One query for all `folderIds`.
+ * Only this many of a folder's most recently modified files are considered for its mosaic: the
+ * choice stays a bounded index range scan (`Item_children_mtime_idx`) however large the folder.
+ * A folder whose newest FOLDER_THUMB_SCAN files have no thumbnail gets no mosaic.
+ */
+export const FOLDER_THUMB_SCAN = 200;
+
+/** Candidates fetched per folder: duplicates (same content) are dropped in code, keeping order. */
+const FOLDER_THUMB_CANDIDATES = 4 * FOLDER_THUMB_MAX;
+
+/**
+ * The children each folder's thumbnail is made of: among the FOLDER_THUMB_SCAN most recently
+ * modified live files directly in the folder (same space), up to four with a finished thumbnail,
+ * one per distinct content, most recently modified first. Folders without any are missing from
+ * the map. One query for all `folderIds`; per folder it reads the mtime of its FOLDER_THUMB_SCAN-th
+ * newest file (index-only), then walks the newest files down to it and stops after
+ * FOLDER_THUMB_CANDIDATES with a thumbnail – bounded by the scan window however large the folder.
  */
 export async function chooseFolderThumbs(prisma: PrismaService, spaceId: string, folderIds: string[]): Promise<Map<string, FolderThumbChoice>> {
   const out = new Map<string, FolderThumbChoice>();
@@ -83,22 +97,24 @@ export async function chooseFolderThumbs(prisma: PrismaService, spaceId: string,
     SELECT f.id::text AS "folderId", c.sha
     FROM unnest(${folderIds}::uuid[]) AS f(id)
     CROSS JOIN LATERAL (
-      SELECT d.sha, row_number() OVER (ORDER BY d.mtime DESC, d.id) AS n
-      FROM (
-        SELECT DISTINCT ON (i."contentHash") i."contentHash" AS sha, i.mtime, i.id
-        FROM "Item" i
-        JOIN "DerivativeJob" j ON j.sha = i."contentHash" AND j.kind = 'thumb' AND j.status = 'done'
-        WHERE i."spaceId" = ${spaceId}::uuid AND i."parentId" = f.id AND i."deletedAt" IS NULL AND i.type = 'file'
-        ORDER BY i."contentHash", i.mtime DESC, i.id
-      ) d
-      ORDER BY d.mtime DESC, d.id
-      LIMIT ${Prisma.raw(String(FOLDER_THUMB_MAX))}
+      SELECT i."contentHash" AS sha, i.mtime, i.id
+      FROM "Item" i
+      WHERE i."spaceId" = ${spaceId}::uuid AND i."parentId" = f.id AND i."deletedAt" IS NULL AND i.type = 'file'
+        AND i.mtime >= coalesce((
+          SELECT k.mtime FROM "Item" k
+          WHERE k."spaceId" = ${spaceId}::uuid AND k."parentId" = f.id AND k."deletedAt" IS NULL AND k.type = 'file'
+          ORDER BY k.mtime DESC, k.id
+          OFFSET ${Prisma.raw(String(FOLDER_THUMB_SCAN - 1))} LIMIT 1), '-infinity')
+        AND i."contentHash" IS NOT NULL
+        AND EXISTS (SELECT 1 FROM "DerivativeJob" j WHERE j.sha = i."contentHash" AND j.kind = 'thumb' AND j.status = 'done')
+      ORDER BY i.mtime DESC, i.id
+      LIMIT ${Prisma.raw(String(FOLDER_THUMB_CANDIDATES))}
     ) c
-    ORDER BY f.id, c.n`;
+    ORDER BY f.id, c.mtime DESC, c.id`;
   const shas = new Map<string, string[]>();
   for (const r of rows) {
     const list = shas.get(r.folderId) ?? [];
-    list.push(r.sha);
+    if (list.length < FOLDER_THUMB_MAX && !list.includes(r.sha)) list.push(r.sha);
     shas.set(r.folderId, list);
   }
   for (const [id, list] of shas) out.set(id, { key: folderThumbKey(list), shas: list });
@@ -125,6 +141,26 @@ export class FolderThumbnails {
    * The caller has checked read access to the folder; its children share its space.
    */
   async thumbnail(spaceId: string, folderId: string, size: 256 | 1024): Promise<{ path: string; key: string } | null> {
+    return this.build(spaceId, folderId, size);
+  }
+
+  /**
+   * Like `thumbnail`, but opened (no symlinks). A mosaic removed by the GC between being found
+   * and being opened is rebuilt once.
+   */
+  async open(spaceId: string, folderId: string, size: 256 | 1024): Promise<{ fh: FileHandle; key: string } | null> {
+    for (let attempt = 0; ; attempt++) {
+      const found = await this.thumbnail(spaceId, folderId, size);
+      if (!found) return null;
+      try {
+        return { fh: await open(found.path, constants.O_RDONLY | constants.O_NOFOLLOW), key: found.key };
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT' || attempt >= 1) throw e;
+      }
+    }
+  }
+
+  private async build(spaceId: string, folderId: string, size: 256 | 1024): Promise<{ path: string; key: string } | null> {
     const choice = (await chooseFolderThumbs(this.prisma, spaceId, [folderId])).get(folderId);
     if (!choice) return null;
     const file = this.store.folderThumbPath(choice.key, size);
@@ -160,8 +196,11 @@ export class FolderThumbnails {
     try {
       data = await this.limited(() => composeMosaic(sources, size));
     } catch (e) {
-      // A child's thumbnail could not be decoded: no mosaic (the folder keeps its icon).
+      // A child's thumbnail could not be decoded: regenerate it (its job leaves `done`, so the
+      // folder's next choice skips it until the worker has a good one, or marks it failed).
+      const bad = e instanceof MosaicSourceError ? choice.shas[e.index] : undefined;
       this.log.warn(`folder thumbnail ${choice.key.slice(0, 12)} failed: ${(e as Error).message}`);
+      if (bad) await this.gc.requeueThumb(bad);
       return null;
     }
     await this.store.writeAtomic(file, data);
@@ -180,12 +219,20 @@ export class FolderThumbnails {
   }
 }
 
+/** Source `index` of a mosaic could not be decoded. */
+export class MosaicSourceError extends Error {
+  constructor(readonly index: number, cause: unknown) {
+    super(`source ${index}: ${(cause as Error)?.message ?? String(cause)}`);
+  }
+}
+
 /** A webp mosaic of the given thumbnail files (1..4, in cell order), each cropped to its cell. */
 export async function composeMosaic(sources: string[], size: 256 | 1024): Promise<Buffer> {
   const { width, height, gap } = FOLDER_THUMB_DIMS[size];
   const cells = mosaicCells(sources.length, width, height, gap);
   const layers = await Promise.all(cells.map(async (c, i) => ({
-    input: await sharp(sources[i], SHARP_INPUT).resize({ width: c.width, height: c.height, fit: 'cover' }).toBuffer(),
+    input: await sharp(sources[i], SHARP_INPUT).resize({ width: c.width, height: c.height, fit: 'cover' }).toBuffer()
+      .catch((e: unknown) => { throw new MosaicSourceError(i, e); }),
     left: c.left,
     top: c.top,
   })));

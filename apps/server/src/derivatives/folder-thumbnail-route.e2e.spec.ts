@@ -1,4 +1,4 @@
-import { readFile, rm } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
 import { createTestApp, createTestSpace, createTestUser, TestContext } from '../../test/context';
@@ -6,7 +6,7 @@ import { AuthService } from '../auth/auth.service';
 import { SearchLanguage } from '../search/search-language';
 import { WorkerRunner } from '../worker/worker-runner';
 import { DerivedStore } from './derived-store';
-import { folderThumbKey } from './folder-thumbnails';
+import { FOLDER_THUMB_SCAN, folderThumbKey, FolderThumbnails } from './folder-thumbnails';
 import { HashBackfill } from './hash';
 import { JobsService } from './jobs.service';
 import { TextIndexer } from './text-index';
@@ -46,7 +46,12 @@ describe('folder thumbnails (mosaic of the children)', () => {
   };
   /** Runs the worker until it is idle (one pass handles `workerConcurrency` thumbnails). */
   const drain = async () => { for (let i = 0; i < 50 && (await runner.tick()); i++); };
-  const item = async (id: string, as?: string) => (await api('GET', `/items/${id}`, { as })).json();
+  /** The item as the web grid lists it (parent's children with `folderThumbnails=1`). */
+  const item = async (id: string, as?: string) => {
+    const { parentId } = (await api('GET', `/items/${id}`, { as })).json();
+    const page = (await api('GET', `/items/${parentId}/children?folderThumbnails=1`, { as })).json();
+    return page.items.find((i: { id: string }) => i.id === id);
+  };
   const thumb = (id: string, size = 256, as?: string, headers?: Record<string, string>) =>
     api('GET', `/items/${id}/thumbnail?size=${size}&composite=1`, { as, headers });
 
@@ -82,8 +87,13 @@ describe('folder thumbnails (mosaic of the children)', () => {
     await drain();
     const preview = (await item(f.id)).preview;
     expect(preview).toEqual({ kind: 'none', thumbnail: true, thumbnailKey: folderThumbKey([pic.sha256]) });
-    const listed = (await api('GET', '/items/root/children')).json().items.find((i: { id: string }) => i.id === f.id);
-    expect(listed.preview).toEqual(preview);
+    // Only listings that ask for it carry it: not the plain listing, the item route or /changes.
+    const plain = (await api('GET', '/items/root/children')).json().items.find((i: { id: string }) => i.id === f.id);
+    expect(plain.preview).toBeUndefined();
+    expect((await api('GET', `/items/${f.id}`)).json().preview).toBeUndefined();
+    const changes = (await api('GET', '/changes?cursor=0')).json();
+    const fromChanges = changes.changes.find((c: { item?: { id: string } }) => c.item?.id === f.id);
+    expect(fromChanges.item.preview).toBeUndefined();
 
     for (const [size, w, h] of [[256, 256, 192], [1024, 1024, 768]] as const) {
       const res = await thumb(f.id, size);
@@ -165,6 +175,58 @@ describe('folder thumbnails (mosaic of the children)', () => {
     expect((await item(f.id)).preview.thumbnailKey).toBe(k2);
   });
 
+  it(`only the ${FOLDER_THUMB_SCAN} newest files are considered: older pictures do not make a mosaic`, async () => {
+    const f = await mkdir('Big');
+    await upload(f.id, 'old.png', await png(RED), 60);
+    await drain();
+    expect((await item(f.id)).preview).toMatchObject({ thumbnail: true });
+    const folderRow = await ctx.prisma.item.findUniqueOrThrow({ where: { id: f.id.slice(2) } });
+    const now = Date.now();
+    await ctx.prisma.item.createMany({
+      data: Array.from({ length: FOLDER_THUMB_SCAN }, (_, i) => ({
+        spaceId: folderRow.spaceId, parentId: folderRow.id, type: 'file' as const, name: `n${i}.txt`, nameKey: `n${i}.txt`,
+        path: `${folderRow.path}/n${i}.txt`, size: 1n, mtime: new Date(now - i * 1000),
+      })),
+    });
+    expect((await item(f.id)).preview).toBeUndefined();
+    expect((await thumb(f.id)).statusCode).toBe(404);
+    // One of them fewer: the picture is within reach again.
+    await ctx.prisma.item.deleteMany({ where: { parentId: folderRow.id, name: 'n0.txt' } });
+    expect((await item(f.id)).preview).toMatchObject({ thumbnail: true });
+  });
+
+  it('a child thumbnail that cannot be decoded → 404 and that child requeued; fine after the worker', async () => {
+    const f = await mkdir('Broken');
+    const pic = await upload(f.id, 'a.png', await png(RED));
+    await drain();
+    await writeFile(ctx.app.get(DerivedStore).pathFor(pic.sha256, 'thumb', 1024), 'not a webp');
+    expect((await thumb(f.id)).statusCode).toBe(404);
+    expect(await ctx.prisma.derivativeJob.findUnique({ where: { sha_kind: { sha: pic.sha256, kind: 'thumb' } } })).toMatchObject({ status: 'pending', attempts: 0 });
+    expect((await item(f.id)).preview).toBeUndefined(); // not chosen while it is being regenerated
+    await drain();
+    expect((await thumb(f.id)).statusCode).toBe(200);
+  });
+
+  it('a mosaic removed (GC) between being found and opened is rebuilt', async () => {
+    const f = await mkdir('Race');
+    await upload(f.id, 'a.png', await png(RED));
+    await drain();
+    expect((await thumb(f.id)).statusCode).toBe(200);
+    const thumbs = ctx.app.get(FolderThumbnails);
+    const real = thumbs.thumbnail.bind(thumbs);
+    const store = ctx.app.get(DerivedStore);
+    // The GC strikes right after the mosaic was found.
+    const spy = jest.spyOn(thumbs, 'thumbnail').mockImplementationOnce(async (...args) => {
+      const found = await real(...args);
+      await rm(found!.path);
+      return found;
+    });
+    const res = await thumb(f.id);
+    expect(res.statusCode).toBe(200);
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(await store.has(store.folderThumbPath((await item(f.id)).preview.thumbnailKey, 256))).toBe(true);
+  });
+
   it('folders answer 400 without ?composite=1 (sync clients unchanged); roots never have one', async () => {
     const f = await mkdir('F');
     await upload(f.id, 'a.png', await png(RED));
@@ -237,6 +299,9 @@ describe('folder thumbnails (mosaic of the children)', () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers['content-type']).toBe('image/webp');
     expect(near(await pixel(res.rawPayload, 128, 96), RED)).toBe(true);
+    expect(res.headers['cache-control']).toBe('private, no-cache');
+    const revalidated = await ctx.app.inject({ method: 'GET', url: `/api/public/shares/${shareToken}/items/${sub.id}/thumbnail?size=256`, remoteAddress: '203.0.113.1', headers: { 'if-none-match': res.headers.etag as string } });
+    expect(revalidated.statusCode).toBe(304);
     expect((await pub(`items/${plain.id}/thumbnail?size=256`)).statusCode).toBe(404);
     // Outside the share: 404.
     const outside = await mkdir('Outside');

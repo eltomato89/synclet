@@ -3,7 +3,7 @@ import type { Item } from '@prisma/client';
 import type { ServerCapabilities, SyncAccount, SyncChange, SyncChangesPage, SyncChildrenPage, SyncItem, SyncSpace } from '@synclet/shared';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { constants } from 'node:fs';
-import { open } from 'node:fs/promises';
+import { type FileHandle, open } from 'node:fs/promises';
 import { z } from 'zod';
 import { AuthGuard } from '../auth/auth.guard';
 import { AuthService, DOWNLOAD_TOKEN_TTL_S, PREVIEW_TOKEN_TTL_S } from '../auth/auth.service';
@@ -177,7 +177,7 @@ export class SyncController {
   }
 
   @Get('items/:id/children')
-  async children(@CurrentUser() user: AuthUser, @Param('id') id: string, @Query('pageToken') pageToken?: string, @Query('limit') limitRaw?: string): Promise<SyncChildrenPage> {
+  async children(@CurrentUser() user: AuthUser, @Param('id') id: string, @Query('pageToken') pageToken?: string, @Query('limit') limitRaw?: string, @Query('folderThumbnails') folderThumbnails?: string): Promise<SyncChildrenPage> {
     const { space, item: parent, view } = await this.resolve(user, id, 'read');
     const cursor = await this.journal.currentCursor(space.id); // state before reading the first page
     if (parent && parent.type !== 'folder') throw new SyncError('invalid_request', 'not a folder');
@@ -203,7 +203,9 @@ export class SyncController {
     const pageRows = all.slice(0, limit);
     const last = pageRows[pageRows.length - 1];
     const nextPageToken = all.length > limit && last ? `${last.type === 'folder' ? 0 : 1}:${last.id}` : null;
-    return { items: await this.serializer.toSyncItems(space, pageRows, view), nextPageToken, cursor };
+    // Folder mosaics only on request (the web grid): sync clients' enumerations never pay for them.
+    const items = await this.serializer.toSyncItems(space, pageRows, view, { folderThumbs: folderThumbnails === '1' });
+    return { items, nextPageToken, cursor };
   }
 
   /**
@@ -254,25 +256,24 @@ export class SyncController {
     const { space, item: row } = composite === '1' ? await this.resolveItem(user, id, 'read') : await this.resolveFile(user, id, 'read');
     this.checkDownloadSpace(user, space);
     if (row.type === 'folder') {
-      const mosaic = await this.folderThumbs.thumbnail(space.id, row.id, size);
+      const mosaic = await this.folderThumbs.open(space.id, row.id, size);
       if (!mosaic) throw new SyncError('not_found', 'no thumbnail');
       // The picture behind this URL changes with the children: revalidated on every use.
-      return this.sendThumb(req, reply, mosaic.path, `${mosaic.key}-${size}`, 'private, no-cache');
+      return this.sendThumb(req, reply, mosaic.fh, `${mosaic.key}-${size}`, 'private, no-cache');
     }
     const sha = row.contentHash;
     if (!sha) throw new SyncError('not_found', 'no thumbnail');
     const job = await this.prisma.derivativeJob.findUnique({ where: { sha_kind: { sha, kind: 'thumb' } }, select: { status: true } });
     if (job?.status !== 'done') throw new SyncError('not_found', 'no thumbnail');
-    return this.sendThumb(req, reply, this.derived.pathFor(sha, 'thumb', size), `${sha}-${size}`, 'private, max-age=31536000, immutable',
-      () => this.gc.requeueThumb(sha)); // derived files lost: regenerate
-  }
-
-  private async sendThumb(req: FastifyRequest, reply: FastifyReply, file: string, tag: string, cacheControl: string, onMissing?: () => Promise<unknown>) {
-    const fh = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW)
+    const fh = await open(this.derived.pathFor(sha, 'thumb', size), constants.O_RDONLY | constants.O_NOFOLLOW)
       .catch(async (e: NodeJS.ErrnoException) => {
-        if (e.code === 'ENOENT') await onMissing?.();
+        if (e.code === 'ENOENT') await this.gc.requeueThumb(sha); // derived files lost: regenerate
         throw new SyncError('not_found', 'no thumbnail');
       });
+    return this.sendThumb(req, reply, fh, `${sha}-${size}`, 'private, max-age=31536000, immutable');
+  }
+
+  private async sendThumb(req: FastifyRequest, reply: FastifyReply, fh: FileHandle, tag: string, cacheControl: string) {
     let handedOver = false;
     try {
       const st = await fh.stat();

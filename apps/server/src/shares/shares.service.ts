@@ -3,6 +3,8 @@ import type { Item, ShareLink } from '@prisma/client';
 import type { AdminShareWire, CreateShareInput, PublicShareEntry, PublicShareInfo, ShareLinkWire } from '@synclet/shared';
 import * as argon2 from 'argon2';
 import { randomUUID } from 'node:crypto';
+import { constants } from 'node:fs';
+import { type FileHandle, open } from 'node:fs/promises';
 import type { Readable } from 'node:stream';
 import { hashToken, randomToken } from '../auth/crypto';
 import { assignDisplayNames } from '../common/names';
@@ -334,27 +336,27 @@ export class SharesService {
   }
 
   /**
-   * Thumbnail file path if the worker has produced one for the item's current content; for a
-   * folder in the share, the mosaic of its children's thumbnails (folder-thumbnails.ts).
+   * The opened thumbnail if the worker has produced one for the item's current content; for a
+   * folder in the share, the mosaic of its children's thumbnails (folder-thumbnails.ts) with an
+   * ETag (its picture changes with the children).
    */
-  async thumbnail(rs: ResolvedShare, rawItem: string, size: 256 | 1024): Promise<{ path: string }> {
+  async thumbnail(rs: ResolvedShare, rawItem: string, size: 256 | 1024): Promise<{ fh: FileHandle; etag?: string }> {
     const item = await this.auth.target(rs, rawItem);
     if (item.type === 'folder') {
       await this.auth.realPathOf(rs, item); // like browsing it: not through a symlinked folder
-      const mosaic = await this.folderThumbs.thumbnail(rs.share.spaceId, item.id, size);
+      const mosaic = await this.folderThumbs.open(rs.share.spaceId, item.id, size);
       if (!mosaic) throw new SyncError('not_found');
-      return { path: mosaic.path };
+      return { fh: mosaic.fh, etag: `${mosaic.key}-${size}` };
     }
     const sha = item.contentHash;
     if (!sha) throw new SyncError('not_found');
     const job = await this.prisma.derivativeJob.findUnique({ where: { sha_kind: { sha, kind: 'thumb' } } });
     if (job?.status !== 'done') throw new SyncError('not_found');
-    const file = this.derived.pathFor(sha, 'thumb', size);
-    if (!(await this.derived.has(file))) {
-      await this.gc.requeueThumb(sha); // derived files lost: regenerate
+    const fh = await open(this.derived.pathFor(sha, 'thumb', size), constants.O_RDONLY | constants.O_NOFOLLOW).catch(async (e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT') await this.gc.requeueThumb(sha); // derived files lost: regenerate
       throw new SyncError('not_found');
-    }
-    return { path: file };
+    });
+    return { fh };
   }
 
   /** Entries of a ZIP of `folder` (in scope): all live descendants in path order, names relative to it. */

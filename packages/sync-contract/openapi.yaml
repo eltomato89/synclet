@@ -487,6 +487,7 @@ paths:
       parameters:
         - { name: pageToken, in: query, required: false, schema: { type: string }, description: '`nextPageToken` of the previous page.' }
         - $ref: '#/components/parameters/Limit'
+        - { name: folderThumbnails, in: query, required: false, schema: { type: string, enum: ['1'] }, description: 'Folders carry their mosaic thumbnail info (`preview.thumbnailKey`); for grid views, not for sync clients.' }
       responses:
         '200':
           description: One page.
@@ -1260,7 +1261,7 @@ components:
         thumbnailKey:
           type: string
           pattern: '^[0-9a-f]{64}$'
-          description: 'Folders only (`kind = none`, `thumbnail = true`): identifies the folder''s mosaic thumbnail (`GET /items/{id}/thumbnail?composite=1`); changes whenever the picture changes. Not journaled.'
+          description: 'Folders only, and only in `children` listings with `folderThumbnails=1` (`kind = none`, `thumbnail = true`): identifies the folder''s mosaic thumbnail (`GET /items/{id}/thumbnail?composite=1`); changes whenever the picture changes. Not journaled.'
     SyncItem:
       type: object
       required: [id, parentId, type, kind, name, size, mime, version, sha256, etag, contentEtag, createdAt, modifiedAt, documentId, capabilities]

@@ -90,7 +90,7 @@ export class SerializerService {
    * Serializes rows of `space`; display names are computed against all live siblings of each parent.
    * With `view`, items carry `spaceId` and capabilities follow the role (read → read-only).
    */
-  async toSyncItems(space: { id: string; kind?: string }, rows: Item[], view?: ItemView): Promise<SyncItem[]> {
+  async toSyncItems(space: { id: string; kind?: string }, rows: Item[], view?: ItemView, opts: { folderThumbs?: boolean } = {}): Promise<SyncItem[]> {
     if (rows.length === 0) return [];
     const rootId = await this.rootIdOf(space, view);
     const parents = [...new Set(rows.map((r) => r.parentId))];
@@ -107,8 +107,11 @@ export class SerializerService {
     const thumbs = new Set(shas.length
       ? (await this.prisma.derivativeJob.findMany({ where: { sha: { in: shas }, kind: 'thumb', status: 'done' }, select: { sha: true } })).map((j) => j.sha)
       : []);
-    // And which folders have a mosaic of their children's thumbnails (folder-thumbnails.ts).
-    const folderThumbs = await chooseFolderThumbs(this.prisma, space.id, rows.filter((r) => r.type === 'folder').map((r) => r.id));
+    // With `folderThumbs` (web grid listings only): which folders have a mosaic of their children's
+    // thumbnails (folder-thumbnails.ts).
+    const folderThumbs = opts.folderThumbs
+      ? await chooseFolderThumbs(this.prisma, space.id, rows.filter((r) => r.type === 'folder').map((r) => r.id))
+      : new Map<string, { key: string }>();
     return rows.map((r) => this.one(r, display.get(r.id) ?? r.name, r.contentHash !== null && thumbs.has(r.contentHash), rootId, view, folderThumbs.get(r.id)?.key));
   }
 

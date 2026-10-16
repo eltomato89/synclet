@@ -369,7 +369,9 @@ Clients **must** honor the flags: a write the flags do not allow answers `403 fo
 
 - `GET /sync/v1/items/:id` → `SyncItem`. `404` when unknown, trashed or in a space without access;
   `503 space_unavailable` while its space is missing.
-- `GET /sync/v1/items/:id/children?pageToken=&limit=` → `{ items: SyncItem[], nextPageToken: string | null, cursor: string }`
+- `GET /sync/v1/items/:id/children?pageToken=&limit=&folderThumbnails=1` → `{ items: SyncItem[], nextPageToken: string | null, cursor: string }`
+  - `folderThumbnails=1` (optional, meant for grid views): folders on the page carry their mosaic
+    thumbnail info (§9.1). Costs an extra query per page; sync clients should not send it.
   - `limit`: `floor(limit)`; missing, non-numeric or `0` (also `0.x`) → the default 500; then
     clamped to 1..1000 (negative → 1, above 1000 → 1000).
   - Order: all folders, then all files; within each group by id. `pageToken` is an opaque keyset
@@ -735,14 +737,16 @@ folders → `400`) – accepts a download token of the same item (`?dt=`, either
 **Folder thumbnails.** With `composite=1` the route also accepts folders (without it, folders stay
 `400`, so clients asking for every item see no change): a mosaic of the thumbnails of up to four
 direct children (live files with a finished thumbnail, one per distinct content, most recently
-modified first) – one picture fills the tile, two sit side by side, three are one large on the left
+modified first; only the folder's 200 most recently modified files are considered, so a folder whose
+newest 200 files have no thumbnail gets no mosaic) – one picture fills the tile, two sit side by side, three are one large on the left
 and two stacked on the right, four form a 2×2 grid. Landscape 4:3 (`256×192` / `1024×768`), webp,
 transparent gaps. `404 not_found` when no child has a thumbnail.
 
 - `ETag: "<thumbnailKey>-<size>"`, `Cache-Control: private, no-cache` (the folder's URL shows a new
   picture when its children change; revalidate with `If-None-Match` → `304`).
-- A folder with a mosaic carries `preview: { kind: "none", thumbnail: true, thumbnailKey }` in its
-  `SyncItem` (folders without one have no `preview`). `thumbnailKey` changes whenever the picture
+- In `children` listings requested with `folderThumbnails=1` (only there – not in `GET /items/:id`,
+  `changes`, `search` or `recent`), a folder with a mosaic carries
+  `preview: { kind: "none", thumbnail: true, thumbnailKey }` (folders without one have no `preview`). `thumbnailKey` changes whenever the picture
   changes (a child added, removed, replaced, or its thumbnail finished); like `preview.thumbnail` this
   is not journaled. The mosaic is composed on the first request and cached on the server.
 
