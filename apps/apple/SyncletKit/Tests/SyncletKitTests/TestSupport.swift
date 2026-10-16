@@ -15,6 +15,8 @@ struct RecordedRequest {
     }
     func header(_ name: String) -> String? { request.value(forHTTPHeaderField: name) }
     var json: [String: Any]? { try? JSONSerialization.jsonObject(with: body) as? [String: Any] }
+    var jsonBody: [String: Any]? { json }
+    var bodyString: String { String(decoding: body, as: UTF8.self) }
 }
 
 /// Response of the stub.
@@ -173,6 +175,22 @@ enum Fixtures {
                    "appVersion":"0.1.0","createdAt":"2026-10-15T10:00:00.000Z","lastSeenAt":null},
          "token":"\(token)",
          "account":\(accountJSON(userId: userId, serverId: serverId, slug: slug))}
+        """
+    }
+
+    /// A `ShareLinkWire` (packages/shared/src/index.ts).
+    static func shareJSON(url: String, id: String = "s1", itemId: String = "d_1", itemTrashed: Bool = false) -> String {
+        """
+        {"id":"\(id)","itemId":"\(itemId)","itemName":"Docs","itemType":"folder","url":"\(url)",
+         "hasPassword":true,"expiresAt":null,"allowDownload":true,"allowUpload":false,
+         "createdAt":"2026-10-01T08:00:00.000Z","revokedAt":null,"hits":4,"itemTrashed":\(itemTrashed)}
+        """
+    }
+
+    static func trashEntryJSON(id: String = "t1") -> String {
+        """
+        {"id":"\(id)","itemId":"f_9","type":"file","name":"Alt.pdf","originalPath":"Docs/Alt.pdf",
+         "size":2048,"deletedAt":"2026-10-10T08:00:00.000Z","expiresAt":null,"itemCount":1}
         """
     }
 

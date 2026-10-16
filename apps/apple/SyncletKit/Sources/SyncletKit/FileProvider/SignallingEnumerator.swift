@@ -1,26 +1,25 @@
 import FileProvider
 import Foundation
-import SyncletKit
 
 /// Passes an enumeration through and reports its errors with the start time of the failed
 /// call (the working set is polled regularly – a revoked device shows up there first).
-final class SignallingEnumerator: NSObject, NSFileProviderEnumerator {
+public final class SignallingEnumerator: NSObject, NSFileProviderEnumerator {
     private let inner: NSFileProviderEnumerator
     private let onError: (Error, Date) -> Void
 
-    init(inner: NSFileProviderEnumerator, onError: @escaping (Error, Date) -> Void) {
+    public init(inner: NSFileProviderEnumerator, onError: @escaping (Error, Date) -> Void) {
         self.inner = inner
         self.onError = onError
     }
 
-    func invalidate() { inner.invalidate() }
+    public func invalidate() { inner.invalidate() }
 
-    func enumerateItems(for observer: NSFileProviderEnumerationObserver, startingAt page: NSFileProviderPage) {
+    public func enumerateItems(for observer: NSFileProviderEnumerationObserver, startingAt page: NSFileProviderPage) {
         let started = Date()
         inner.enumerateItems(for: ItemObserver(inner: observer, onError: { [onError] in onError($0, started) }), startingAt: page)
     }
 
-    func enumerateChanges(for observer: NSFileProviderChangeObserver, from syncAnchor: NSFileProviderSyncAnchor) {
+    public func enumerateChanges(for observer: NSFileProviderChangeObserver, from syncAnchor: NSFileProviderSyncAnchor) {
         guard let enumerateChanges = inner.enumerateChanges else {
             // The inner enumerator has no change tracking: let the system re-enumerate.
             observer.finishEnumeratingWithError(NSFileProviderError(.syncAnchorExpired))
@@ -30,7 +29,7 @@ final class SignallingEnumerator: NSObject, NSFileProviderEnumerator {
         enumerateChanges(ChangeObserver(inner: observer, onError: { [onError] in onError($0, started) }), syncAnchor)
     }
 
-    func currentSyncAnchor(completionHandler: @escaping @Sendable (NSFileProviderSyncAnchor?) -> Void) {
+    public func currentSyncAnchor(completionHandler: @escaping @Sendable (NSFileProviderSyncAnchor?) -> Void) {
         guard let current = inner.currentSyncAnchor else {
             completionHandler(nil)
             return

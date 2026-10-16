@@ -1,0 +1,185 @@
+name: Synclet
+options:
+  bundleIdPrefix: tech.jensk
+  developmentLanguage: en
+  deploymentTarget:
+    iOS: "26.0"
+packages:
+  # Shared core with the macOS client (Sync API client, credentials, accounts, uploads,
+  # File Provider base class).
+  SyncletKit:
+    path: ../apple/SyncletKit
+settings:
+  base:
+    DEVELOPMENT_TEAM: JC32M95WLZ
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: 1
+    SWIFT_VERSION: "6.0"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    LOCALIZATION_PREFERS_STRING_CATALOGS: true
+    SWIFT_EMIT_LOC_STRINGS: true
+    # Group identifiers (Info.plist + entitlements). iOS app groups carry no team prefix.
+    SYNCLET_APP_GROUP: group.tech.jensk.synclet
+    SYNCLET_KEYCHAIN_GROUP: "$(AppIdentifierPrefix)tech.jensk.synclet.shared"
+targets:
+  Synclet:
+    type: application
+    platform: iOS
+    sources:
+      - path: Synclet
+        excludes:
+          - "**/.*.swp"
+      # Shared with the Share extension (ShareTarget, upload signal, failure texts).
+      - path: Shared
+    dependencies:
+      - package: SyncletKit
+      - target: SyncletFileProvider
+        embed: true
+      - target: SyncletShare
+        embed: true
+    info:
+      path: Synclet/Info.plist
+      properties:
+        CFBundleDisplayName: Synclet
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSApplicationCategoryType: public.app-category.productivity
+        SyncletAppGroup: $(SYNCLET_APP_GROUP)
+        SyncletKeychainAccessGroup: $(SYNCLET_KEYCHAIN_GROUP)
+        CFBundleURLTypes:
+          - CFBundleURLName: tech.jensk.synclet.oauth
+            CFBundleURLSchemes: [synclet]
+        # Local servers (http://localhost:<port>, LAN addresses) without an ATS exception for other hosts.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        BGTaskSchedulerPermittedIdentifiers:
+          - tech.jensk.synclet.ios.refresh
+        UIBackgroundModes:
+          - fetch
+        # Localized in InfoPlist.xcstrings.
+        NSPhotoLibraryUsageDescription: Synclet uploads the photos and videos you choose to your server.
+        ITSAppUsesNonExemptEncryption: false
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: tech.jensk.synclet.ios
+        PRODUCT_NAME: Synclet
+        CODE_SIGN_ENTITLEMENTS: Synclet/Synclet.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+    scheme:
+      testTargets:
+        - SyncletTests
+  SyncletFileProvider:
+    type: app-extension
+    platform: iOS
+    sources:
+      - SyncletFileProvider
+    dependencies:
+      - package: SyncletKit
+    info:
+      path: SyncletFileProvider/Info.plist
+      properties:
+        CFBundleDisplayName: Synclet
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        SyncletAppGroup: $(SYNCLET_APP_GROUP)
+        SyncletKeychainAccessGroup: $(SYNCLET_KEYCHAIN_GROUP)
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.fileprovider-nonui
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).FileProviderExtension
+          NSExtensionFileProviderDocumentGroup: $(SYNCLET_APP_GROUP)
+          NSExtensionFileProviderSupportsEnumeration: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: tech.jensk.synclet.ios.FileProvider
+        PRODUCT_NAME: SyncletFileProvider
+        CODE_SIGN_ENTITLEMENTS: SyncletFileProvider/SyncletFileProvider.entitlements
+        APPLICATION_EXTENSION_API_ONLY: true
+        SKIP_INSTALL: true
+  # Share extension (photos, files …): account and folder choice, then the upload queue.
+  SyncletShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - SyncletShare
+      - Shared
+    dependencies:
+      - package: SyncletKit
+    info:
+      path: SyncletShare/Info.plist
+      properties:
+        CFBundleDisplayName: Synclet
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        SyncletAppGroup: $(SYNCLET_APP_GROUP)
+        SyncletKeychainAccessGroup: $(SYNCLET_KEYCHAIN_GROUP)
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            # 1–50 attachments that are items, images or movies.
+            NSExtensionActivationRule: >-
+              SUBQUERY (extensionItems, $extensionItem,
+              SUBQUERY ($extensionItem.attachments, $attachment,
+              ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.item"
+              || ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.image"
+              || ANY $attachment.registeredTypeIdentifiers UTI-CONFORMS-TO "public.movie"
+              ).@count BETWEEN {1, 50}
+              ).@count >= 1
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: tech.jensk.synclet.ios.Share
+        PRODUCT_NAME: SyncletShare
+        CODE_SIGN_ENTITLEMENTS: SyncletShare/SyncletShare.entitlements
+        APPLICATION_EXTENSION_API_ONLY: true
+        SKIP_INSTALL: true
+  SyncletTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - SyncletTests
+    dependencies:
+      - target: Synclet
+    settings:
+      GENERATE_INFOPLIST_FILE: true
+      PRODUCT_BUNDLE_IDENTIFIER: tech.jensk.synclet.ios.tests
+      TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Synclet.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Synclet"
+      BUNDLE_LOADER: "$(TEST_HOST)"
+  # UI tests against a throwaway server (scripts/ios-live-tests.sh, Task 10); own scheme.
+  SyncletUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - SyncletUITests
+    dependencies:
+      - target: Synclet
+    settings:
+      GENERATE_INFOPLIST_FILE: true
+      PRODUCT_BUNDLE_IDENTIFIER: tech.jensk.synclet.ios.uitests
+      TEST_TARGET_NAME: Synclet
+schemes:
+  SyncletUITests:
+    build:
+      targets:
+        Synclet: all
+        SyncletUITests: [test]
+    test:
+      targets:
+        - SyncletUITests

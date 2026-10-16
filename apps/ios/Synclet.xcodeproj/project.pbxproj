@@ -1,0 +1,1192 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		003D3093ACFB98AEAA31D7A4 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1134399FB18B2F00CD3A86B1 /* Assets.xcassets */; };
+		03CD7451B882E670BE53CEEF /* BrowserLogin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F21569AA77C665C13230E0D /* BrowserLogin.swift */; };
+		07A6B0B9F0396211388925A2 /* ShareLinkModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEDB439333B40D0A438441E5 /* ShareLinkModel.swift */; };
+		0AB5B17326FA7AA90FC754D4 /* FileCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 119DF6FB0C6D8C2C88D2DD74 /* FileCacheTests.swift */; };
+		104B2B922797F1468E09FB8C /* ShareLinkModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BCB8D86E51C2635D57347D0 /* ShareLinkModelTests.swift */; };
+		115A607BAF0C19F6948805E2 /* QuickLookView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99087DE28E38413F890E133A /* QuickLookView.swift */; };
+		1360AA9E4DEB69FF87413BD5 /* InfoPlist.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 5C709D6F5000258674CAA1AB /* InfoPlist.xcstrings */; };
+		1456A5996BBCE3E3EAA8B070 /* SyncletApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32D73CFA702E4FE76780D862 /* SyncletApp.swift */; };
+		15B2102B1DBC5CC1E11E23D6 /* UploadSignal.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9FB9B67C242578D115C9817 /* UploadSignal.swift */; };
+		17A588587F040455711DECEF /* LoadState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 249198929EEFA83CC261B747 /* LoadState.swift */; };
+		190ED6BF5373EDBCB3FA9A63 /* LoginModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7B95538C4E2F3B17506ED94 /* LoginModelTests.swift */; };
+		1AC3C7916FD4168E44FAA9B5 /* ShareTarget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76993CE597BCB7791FB606DD /* ShareTarget.swift */; };
+		1C17C572CE96CF467C6090FB /* UploadCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A45C7E3C3C02D166B1C8FDF1 /* UploadCenter.swift */; };
+		1EEF7B961ECB02685B742B5C /* FolderModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 339F87693DE7E95CCD992EE0 /* FolderModel.swift */; };
+		1F4D23B1BF33782B565492D3 /* LoginModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25E1633E6ACB75BECC4645B5 /* LoginModel.swift */; };
+		20C54E4FA0A19340286A9F7C /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADF84E309A2D78B2CDCE5468 /* AppEnvironment.swift */; };
+		215C3A3ADAE584DF0B89A91B /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 2C874E31BEEA2FA11804D071 /* Localizable.xcstrings */; };
+		2BACE763045072E41D574C9D /* AccountsModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DEFD96AA4B8F7CC31E78232 /* AccountsModelTests.swift */; };
+		2DB002565D04E131CE65ACD1 /* TrashView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45369E16755E595CF637E103 /* TrashView.swift */; };
+		2F7FE0E66225AFADA9C309A7 /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F842E9639DEA970E5F4D4201 /* SearchView.swift */; };
+		313689A60A7F7C24C4FF6CB6 /* BackgroundRefreshTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D2BEA97BE0D351E76354BCA /* BackgroundRefreshTests.swift */; };
+		32D30E37D73B4CDCA0FF06BE /* BrowserShell.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8C4F12E496BF1B78AA3558E /* BrowserShell.swift */; };
+		3568CF74600CC3E6925F673F /* MovePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDF294F47A774338509C4BE4 /* MovePicker.swift */; };
+		36847F4248550A4EC1A34A3F /* AccountsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9328E99B1A18AEC2600519E /* AccountsView.swift */; };
+		3997A39A915EA2F4CE003A0B /* ShareLinkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E62497D2F4C05BE848848C3 /* ShareLinkView.swift */; };
+		3E8F79FB2E157B8F10B5C62B /* UITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62CFADAEB7FAD6E8E5D89492 /* UITestSupport.swift */; };
+		437F4429ED5B5DDE27625C5E /* UploadSignal.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9FB9B67C242578D115C9817 /* UploadSignal.swift */; };
+		448E51CE094CEC5AB88F2FBD /* SyncletKit in Frameworks */ = {isa = PBXBuildFile; productRef = 8FC63EFAA00022D3F750C6C8 /* SyncletKit */; };
+		4BFB69C02CE61E4C6EBACF14 /* MutationErrors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19A06791063508B578C2DBC8 /* MutationErrors.swift */; };
+		51ECF8114EAA00D253CEB97E /* FolderModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3D52AB90DB2606575B1BD44 /* FolderModelTests.swift */; };
+		56B5ADC27EB3394F12CB5624 /* SearchModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BFD6415D28B0623B68E0A15 /* SearchModel.swift */; };
+		5837791085DC48044032BE63 /* ItemActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F3E2118BCC696D3EA6752E9 /* ItemActions.swift */; };
+		5D321174290B74C3B3989166 /* ThumbnailCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8B859B70D702820F5A35D89 /* ThumbnailCacheTests.swift */; };
+		5E5FED6E0A1E63D4E28B68EE /* ShareTargetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1C17F204B7EA634E7A4F15B /* ShareTargetTests.swift */; };
+		661F552B3DFD798D3E1E5F48 /* SyncletKit in Frameworks */ = {isa = PBXBuildFile; productRef = 05CC2739D7D6D8969C34F9F1 /* SyncletKit */; };
+		693120E912C16A0675CEE8B3 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68C462B589EC6802F050E35E /* AppDelegate.swift */; };
+		727F1FC09DB7B2039EBFEE38 /* ShareRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8174F782F440DBA15F5DCBD /* ShareRootView.swift */; };
+		7866FBBBF30BD6CCD3171409 /* TrashModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B52CFFECEB387C140AD5803 /* TrashModelTests.swift */; };
+		79E6C55B08D223094BECA6B5 /* RecentModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 544454B648E70C707A3BF220 /* RecentModel.swift */; };
+		7AA86A6C6460FCC8321D16F4 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D134E3930D82ED2895EDC4D7 /* SettingsView.swift */; };
+		7AAED68D766364DA03E58008 /* BrowserFlowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90C56DBC892D648290B15171 /* BrowserFlowUITests.swift */; };
+		7C5D2EE892EE55B319332407 /* ShareTarget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76993CE597BCB7791FB606DD /* ShareTarget.swift */; };
+		7F4F77BF1D5EA8041C833EF3 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC7E60B0BE09BCF22BEE0683 /* RootView.swift */; };
+		8090AB8EA6F9CCD99C1EAFF6 /* ActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8ECF37AA55E8D7A29AA3DA90 /* ActivityView.swift */; };
+		82F53068C179070714B3B032 /* SyncletKit in Frameworks */ = {isa = PBXBuildFile; productRef = 31C6B0D708CD10A4CDEDDE83 /* SyncletKit */; };
+		84D815A35C2E4209FDB800EB /* FileProviderExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4A29675CD5201E8AD9E062E /* FileProviderExtension.swift */; };
+		8FF072EF4311378A1AE8B862 /* DestinationStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFD4CC3A731C376A60494295 /* DestinationStack.swift */; };
+		9391094FDCB0D740017BCDDF /* PhotoImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B2EDB4407CB75404A44FE4E /* PhotoImport.swift */; };
+		945C18C7820AD7EB07E68571 /* TrashModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24182EADE5ACB475097CEAB0 /* TrashModel.swift */; };
+		9A3AA15C41860550080179EE /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 7788E4FC410E32DE5F3596B2 /* Localizable.xcstrings */; };
+		9B05458DB28CD8440CC9CE2F /* LoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDAC27E1128135FBE8D78967 /* LoginView.swift */; };
+		9CF8906DBE7440B33D369E06 /* ItemRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE06C3582DCE05CA6695B1C8 /* ItemRow.swift */; };
+		9DA4BEB8D7A512DDABA08DDB /* UploadsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99B3D625966BF3BF7B850E81 /* UploadsView.swift */; };
+		9F9C4845AD37717CD02EA84B /* TestLogin.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F0699505E602D73E7FB7C4F /* TestLogin.swift */; };
+		A5F3B424E21D1E4C66A61742 /* FolderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D64D408B8C76A651471DFE6 /* FolderView.swift */; };
+		A770ACFDBC91B7E848817321 /* MutationErrorsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B5650E952C15DB66A1BEB97 /* MutationErrorsTests.swift */; };
+		A940851430FF07AF09FE196A /* TestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEA2F48FC6AB5EA7576D6295 /* TestSupport.swift */; };
+		AD8E42FC59F844C27C236F5B /* LaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54DA8CB3F516453317CD88D2 /* LaunchTests.swift */; };
+		B1B4C3C873DC04144EA157DF /* PhotoImportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2D2DA8C754030323464A740 /* PhotoImportTests.swift */; };
+		B6047232EEDD2FD1CBCB4D82 /* ThumbnailCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46CBC800C390ACA51CA3A074 /* ThumbnailCache.swift */; };
+		BA4A887604E84A641AA8DDD0 /* UploadCenterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2ED73C58E135C22F3967F5B4 /* UploadCenterTests.swift */; };
+		BDDC67ECFD5A442430FA0A41 /* FileCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = F809372F0AA81381D7F6F580 /* FileCache.swift */; };
+		BF4BD218A287D9DAE7DF672B /* BackgroundRefresh.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5898C99DA2A186388EC1B39E /* BackgroundRefresh.swift */; };
+		C8CBC154F8E4F9044E2B6C90 /* ForegroundMonitorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AB07A3B24C7FE324251E477 /* ForegroundMonitorTests.swift */; };
+		CD77797027297D255A76407E /* ItemGridCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = F7207C0DF19B79A56AE463D3 /* ItemGridCell.swift */; };
+		D2AE771EC377AC5329F09DEC /* SyncletFileProvider.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 10A946F058FF4E8C71C14E8B /* SyncletFileProvider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		D6AAB5E3FB3291E9430ABA94 /* RecentModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D94289C7465357C2BA31E1AD /* RecentModelTests.swift */; };
+		E29D9E34E3305A52C473ED77 /* ForegroundMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2ED865E0A3CA34A801A1E26 /* ForegroundMonitor.swift */; };
+		E6B5BB0192FF6DEDAC65EB0F /* ShareFolderPicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DE26C1616F38979CFB1BA31 /* ShareFolderPicker.swift */; };
+		E96E09BE57F706E6FAF360A3 /* SyncletShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = FF122B92398876D574CEB963 /* SyncletShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		F122E0681201886798E85226 /* AccountsModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A82B142571A22CAECE450756 /* AccountsModel.swift */; };
+		F388B664BC6748A115848720 /* UploadMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 380A4D6EBA2E99DD982791AE /* UploadMenu.swift */; };
+		F841C0BD82859B8ED16A7DF7 /* SearchModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D94E6E29F880F7BBFB3746C5 /* SearchModelTests.swift */; };
+		F93B654EB1BF8C5331569096 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01305E199B0FF23037D4A683 /* ShareViewController.swift */; };
+		FB11BBB64AC1000C959698B2 /* RecentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2326906BD0D47BCF1E795FFF /* RecentView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		41FCBACF24BB3226905F08F9 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4F6A6FA85EBA4C383463F969 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B93EA93265BB4D0621251BF5;
+			remoteInfo = Synclet;
+		};
+		53F654906D86DA4624641580 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4F6A6FA85EBA4C383463F969 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 22EDDFBFE7A73655CB844F57;
+			remoteInfo = SyncletShare;
+		};
+		65700F90F1CBCD063476F8F3 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4F6A6FA85EBA4C383463F969 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B93EA93265BB4D0621251BF5;
+			remoteInfo = Synclet;
+		};
+		87140B44F204CE2C51731399 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 4F6A6FA85EBA4C383463F969 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 504A62BA4E2FA11AF3B04E3C;
+			remoteInfo = SyncletFileProvider;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		3285C11915B61F29C366A21F /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				D2AE771EC377AC5329F09DEC /* SyncletFileProvider.appex in Embed Foundation Extensions */,
+				E96E09BE57F706E6FAF360A3 /* SyncletShare.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		01305E199B0FF23037D4A683 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
+		086E1EDA4C761957CD43E37C /* Synclet.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Synclet.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0AB07A3B24C7FE324251E477 /* ForegroundMonitorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForegroundMonitorTests.swift; sourceTree = "<group>"; };
+		0B5650E952C15DB66A1BEB97 /* MutationErrorsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MutationErrorsTests.swift; sourceTree = "<group>"; };
+		0F0699505E602D73E7FB7C4F /* TestLogin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestLogin.swift; sourceTree = "<group>"; };
+		10A946F058FF4E8C71C14E8B /* SyncletFileProvider.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = SyncletFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		1134399FB18B2F00CD3A86B1 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		119DF6FB0C6D8C2C88D2DD74 /* FileCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileCacheTests.swift; sourceTree = "<group>"; };
+		19A06791063508B578C2DBC8 /* MutationErrors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MutationErrors.swift; sourceTree = "<group>"; };
+		1BD7CA4D5152ACE00B194079 /* SyncletKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = SyncletKit; path = ../apple/SyncletKit; sourceTree = SOURCE_ROOT; };
+		1F3E2118BCC696D3EA6752E9 /* ItemActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ItemActions.swift; sourceTree = "<group>"; };
+		2326906BD0D47BCF1E795FFF /* RecentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentView.swift; sourceTree = "<group>"; };
+		24182EADE5ACB475097CEAB0 /* TrashModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrashModel.swift; sourceTree = "<group>"; };
+		249198929EEFA83CC261B747 /* LoadState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoadState.swift; sourceTree = "<group>"; };
+		25E1633E6ACB75BECC4645B5 /* LoginModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginModel.swift; sourceTree = "<group>"; };
+		2BCB8D86E51C2635D57347D0 /* ShareLinkModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareLinkModelTests.swift; sourceTree = "<group>"; };
+		2C874E31BEEA2FA11804D071 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
+		2ED73C58E135C22F3967F5B4 /* UploadCenterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UploadCenterTests.swift; sourceTree = "<group>"; };
+		32D73CFA702E4FE76780D862 /* SyncletApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncletApp.swift; sourceTree = "<group>"; };
+		339F87693DE7E95CCD992EE0 /* FolderModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderModel.swift; sourceTree = "<group>"; };
+		380A4D6EBA2E99DD982791AE /* UploadMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UploadMenu.swift; sourceTree = "<group>"; };
+		3B52CFFECEB387C140AD5803 /* TrashModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrashModelTests.swift; sourceTree = "<group>"; };
+		3D64D408B8C76A651471DFE6 /* FolderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderView.swift; sourceTree = "<group>"; };
+		44B0638D5C6607F60934556B /* SyncletFileProvider.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = SyncletFileProvider.entitlements; sourceTree = "<group>"; };
+		45369E16755E595CF637E103 /* TrashView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrashView.swift; sourceTree = "<group>"; };
+		46CBC800C390ACA51CA3A074 /* ThumbnailCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailCache.swift; sourceTree = "<group>"; };
+		544454B648E70C707A3BF220 /* RecentModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentModel.swift; sourceTree = "<group>"; };
+		54DA8CB3F516453317CD88D2 /* LaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchTests.swift; sourceTree = "<group>"; };
+		5898C99DA2A186388EC1B39E /* BackgroundRefresh.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundRefresh.swift; sourceTree = "<group>"; };
+		5BFD6415D28B0623B68E0A15 /* SearchModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchModel.swift; sourceTree = "<group>"; };
+		5C012770316EF6E044EF2A5B /* SyncletTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = SyncletTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		5C709D6F5000258674CAA1AB /* InfoPlist.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = InfoPlist.xcstrings; sourceTree = "<group>"; };
+		5D933E03E9D4931127E92107 /* SyncletUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = SyncletUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		5DE26C1616F38979CFB1BA31 /* ShareFolderPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareFolderPicker.swift; sourceTree = "<group>"; };
+		62CFADAEB7FAD6E8E5D89492 /* UITestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITestSupport.swift; sourceTree = "<group>"; };
+		68C462B589EC6802F050E35E /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		76993CE597BCB7791FB606DD /* ShareTarget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareTarget.swift; sourceTree = "<group>"; };
+		7788E4FC410E32DE5F3596B2 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
+		7B2EDB4407CB75404A44FE4E /* PhotoImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoImport.swift; sourceTree = "<group>"; };
+		7CE60D5DF08CAA3126DCF28D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		7E62497D2F4C05BE848848C3 /* ShareLinkView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareLinkView.swift; sourceTree = "<group>"; };
+		8B2A65C0ACD904F9A9ED2771 /* Synclet.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Synclet.entitlements; sourceTree = "<group>"; };
+		8D2BEA97BE0D351E76354BCA /* BackgroundRefreshTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackgroundRefreshTests.swift; sourceTree = "<group>"; };
+		8ECF37AA55E8D7A29AA3DA90 /* ActivityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityView.swift; sourceTree = "<group>"; };
+		90C56DBC892D648290B15171 /* BrowserFlowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserFlowUITests.swift; sourceTree = "<group>"; };
+		99087DE28E38413F890E133A /* QuickLookView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickLookView.swift; sourceTree = "<group>"; };
+		99B3D625966BF3BF7B850E81 /* UploadsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UploadsView.swift; sourceTree = "<group>"; };
+		9DEFD96AA4B8F7CC31E78232 /* AccountsModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountsModelTests.swift; sourceTree = "<group>"; };
+		9F21569AA77C665C13230E0D /* BrowserLogin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserLogin.swift; sourceTree = "<group>"; };
+		A45C7E3C3C02D166B1C8FDF1 /* UploadCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UploadCenter.swift; sourceTree = "<group>"; };
+		A82B142571A22CAECE450756 /* AccountsModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountsModel.swift; sourceTree = "<group>"; };
+		ADF84E309A2D78B2CDCE5468 /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
+		B2C96AB8E9F52548700227C7 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		B2ED865E0A3CA34A801A1E26 /* ForegroundMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForegroundMonitor.swift; sourceTree = "<group>"; };
+		BDAC27E1128135FBE8D78967 /* LoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginView.swift; sourceTree = "<group>"; };
+		BEA2F48FC6AB5EA7576D6295 /* TestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestSupport.swift; sourceTree = "<group>"; };
+		C2D2DA8C754030323464A740 /* PhotoImportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoImportTests.swift; sourceTree = "<group>"; };
+		CC7E60B0BE09BCF22BEE0683 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		CEDB439333B40D0A438441E5 /* ShareLinkModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareLinkModel.swift; sourceTree = "<group>"; };
+		D134E3930D82ED2895EDC4D7 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		D1C17F204B7EA634E7A4F15B /* ShareTargetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareTargetTests.swift; sourceTree = "<group>"; };
+		D3D52AB90DB2606575B1BD44 /* FolderModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderModelTests.swift; sourceTree = "<group>"; };
+		D4A29675CD5201E8AD9E062E /* FileProviderExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderExtension.swift; sourceTree = "<group>"; };
+		D8174F782F440DBA15F5DCBD /* ShareRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareRootView.swift; sourceTree = "<group>"; };
+		D9328E99B1A18AEC2600519E /* AccountsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountsView.swift; sourceTree = "<group>"; };
+		D94289C7465357C2BA31E1AD /* RecentModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentModelTests.swift; sourceTree = "<group>"; };
+		D94E6E29F880F7BBFB3746C5 /* SearchModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchModelTests.swift; sourceTree = "<group>"; };
+		D9FB9B67C242578D115C9817 /* UploadSignal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UploadSignal.swift; sourceTree = "<group>"; };
+		E7B95538C4E2F3B17506ED94 /* LoginModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginModelTests.swift; sourceTree = "<group>"; };
+		EC952CD368A166FD6AA98466 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		EDF294F47A774338509C4BE4 /* MovePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MovePicker.swift; sourceTree = "<group>"; };
+		EE06C3582DCE05CA6695B1C8 /* ItemRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ItemRow.swift; sourceTree = "<group>"; };
+		EFD4CC3A731C376A60494295 /* DestinationStack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DestinationStack.swift; sourceTree = "<group>"; };
+		F7207C0DF19B79A56AE463D3 /* ItemGridCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ItemGridCell.swift; sourceTree = "<group>"; };
+		F809372F0AA81381D7F6F580 /* FileCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileCache.swift; sourceTree = "<group>"; };
+		F842E9639DEA970E5F4D4201 /* SearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchView.swift; sourceTree = "<group>"; };
+		F8B859B70D702820F5A35D89 /* ThumbnailCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailCacheTests.swift; sourceTree = "<group>"; };
+		F8C4F12E496BF1B78AA3558E /* BrowserShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserShell.swift; sourceTree = "<group>"; };
+		FB3BF197798C7B6EBFEB0CBE /* SyncletShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = SyncletShare.entitlements; sourceTree = "<group>"; };
+		FF122B92398876D574CEB963 /* SyncletShare.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = SyncletShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		13E1F822AF2E2A85931C0B76 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				661F552B3DFD798D3E1E5F48 /* SyncletKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		66B2C43E948C67955D3B5D0B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				448E51CE094CEC5AB88F2FBD /* SyncletKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		722153DE8B47AC18D62C3CEF /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				82F53068C179070714B3B032 /* SyncletKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		126DDC3338EF83F435CD8007 /* Synclet */ = {
+			isa = PBXGroup;
+			children = (
+				EC952CD368A166FD6AA98466 /* Info.plist */,
+				8B2A65C0ACD904F9A9ED2771 /* Synclet.entitlements */,
+				42A7F5A09AF243BF0BC39B99 /* App */,
+				36A48495DA6ED65F638DAB83 /* Browser */,
+				9AF6C3722B74A95BE6854C73 /* Core */,
+				54D557226BC826D56F5AC4E4 /* Preview */,
+				92154E5B2C168DBD117A2E5A /* Recent */,
+				A95573A7D7073D4249C02BAD /* Resources */,
+				6A27CAF6AEA3F747D0BE255D /* Search */,
+				74ABD5C5690031542538A533 /* Share */,
+				96B07BFCD974A22D1F05B513 /* Trash */,
+				3CBF7C0B3932B3C7E15E611B /* Upload */,
+				8BA9F13F748D1F1BC70453AC /* Views */,
+			);
+			path = Synclet;
+			sourceTree = "<group>";
+		};
+		1592F873359EA654F6169D9A /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				76993CE597BCB7791FB606DD /* ShareTarget.swift */,
+				D9FB9B67C242578D115C9817 /* UploadSignal.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		235B049DD27299AED4DB4676 /* SyncletShare */ = {
+			isa = PBXGroup;
+			children = (
+				B2C96AB8E9F52548700227C7 /* Info.plist */,
+				2C874E31BEEA2FA11804D071 /* Localizable.xcstrings */,
+				5DE26C1616F38979CFB1BA31 /* ShareFolderPicker.swift */,
+				D8174F782F440DBA15F5DCBD /* ShareRootView.swift */,
+				01305E199B0FF23037D4A683 /* ShareViewController.swift */,
+				FB3BF197798C7B6EBFEB0CBE /* SyncletShare.entitlements */,
+			);
+			path = SyncletShare;
+			sourceTree = "<group>";
+		};
+		24A2C56902237E7445549375 /* SyncletFileProvider */ = {
+			isa = PBXGroup;
+			children = (
+				D4A29675CD5201E8AD9E062E /* FileProviderExtension.swift */,
+				7CE60D5DF08CAA3126DCF28D /* Info.plist */,
+				44B0638D5C6607F60934556B /* SyncletFileProvider.entitlements */,
+			);
+			path = SyncletFileProvider;
+			sourceTree = "<group>";
+		};
+		36A48495DA6ED65F638DAB83 /* Browser */ = {
+			isa = PBXGroup;
+			children = (
+				F8C4F12E496BF1B78AA3558E /* BrowserShell.swift */,
+				EFD4CC3A731C376A60494295 /* DestinationStack.swift */,
+				339F87693DE7E95CCD992EE0 /* FolderModel.swift */,
+				3D64D408B8C76A651471DFE6 /* FolderView.swift */,
+				1F3E2118BCC696D3EA6752E9 /* ItemActions.swift */,
+				F7207C0DF19B79A56AE463D3 /* ItemGridCell.swift */,
+				EE06C3582DCE05CA6695B1C8 /* ItemRow.swift */,
+				249198929EEFA83CC261B747 /* LoadState.swift */,
+				EDF294F47A774338509C4BE4 /* MovePicker.swift */,
+			);
+			path = Browser;
+			sourceTree = "<group>";
+		};
+		3CBF7C0B3932B3C7E15E611B /* Upload */ = {
+			isa = PBXGroup;
+			children = (
+				7B2EDB4407CB75404A44FE4E /* PhotoImport.swift */,
+				A45C7E3C3C02D166B1C8FDF1 /* UploadCenter.swift */,
+				380A4D6EBA2E99DD982791AE /* UploadMenu.swift */,
+				99B3D625966BF3BF7B850E81 /* UploadsView.swift */,
+			);
+			path = Upload;
+			sourceTree = "<group>";
+		};
+		42A7F5A09AF243BF0BC39B99 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				68C462B589EC6802F050E35E /* AppDelegate.swift */,
+				32D73CFA702E4FE76780D862 /* SyncletApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		54D557226BC826D56F5AC4E4 /* Preview */ = {
+			isa = PBXGroup;
+			children = (
+				F809372F0AA81381D7F6F580 /* FileCache.swift */,
+				99087DE28E38413F890E133A /* QuickLookView.swift */,
+				46CBC800C390ACA51CA3A074 /* ThumbnailCache.swift */,
+			);
+			path = Preview;
+			sourceTree = "<group>";
+		};
+		57D9EC5B7CFD0CF9217DD71F /* SyncletUITests */ = {
+			isa = PBXGroup;
+			children = (
+				90C56DBC892D648290B15171 /* BrowserFlowUITests.swift */,
+				54DA8CB3F516453317CD88D2 /* LaunchTests.swift */,
+				62CFADAEB7FAD6E8E5D89492 /* UITestSupport.swift */,
+			);
+			path = SyncletUITests;
+			sourceTree = "<group>";
+		};
+		6A27CAF6AEA3F747D0BE255D /* Search */ = {
+			isa = PBXGroup;
+			children = (
+				5BFD6415D28B0623B68E0A15 /* SearchModel.swift */,
+				F842E9639DEA970E5F4D4201 /* SearchView.swift */,
+			);
+			path = Search;
+			sourceTree = "<group>";
+		};
+		74ABD5C5690031542538A533 /* Share */ = {
+			isa = PBXGroup;
+			children = (
+				8ECF37AA55E8D7A29AA3DA90 /* ActivityView.swift */,
+				CEDB439333B40D0A438441E5 /* ShareLinkModel.swift */,
+				7E62497D2F4C05BE848848C3 /* ShareLinkView.swift */,
+			);
+			path = Share;
+			sourceTree = "<group>";
+		};
+		81770ADFDF2605087006997D /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				1BD7CA4D5152ACE00B194079 /* SyncletKit */,
+			);
+			name = Packages;
+			sourceTree = "<group>";
+		};
+		8BA9F13F748D1F1BC70453AC /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				D9328E99B1A18AEC2600519E /* AccountsView.swift */,
+				BDAC27E1128135FBE8D78967 /* LoginView.swift */,
+				CC7E60B0BE09BCF22BEE0683 /* RootView.swift */,
+				D134E3930D82ED2895EDC4D7 /* SettingsView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		8F1EA580B25A3146A631365B = {
+			isa = PBXGroup;
+			children = (
+				81770ADFDF2605087006997D /* Packages */,
+				1592F873359EA654F6169D9A /* Shared */,
+				126DDC3338EF83F435CD8007 /* Synclet */,
+				24A2C56902237E7445549375 /* SyncletFileProvider */,
+				235B049DD27299AED4DB4676 /* SyncletShare */,
+				F50D74A27765D25035464475 /* SyncletTests */,
+				57D9EC5B7CFD0CF9217DD71F /* SyncletUITests */,
+				DDAEB03A071D31EA5C1D595C /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		92154E5B2C168DBD117A2E5A /* Recent */ = {
+			isa = PBXGroup;
+			children = (
+				544454B648E70C707A3BF220 /* RecentModel.swift */,
+				2326906BD0D47BCF1E795FFF /* RecentView.swift */,
+			);
+			path = Recent;
+			sourceTree = "<group>";
+		};
+		96B07BFCD974A22D1F05B513 /* Trash */ = {
+			isa = PBXGroup;
+			children = (
+				24182EADE5ACB475097CEAB0 /* TrashModel.swift */,
+				45369E16755E595CF637E103 /* TrashView.swift */,
+			);
+			path = Trash;
+			sourceTree = "<group>";
+		};
+		9AF6C3722B74A95BE6854C73 /* Core */ = {
+			isa = PBXGroup;
+			children = (
+				A82B142571A22CAECE450756 /* AccountsModel.swift */,
+				ADF84E309A2D78B2CDCE5468 /* AppEnvironment.swift */,
+				5898C99DA2A186388EC1B39E /* BackgroundRefresh.swift */,
+				9F21569AA77C665C13230E0D /* BrowserLogin.swift */,
+				B2ED865E0A3CA34A801A1E26 /* ForegroundMonitor.swift */,
+				25E1633E6ACB75BECC4645B5 /* LoginModel.swift */,
+				19A06791063508B578C2DBC8 /* MutationErrors.swift */,
+				0F0699505E602D73E7FB7C4F /* TestLogin.swift */,
+			);
+			path = Core;
+			sourceTree = "<group>";
+		};
+		A95573A7D7073D4249C02BAD /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				1134399FB18B2F00CD3A86B1 /* Assets.xcassets */,
+				5C709D6F5000258674CAA1AB /* InfoPlist.xcstrings */,
+				7788E4FC410E32DE5F3596B2 /* Localizable.xcstrings */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		DDAEB03A071D31EA5C1D595C /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				086E1EDA4C761957CD43E37C /* Synclet.app */,
+				10A946F058FF4E8C71C14E8B /* SyncletFileProvider.appex */,
+				FF122B92398876D574CEB963 /* SyncletShare.appex */,
+				5C012770316EF6E044EF2A5B /* SyncletTests.xctest */,
+				5D933E03E9D4931127E92107 /* SyncletUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		F50D74A27765D25035464475 /* SyncletTests */ = {
+			isa = PBXGroup;
+			children = (
+				9DEFD96AA4B8F7CC31E78232 /* AccountsModelTests.swift */,
+				8D2BEA97BE0D351E76354BCA /* BackgroundRefreshTests.swift */,
+				119DF6FB0C6D8C2C88D2DD74 /* FileCacheTests.swift */,
+				D3D52AB90DB2606575B1BD44 /* FolderModelTests.swift */,
+				0AB07A3B24C7FE324251E477 /* ForegroundMonitorTests.swift */,
+				E7B95538C4E2F3B17506ED94 /* LoginModelTests.swift */,
+				0B5650E952C15DB66A1BEB97 /* MutationErrorsTests.swift */,
+				C2D2DA8C754030323464A740 /* PhotoImportTests.swift */,
+				D94289C7465357C2BA31E1AD /* RecentModelTests.swift */,
+				D94E6E29F880F7BBFB3746C5 /* SearchModelTests.swift */,
+				2BCB8D86E51C2635D57347D0 /* ShareLinkModelTests.swift */,
+				D1C17F204B7EA634E7A4F15B /* ShareTargetTests.swift */,
+				BEA2F48FC6AB5EA7576D6295 /* TestSupport.swift */,
+				F8B859B70D702820F5A35D89 /* ThumbnailCacheTests.swift */,
+				3B52CFFECEB387C140AD5803 /* TrashModelTests.swift */,
+				2ED73C58E135C22F3967F5B4 /* UploadCenterTests.swift */,
+			);
+			path = SyncletTests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		151240F239A88C080289B78D /* SyncletUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 2D8EE6B8DD99737FADDDC101 /* Build configuration list for PBXNativeTarget "SyncletUITests" */;
+			buildPhases = (
+				285C10FB2CE415CF556F5293 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				1069AA833E2B9368C545BF4C /* PBXTargetDependency */,
+			);
+			name = SyncletUITests;
+			packageProductDependencies = (
+			);
+			productName = SyncletUITests;
+			productReference = 5D933E03E9D4931127E92107 /* SyncletUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		22EDDFBFE7A73655CB844F57 /* SyncletShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 53110EDDA6B706CE43CCEBE3 /* Build configuration list for PBXNativeTarget "SyncletShare" */;
+			buildPhases = (
+				7B822474084E5DA5C1A2C454 /* Sources */,
+				5501A74B82D29AB7C15770E8 /* Resources */,
+				13E1F822AF2E2A85931C0B76 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SyncletShare;
+			packageProductDependencies = (
+				05CC2739D7D6D8969C34F9F1 /* SyncletKit */,
+			);
+			productName = SyncletShare;
+			productReference = FF122B92398876D574CEB963 /* SyncletShare.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		3FBD70012D43D9752B1138F2 /* SyncletTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D7B5B188684AE77A229D31E5 /* Build configuration list for PBXNativeTarget "SyncletTests" */;
+			buildPhases = (
+				700AA4E351E48D4B401C0F08 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				4206BF8F3C8B819B208094EB /* PBXTargetDependency */,
+			);
+			name = SyncletTests;
+			packageProductDependencies = (
+			);
+			productName = SyncletTests;
+			productReference = 5C012770316EF6E044EF2A5B /* SyncletTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		504A62BA4E2FA11AF3B04E3C /* SyncletFileProvider */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DA6068C377EDBB0CC056F08B /* Build configuration list for PBXNativeTarget "SyncletFileProvider" */;
+			buildPhases = (
+				E530DD0E4D050C3344BC3F25 /* Sources */,
+				722153DE8B47AC18D62C3CEF /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SyncletFileProvider;
+			packageProductDependencies = (
+				31C6B0D708CD10A4CDEDDE83 /* SyncletKit */,
+			);
+			productName = SyncletFileProvider;
+			productReference = 10A946F058FF4E8C71C14E8B /* SyncletFileProvider.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		B93EA93265BB4D0621251BF5 /* Synclet */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7220843FBE9AAC273117E1C3 /* Build configuration list for PBXNativeTarget "Synclet" */;
+			buildPhases = (
+				8E112D79FDB12AC548B0AD5C /* Sources */,
+				DC13C730BEFA98B6A33F5E99 /* Resources */,
+				66B2C43E948C67955D3B5D0B /* Frameworks */,
+				3285C11915B61F29C366A21F /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				FEDB92D11B9F5A6BA4468EFD /* PBXTargetDependency */,
+				1EA753537A8632F96F334312 /* PBXTargetDependency */,
+			);
+			name = Synclet;
+			packageProductDependencies = (
+				8FC63EFAA00022D3F750C6C8 /* SyncletKit */,
+			);
+			productName = Synclet;
+			productReference = 086E1EDA4C761957CD43E37C /* Synclet.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		4F6A6FA85EBA4C383463F969 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					151240F239A88C080289B78D = {
+						DevelopmentTeam = JC32M95WLZ;
+						ProvisioningStyle = Automatic;
+						TestTargetID = B93EA93265BB4D0621251BF5;
+					};
+					22EDDFBFE7A73655CB844F57 = {
+						DevelopmentTeam = JC32M95WLZ;
+						ProvisioningStyle = Automatic;
+					};
+					3FBD70012D43D9752B1138F2 = {
+						DevelopmentTeam = JC32M95WLZ;
+						ProvisioningStyle = Automatic;
+					};
+					504A62BA4E2FA11AF3B04E3C = {
+						DevelopmentTeam = JC32M95WLZ;
+						ProvisioningStyle = Automatic;
+					};
+					B93EA93265BB4D0621251BF5 = {
+						DevelopmentTeam = JC32M95WLZ;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 30D8BC282889EAE9BAA948FE /* Build configuration list for PBXProject "Synclet" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				de,
+				en,
+			);
+			mainGroup = 8F1EA580B25A3146A631365B;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				F7CD4FB79A07B2242D9FE47A /* XCLocalSwiftPackageReference "../apple/SyncletKit" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = DDAEB03A071D31EA5C1D595C /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				B93EA93265BB4D0621251BF5 /* Synclet */,
+				504A62BA4E2FA11AF3B04E3C /* SyncletFileProvider */,
+				22EDDFBFE7A73655CB844F57 /* SyncletShare */,
+				3FBD70012D43D9752B1138F2 /* SyncletTests */,
+				151240F239A88C080289B78D /* SyncletUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		5501A74B82D29AB7C15770E8 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				215C3A3ADAE584DF0B89A91B /* Localizable.xcstrings in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DC13C730BEFA98B6A33F5E99 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				003D3093ACFB98AEAA31D7A4 /* Assets.xcassets in Resources */,
+				1360AA9E4DEB69FF87413BD5 /* InfoPlist.xcstrings in Resources */,
+				9A3AA15C41860550080179EE /* Localizable.xcstrings in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		285C10FB2CE415CF556F5293 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7AAED68D766364DA03E58008 /* BrowserFlowUITests.swift in Sources */,
+				AD8E42FC59F844C27C236F5B /* LaunchTests.swift in Sources */,
+				3E8F79FB2E157B8F10B5C62B /* UITestSupport.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		700AA4E351E48D4B401C0F08 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2BACE763045072E41D574C9D /* AccountsModelTests.swift in Sources */,
+				313689A60A7F7C24C4FF6CB6 /* BackgroundRefreshTests.swift in Sources */,
+				0AB5B17326FA7AA90FC754D4 /* FileCacheTests.swift in Sources */,
+				51ECF8114EAA00D253CEB97E /* FolderModelTests.swift in Sources */,
+				C8CBC154F8E4F9044E2B6C90 /* ForegroundMonitorTests.swift in Sources */,
+				190ED6BF5373EDBCB3FA9A63 /* LoginModelTests.swift in Sources */,
+				A770ACFDBC91B7E848817321 /* MutationErrorsTests.swift in Sources */,
+				B1B4C3C873DC04144EA157DF /* PhotoImportTests.swift in Sources */,
+				D6AAB5E3FB3291E9430ABA94 /* RecentModelTests.swift in Sources */,
+				F841C0BD82859B8ED16A7DF7 /* SearchModelTests.swift in Sources */,
+				104B2B922797F1468E09FB8C /* ShareLinkModelTests.swift in Sources */,
+				5E5FED6E0A1E63D4E28B68EE /* ShareTargetTests.swift in Sources */,
+				A940851430FF07AF09FE196A /* TestSupport.swift in Sources */,
+				5D321174290B74C3B3989166 /* ThumbnailCacheTests.swift in Sources */,
+				7866FBBBF30BD6CCD3171409 /* TrashModelTests.swift in Sources */,
+				BA4A887604E84A641AA8DDD0 /* UploadCenterTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7B822474084E5DA5C1A2C454 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E6B5BB0192FF6DEDAC65EB0F /* ShareFolderPicker.swift in Sources */,
+				727F1FC09DB7B2039EBFEE38 /* ShareRootView.swift in Sources */,
+				1AC3C7916FD4168E44FAA9B5 /* ShareTarget.swift in Sources */,
+				F93B654EB1BF8C5331569096 /* ShareViewController.swift in Sources */,
+				15B2102B1DBC5CC1E11E23D6 /* UploadSignal.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8E112D79FDB12AC548B0AD5C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F122E0681201886798E85226 /* AccountsModel.swift in Sources */,
+				36847F4248550A4EC1A34A3F /* AccountsView.swift in Sources */,
+				8090AB8EA6F9CCD99C1EAFF6 /* ActivityView.swift in Sources */,
+				693120E912C16A0675CEE8B3 /* AppDelegate.swift in Sources */,
+				20C54E4FA0A19340286A9F7C /* AppEnvironment.swift in Sources */,
+				BF4BD218A287D9DAE7DF672B /* BackgroundRefresh.swift in Sources */,
+				03CD7451B882E670BE53CEEF /* BrowserLogin.swift in Sources */,
+				32D30E37D73B4CDCA0FF06BE /* BrowserShell.swift in Sources */,
+				8FF072EF4311378A1AE8B862 /* DestinationStack.swift in Sources */,
+				BDDC67ECFD5A442430FA0A41 /* FileCache.swift in Sources */,
+				1EEF7B961ECB02685B742B5C /* FolderModel.swift in Sources */,
+				A5F3B424E21D1E4C66A61742 /* FolderView.swift in Sources */,
+				E29D9E34E3305A52C473ED77 /* ForegroundMonitor.swift in Sources */,
+				5837791085DC48044032BE63 /* ItemActions.swift in Sources */,
+				CD77797027297D255A76407E /* ItemGridCell.swift in Sources */,
+				9CF8906DBE7440B33D369E06 /* ItemRow.swift in Sources */,
+				17A588587F040455711DECEF /* LoadState.swift in Sources */,
+				1F4D23B1BF33782B565492D3 /* LoginModel.swift in Sources */,
+				9B05458DB28CD8440CC9CE2F /* LoginView.swift in Sources */,
+				3568CF74600CC3E6925F673F /* MovePicker.swift in Sources */,
+				4BFB69C02CE61E4C6EBACF14 /* MutationErrors.swift in Sources */,
+				9391094FDCB0D740017BCDDF /* PhotoImport.swift in Sources */,
+				115A607BAF0C19F6948805E2 /* QuickLookView.swift in Sources */,
+				79E6C55B08D223094BECA6B5 /* RecentModel.swift in Sources */,
+				FB11BBB64AC1000C959698B2 /* RecentView.swift in Sources */,
+				7F4F77BF1D5EA8041C833EF3 /* RootView.swift in Sources */,
+				56B5ADC27EB3394F12CB5624 /* SearchModel.swift in Sources */,
+				2F7FE0E66225AFADA9C309A7 /* SearchView.swift in Sources */,
+				7AA86A6C6460FCC8321D16F4 /* SettingsView.swift in Sources */,
+				07A6B0B9F0396211388925A2 /* ShareLinkModel.swift in Sources */,
+				3997A39A915EA2F4CE003A0B /* ShareLinkView.swift in Sources */,
+				7C5D2EE892EE55B319332407 /* ShareTarget.swift in Sources */,
+				1456A5996BBCE3E3EAA8B070 /* SyncletApp.swift in Sources */,
+				9F9C4845AD37717CD02EA84B /* TestLogin.swift in Sources */,
+				B6047232EEDD2FD1CBCB4D82 /* ThumbnailCache.swift in Sources */,
+				945C18C7820AD7EB07E68571 /* TrashModel.swift in Sources */,
+				2DB002565D04E131CE65ACD1 /* TrashView.swift in Sources */,
+				1C17C572CE96CF467C6090FB /* UploadCenter.swift in Sources */,
+				F388B664BC6748A115848720 /* UploadMenu.swift in Sources */,
+				437F4429ED5B5DDE27625C5E /* UploadSignal.swift in Sources */,
+				9DA4BEB8D7A512DDABA08DDB /* UploadsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E530DD0E4D050C3344BC3F25 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				84D815A35C2E4209FDB800EB /* FileProviderExtension.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		1069AA833E2B9368C545BF4C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B93EA93265BB4D0621251BF5 /* Synclet */;
+			targetProxy = 41FCBACF24BB3226905F08F9 /* PBXContainerItemProxy */;
+		};
+		1EA753537A8632F96F334312 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 22EDDFBFE7A73655CB844F57 /* SyncletShare */;
+			targetProxy = 53F654906D86DA4624641580 /* PBXContainerItemProxy */;
+		};
+		4206BF8F3C8B819B208094EB /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B93EA93265BB4D0621251BF5 /* Synclet */;
+			targetProxy = 65700F90F1CBCD063476F8F3 /* PBXContainerItemProxy */;
+		};
+		FEDB92D11B9F5A6BA4468EFD /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 504A62BA4E2FA11AF3B04E3C /* SyncletFileProvider */;
+			targetProxy = 87140B44F204CE2C51731399 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		029460C61FE2F4B545AC3B97 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = SyncletShare/SyncletShare.entitlements;
+				INFOPLIST_FILE = SyncletShare/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = tech.jensk.synclet.ios.Share;
+				PRODUCT_NAME = SyncletShare;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		0A6788674EF89F4F0F9826CE /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = SyncletFileProvider/SyncletFileProvider.entitlements;
+				INFOPLIST_FILE = SyncletFileProvider/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = tech.jensk.synclet.ios.FileProvider;
+				PRODUCT_NAME = SyncletFileProvider;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		4AF0F99DAC3DA0E23FE01996 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = SyncletFileProvider/SyncletFileProvider.entitlements;
+				INFOPLIST_FILE = SyncletFileProvider/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = tech.jensk.synclet.ios.FileProvider;
+				PRODUCT_NAME = SyncletFileProvider;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		4BEDD7191C965116D70DB982 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = SyncletShare/SyncletShare.entitlements;
+				INFOPLIST_FILE = SyncletShare/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = tech.jensk.synclet.ios.Share;
+				PRODUCT_NAME = SyncletShare;
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		4D74ED1EFC8C0A83ACD5BBCF /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = tech.jensk.synclet.ios.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Synclet.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Synclet";
+			};
+			name = Release;
+		};
+		541DA574DB2B7BEE1247A899 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Synclet/Synclet.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = Synclet/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = tech.jensk.synclet.ios;
+				PRODUCT_NAME = Synclet;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		7845E4F3D86A8A5E90F3AB06 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = JC32M95WLZ;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+				SYNCLET_APP_GROUP = group.tech.jensk.synclet;
+				SYNCLET_KEYCHAIN_GROUP = "$(AppIdentifierPrefix)tech.jensk.synclet.shared";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		7F38AC35637805A20541B799 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Synclet/Synclet.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				INFOPLIST_FILE = Synclet/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = tech.jensk.synclet.ios;
+				PRODUCT_NAME = Synclet;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		A976436808D891492C82F466 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = tech.jensk.synclet.ios.uitests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Synclet;
+			};
+			name = Debug;
+		};
+		BE94018FC653067EE0A1D6E9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = tech.jensk.synclet.ios.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Synclet.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Synclet";
+			};
+			name = Debug;
+		};
+		CFBB41A66F6AF42F39063300 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = JC32M95WLZ;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+				SYNCLET_APP_GROUP = group.tech.jensk.synclet;
+				SYNCLET_KEYCHAIN_GROUP = "$(AppIdentifierPrefix)tech.jensk.synclet.shared";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		D464811CBA08E320F3438490 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = tech.jensk.synclet.ios.uitests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Synclet;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		2D8EE6B8DD99737FADDDC101 /* Build configuration list for PBXNativeTarget "SyncletUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A976436808D891492C82F466 /* Debug */,
+				D464811CBA08E320F3438490 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		30D8BC282889EAE9BAA948FE /* Build configuration list for PBXProject "Synclet" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7845E4F3D86A8A5E90F3AB06 /* Debug */,
+				CFBB41A66F6AF42F39063300 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		53110EDDA6B706CE43CCEBE3 /* Build configuration list for PBXNativeTarget "SyncletShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4BEDD7191C965116D70DB982 /* Debug */,
+				029460C61FE2F4B545AC3B97 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		7220843FBE9AAC273117E1C3 /* Build configuration list for PBXNativeTarget "Synclet" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				541DA574DB2B7BEE1247A899 /* Debug */,
+				7F38AC35637805A20541B799 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		D7B5B188684AE77A229D31E5 /* Build configuration list for PBXNativeTarget "SyncletTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BE94018FC653067EE0A1D6E9 /* Debug */,
+				4D74ED1EFC8C0A83ACD5BBCF /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		DA6068C377EDBB0CC056F08B /* Build configuration list for PBXNativeTarget "SyncletFileProvider" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0A6788674EF89F4F0F9826CE /* Debug */,
+				4AF0F99DAC3DA0E23FE01996 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		F7CD4FB79A07B2242D9FE47A /* XCLocalSwiftPackageReference "../apple/SyncletKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../apple/SyncletKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		05CC2739D7D6D8969C34F9F1 /* SyncletKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SyncletKit;
+		};
+		31C6B0D708CD10A4CDEDDE83 /* SyncletKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SyncletKit;
+		};
+		8FC63EFAA00022D3F750C6C8 /* SyncletKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = SyncletKit;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 4F6A6FA85EBA4C383463F969 /* Project object */;
+}

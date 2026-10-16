@@ -8,4 +8,5 @@ enum Log {
     static let account = Logger(subsystem: subsystem, category: "account")
     static let transfer = Logger(subsystem: subsystem, category: "transfer")
     static let pinning = Logger(subsystem: subsystem, category: "pinning")
+    static let upload = Logger(subsystem: subsystem, category: "upload")
 }

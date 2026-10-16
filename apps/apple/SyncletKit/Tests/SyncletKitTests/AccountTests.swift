@@ -219,7 +219,7 @@ final class AccountManagerTests: XCTestCase {
         XCTAssertEqual(requests.map(\.path), ["/api/sync/v1/devices", "/api/sync/v1/account", "/api/auth/logout"])
         XCTAssertEqual(requests[0].header("Authorization"), "Bearer jwt.access")
         XCTAssertEqual(requests[0].json?["name"] as? String, "Jens' MacBook")
-        XCTAssertEqual(requests[0].json?["platform"] as? String, "macos")
+        XCTAssertEqual(requests[0].json?["platform"] as? String, SyncPlatform.current.rawValue)
         XCTAssertEqual(requests[0].json?["installationId"] as? String, "inst-hash")
         XCTAssertEqual(requests[1].header("Authorization"), "Bearer syd_1")
         XCTAssertEqual(requests[2].header("Cookie"), "synclet_refresh=syr_refresh")
@@ -377,6 +377,48 @@ final class AccountManagerTests: XCTestCase {
         let more = [Fixtures.personal, SyncSpace(id: "s", kind: .shared, name: "S", rootId: "d_s", canWrite: true)]
         XCTAssertTrue(try manager.updateSpaces(key: stored.key, spaces: more))
         XCTAssertEqual(manager.accounts.account(key: stored.key)?.spaces, more)
+    }
+
+    // MARK: - addRegistered (DEBUG test login of the iOS app)
+
+    func testAddRegisteredStoresTokenAccountAndDomainWithoutRegistering() async throws {
+        let (manager, domains, credentials, accounts) = makeManager()
+        serve()
+        let stored = try await manager.addRegistered(server: Fixtures.server, deviceToken: "syd_given")
+
+        XCTAssertEqual(stored.key, "srv1:u1")
+        XCTAssertEqual(stored.username, "jens")
+        XCTAssertEqual(stored.spaces, [Fixtures.personal])
+        XCTAssertNotNil(stored.signedInAt)
+        XCTAssertEqual(credentials.token(for: "srv1:u1"), "syd_given")
+        XCTAssertEqual(accounts.all(), [stored])
+        XCTAssertEqual(domains.all, [stored.key16: "Synclet – jens@synclet.example.test"])
+        // Only `/account` with the given token: no registration, no login session to end.
+        let requests = MockURLProtocol.requests
+        XCTAssertEqual(requests.map(\.path), ["/api/sync/v1/account"])
+        XCTAssertEqual(requests[0].header("Authorization"), "Bearer syd_given")
+    }
+
+    func testAddRegisteredAgainKeepsTheDomainAndReplacesTheToken() async throws {
+        let (manager, domains, credentials, accounts) = makeManager()
+        serve()
+        _ = try await manager.addRegistered(server: Fixtures.server, deviceToken: "syd_a")
+        _ = try await manager.addRegistered(server: Fixtures.server, deviceToken: "syd_b")
+        XCTAssertEqual(accounts.all().count, 1)
+        XCTAssertEqual(domains.addCalls, 1)
+        XCTAssertEqual(credentials.token(for: "srv1:u1"), "syd_b")
+    }
+
+    func testAddRegisteredWithARejectedTokenStoresNothing() async {
+        let (manager, domains, credentials, accounts) = makeManager()
+        MockURLProtocol.reset { _ in .json(401, #"{"statusCode":401,"message":"unauthorized","code":"unauthorized"}"#) }
+        do {
+            _ = try await manager.addRegistered(server: Fixtures.server, deviceToken: "syd_bad")
+            XCTFail("expected an error")
+        } catch {}
+        XCTAssertTrue(accounts.all().isEmpty)
+        XCTAssertTrue(domains.all.isEmpty)
+        XCTAssertNil(credentials.token(for: "srv1:u1"))
     }
 }
 

@@ -1,32 +1,31 @@
 import FileProvider
 import Foundation
-import SyncletKit
 
 /// "Sign-in rejected" signal from the File Provider extension to the menu bar app
-/// (both targets compile this file).
+/// (app and extension).
 ///
 /// When the server rejects the device token (`401 unauthorized` / `device_revoked`, or the
 /// token is missing ⇒ `NSFileProviderError(.notAuthenticated)`), the extension writes the
 /// marker file `accounts/<key16>/auth-failed` into the app group container and posts the
 /// Darwin notification ``notificationName``. The app then shows the account as
 /// "Anmeldung erforderlich". Signing in again clears the marker and keeps the domain.
-enum AuthFailureSignal {
+public enum AuthFailureSignal {
     /// Darwin notification (cross-process, no payload).
-    static let notificationName = "tech.jensk.synclet.authFailed"
+    public static let notificationName = "tech.jensk.synclet.authFailed"
     /// Marker file inside `accounts/<key16>/`; its content is the ISO 8601 start time of the
     /// failed operation (or the time of the failure).
-    static let markerName = "auth-failed"
+    public static let markerName = "auth-failed"
     /// The extension reports the same failure for every item; one signal per minute is enough.
-    static let throttle: TimeInterval = 60
+    public static let throttle: TimeInterval = 60
 
     /// The error the extension reports: `NSFileProviderError(.notAuthenticated)`.
-    static func isAuthenticationFailure(_ error: Error) -> Bool {
+    public static func isAuthenticationFailure(_ error: Error) -> Bool {
         let ns = error as NSError
         return ns.domain == NSFileProviderErrorDomain && ns.code == NSFileProviderError.notAuthenticated.rawValue
     }
 
     /// `<container>/accounts/<key16>/auth-failed`.
-    static func markerURL(container: URL, key16: String) -> URL {
+    public static func markerURL(container: URL, key16: String) -> URL {
         container.appending(path: "accounts", directoryHint: .isDirectory)
             .appending(path: key16, directoryHint: .isDirectory)
             .appending(path: markerName, directoryHint: .notDirectory)
@@ -38,7 +37,7 @@ enum AuthFailureSignal {
     ///
     /// - Parameter startedAt: when the failed operation started (default: `now`).
     @discardableResult
-    static func report(container: URL, key16: String, now: Date = Date(), startedAt: Date? = nil,
+    public static func report(container: URL, key16: String, now: Date = Date(), startedAt: Date? = nil,
                        post: Bool = true) -> Bool {
         let marker = markerURL(container: container, key16: key16)
         let directory = marker.deletingLastPathComponent()
@@ -57,7 +56,7 @@ enum AuthFailureSignal {
 
     /// App: the time of a pending failure of an account, if any. A marker of an operation
     /// that started before the current sign-in is stale: it is removed and ignored.
-    static func pending(container: URL, key16: String) -> Date? {
+    public static func pending(container: URL, key16: String) -> Date? {
         guard let date = date(of: markerURL(container: container, key16: key16)) else { return nil }
         if isStale(date, container: container, key16: key16) {
             clear(container: container, key16: key16)
@@ -74,11 +73,11 @@ enum AuthFailureSignal {
     }
 
     /// App: the failure was handled (signed in again or signed out).
-    static func clear(container: URL, key16: String) {
+    public static func clear(container: URL, key16: String) {
         try? FileManager.default.removeItem(at: markerURL(container: container, key16: key16))
     }
 
-    static func postNotification() {
+    public static func postNotification() {
         CFNotificationCenterPostNotification(
             CFNotificationCenterGetDarwinNotifyCenter(),
             CFNotificationName(notificationName as CFString), nil, nil, true
