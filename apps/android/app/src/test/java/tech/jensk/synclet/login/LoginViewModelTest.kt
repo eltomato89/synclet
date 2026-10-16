@@ -60,8 +60,8 @@ class LoginViewModelTest {
         Dispatchers.resetMain()
     }
 
-    private fun viewModel() = LoginViewModel(ServerCheck(OkHttpClient()), BrowserLogin(OkHttpClient()), accounts,
-        PendingLoginStore(pendingFile), allowHttp = true)
+    private fun viewModel(ready: suspend () -> Unit = {}) = LoginViewModel(ServerCheck(OkHttpClient()), BrowserLogin(OkHttpClient()),
+        accounts, PendingLoginStore(pendingFile), allowHttp = true, ready = ready)
 
     private fun json(body: String, code: Int = 200) =
         server.enqueue(MockResponse().setResponseCode(code).setHeader("Content-Type", "application/json").setBody(body))
@@ -129,5 +129,14 @@ class LoginViewModelTest {
         val state = withTimeout(5_000) { vm.state.first { it.error != null } }
         assertTrue(state.error is LoginError.Expired)
         assertEquals(0, server.requestCount)
+    }
+
+    @Test fun failedStartupStopsBeforeTheCodeIsExchanged() = runBlocking {
+        PendingLoginStore(pendingFile).save(PendingLogin(server.url("/").toString(), "v".repeat(43), "st1", null, System.currentTimeMillis()))
+        val vm = viewModel(ready = { throw java.io.IOException("accounts.json unreadable") })
+        vm.complete("synclet://oauth?code=c1&state=st1")
+        val state = withTimeout(5_000) { vm.state.first { it.error != null } }
+        assertTrue(state.error is java.io.IOException)
+        assertEquals(0, server.requestCount)                 // no login session was opened on the server
     }
 }
