@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="search_hint">Search files and text</string>
+    <string name="search_only_in">Only in „%1$s“</string>
+    <string name="search_no_results">No results</string>
+    <string name="recent_title">Recent</string>
+    <string name="recent_empty">No recent files</string>
+    <string name="trash_title">Trash</string>
+    <string name="trash_empty_state">The trash is empty.</string>
+    <string name="trash_restore">Restore</string>
+    <string name="trash_delete_forever">Delete Forever</string>
+    <string name="trash_delete_forever_text">„%1$s“ will be deleted permanently.</string>
+    <string name="trash_empty">Empty Trash</string>
+    <string name="trash_empty_text">Everything in the trash of %1$s will be deleted permanently.</string>
+    <string name="trash_restored">„%1$s“ restored</string>
+    <string name="trash_restored_renamed">„%1$s“ restored under a new name</string>
+    <string name="trash_busy">The trash is busy with this item. Try again in a moment. (%1$s)</string>
+    <string name="trash_deleted_at">Deleted %1$s</string>
+    <string name="trash_expires_at">Removed on %1$s</string>
+    <string name="share_title">Share Link</string>
+    <string name="share_password">Password</string>
+    <string name="share_expiry">Expiry date</string>
+    <string name="share_allow_download">Allow downloads</string>
+    <string name="share_allow_upload">Allow uploads</string>
+    <string name="share_create">Create and Share Link</string>
+    <string name="share_save">Save and Share</string>
+    <string name="share_send">Share</string>
+    <string name="share_revoke">Revoke</string>
+    <string name="share_password_kept">A password is set. Enter a new one to change it.</string>
+    <string name="trash_group_unknown">Space</string>
+</resources>
