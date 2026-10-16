@@ -7,7 +7,7 @@ import SyncletKit
 /// State of an account in the account list.
 enum AccountStatus: Equatable, Sendable {
     case ok
-    /// The server rejected the device token (or none is stored) ⇒ „Neu anmelden“ (keeps the domain).
+    /// The server rejected the device token (or none is stored) ⇒ "Sign In Again" (keeps the domain).
     case signInRequired
 
     var label: String {

@@ -2,8 +2,8 @@ import QuickLook
 import SwiftUI
 
 /// `QLPreviewController` for one local file, inside a navigation controller so that its
-/// title, the system share button („Öffnen in …“, „In Dateien sichern“, „Bild sichern“) and a
-/// „Fertig“ button are shown.
+/// title, the system share button ("Open in …", "Save to Files", "Save Image") and a
+/// "Done" button are shown.
 struct QuickLookView: UIViewControllerRepresentable {
     let url: URL
     let onDone: () -> Void

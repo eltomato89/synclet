@@ -1,7 +1,7 @@
 import SwiftUI
 import SyncletKit
 
-/// Sheet "Add Account" / „Neu anmelden“: server address, then the browser login.
+/// Sheet "Add Account" / "Sign In Again": server address, then the browser login.
 struct LoginView: View {
     @State var model: LoginModel
     @Environment(\.dismiss) private var dismiss

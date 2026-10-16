@@ -1,8 +1,8 @@
 import SwiftUI
 import SyncletKit
 
-/// „Uploads“: the queue of an account with progress, errors, „Erneut versuchen“, „Entfernen“
-/// and „Abbrechen“.
+/// "Uploads": the queue of an account with progress, errors, "Try Again", "Remove"
+/// and "Cancel".
 struct UploadsView: View {
     var center: UploadCenter = .shared
     /// Only this account's uploads (`nil`: all).
@@ -41,7 +41,7 @@ struct UploadsView: View {
     }
 }
 
-/// Name, „→ <Zielordner>“, status or progress and the entry's actions.
+/// Name, "→ <target folder>", status or progress and the entry's actions.
 struct UploadRow: View {
     let entry: UploadEntry
     let fraction: Double?

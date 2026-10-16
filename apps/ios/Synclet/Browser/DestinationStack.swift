@@ -2,13 +2,13 @@ import SwiftUI
 import SyncletKit
 
 extension AccountEntry {
-    /// The account's spaces („Meine Dateien“, team folders, storages).
+    /// The account's spaces ("My Files", team folders, storages).
     var spaces: SpaceDirectory { SpaceDirectory(spaces: account.spaces) }
 }
 
-/// The navigation around a destination other than „Meine Dateien“ (Zuletzt, Suche, Papierkorb):
-/// its own `NavigationStack` (unless pushed inside another one, iPhone „Mehr“), folders pushed
-/// as ``FolderView``, the account menu at the top, „Anmeldung erforderlich“ without a client.
+/// The navigation around a destination other than "My Files" (Zuletzt, Suche, Papierkorb):
+/// its own `NavigationStack` (unless pushed inside another one, iPhone "More"), folders pushed
+/// as ``FolderView``, the account menu at the top, "Sign-in required" without a client.
 struct DestinationStack<Content: View>: View {
     let environment: AppEnvironment
     let entry: AccountEntry
@@ -89,7 +89,7 @@ struct NoticeBanner: View {
     }
 }
 
-/// „Offline“ / error placeholder with „Erneut versuchen“ for a list destination.
+/// "Offline" / error placeholder with "Try Again" for a list destination.
 struct LoadStatePlaceholder: View {
     let state: LoadState
     let failureTitle: LocalizedStringKey
@@ -126,7 +126,7 @@ struct LoadStatePlaceholder: View {
 }
 
 extension View {
-    /// Context menu with „Link teilen“ only (lists outside a folder: recent items, search hits).
+    /// Context menu with "Share Link" only (lists outside a folder: recent items, search hits).
     func shareLinkContextMenu(_ item: SyncItem, share: @escaping (SyncItem) -> Void) -> some View {
         contextMenu {
             if ItemAction.available(for: item).contains(.share) {

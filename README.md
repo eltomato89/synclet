@@ -1,6 +1,25 @@
 # Synclet
 
-Synclet is a self-hosted, Dropbox-like file server. Your folder stays a normal folder: Synclet indexes and serves the files you already have on disk, and never stores anything inside them besides your own content. Edit files on the host or through Synclet, and both see the same thing. Leave at any time and your folder is exactly as you want it.
+**Your files, on your server, in plain folders: a self-hosted Dropbox alternative that never locks your data in.**
+
+[![Website](https://img.shields.io/badge/website-eltomato89.github.io%2Fsynclet-0f7c8a)](https://eltomato89.github.io/synclet/)
+[![Download for macOS](https://img.shields.io/badge/download-macOS%20(.dmg)-0f7c8a)](https://github.com/eltomato89/synclet/releases/latest/download/Synclet.dmg)
+[![Install](https://img.shields.io/badge/install-docker%20compose-0f7c8a)](#quickstart)
+[![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme-hero-dark.webp">
+  <img src="docs/assets/readme-hero-light.webp" alt="Synclet's web app in a browser window, with the phone layout, a file preview and the spaces admin page arranged around it" width="100%">
+</picture>
+
+## Why Synclet?
+
+- **Your folder stays a plain folder.** No proprietary storage and nothing hidden inside: Synclet indexes and serves the files you already have on disk. Edit them on the host or through Synclet and both see the same thing. Throw the container away and your files are still right there.
+- **Self-hosted on your own hardware.** One Docker Compose stack; your data never leaves your server.
+- **Finder and Files integration.** Files appear in Finder (macOS) and the Files app (iOS) and download on demand.
+- **Team folders and NAS shares as spaces.** Share folders and SMB/NFS storage with per-user and per-group read/write permissions.
+- **Office editing in the browser.** Edit documents, spreadsheets and presentations with the optional Euro-Office setup.
+- **Open source.** MIT licensed.
 
 ## Features
 
@@ -13,7 +32,7 @@ Synclet is a self-hosted, Dropbox-like file server. Your folder stays a normal f
 - **Office editing (optional):** edit Office documents in the browser with Euro-Office, see [Office](#office-euro-office-editing).
 - **Versions (optional):** keep previous contents of overwritten files, see [Versions](#versions).
 - **Single sign-on (optional):** OIDC (Authentik, Keycloak, Authelia, ...) and forward-auth, see [Single sign-on](#single-sign-on). Native apps sign in through the browser, see [App login](#app-login).
-- **Spaces:** shared team folders and external storages (NAS shares, other disks) next to the personal folder, with per-user and per-group read/write access, see [Team-Ordner und externe Speicher](deploy/README.md#team-ordner-und-externe-speicher).
+- **Spaces:** shared team folders and external storages (NAS shares, other disks) next to the personal folder, with per-user and per-group read/write access, see [Team folders and external storage](deploy/README.md#team-folders-and-external-storage).
 - **Admin area:** users, sessions and devices, shares, SSO settings and server status, see [Admin area](#admin-area).
 - **macOS client:** your files in Finder with on-demand download, live updates and offline folders, see [macOS client](#macos-client).
 
@@ -342,7 +361,7 @@ Admins get an "Admin" entry in the web app with:
 - **Sessions and devices:** per user, list and revoke web sessions and sync devices.
 - **Shares:** all share links of all users; revoke any of them.
 - **Single sign-on:** the OIDC and forward-auth settings described above, including discovery test and the password-login switch.
-- **Folders and storages (Spaces):** create team folders, see external storages, assign users and groups with read or write access, set watch mode and scan interval per space, scan now, hide ("Entfernen") and restore ("Wieder aufnehmen"). Details: [deploy/README.md](deploy/README.md#team-ordner-und-externe-speicher).
+- **Folders and storages (Spaces):** create team folders, see external storages, assign users and groups with read or write access, set watch mode and scan interval per space, scan now, hide ("Remove") and restore ("Restore"). Details: [deploy/README.md](deploy/README.md#team-folders-and-external-storage).
 - **Groups:** bundle users to grant access to spaces at once.
 - **Status:** version and uptime, file watcher state and last full scan, number of users, free and used space of the data and meta volumes, size of derivatives / trash / versions / uploads in `SYNCLET_META`, thumbnail and text-extraction job queues, whether versions are on and whether the Document Server is reachable.
 

@@ -149,7 +149,7 @@ public enum UploadRequestBuilder {
         // Read-only space (also after the role changed mid-upload); the copy stays for a retry.
         case 403: return .fail(.readOnly, message: message)
         case 404: return .fail(.targetGone, message: message)
-        // Missing storage: terminal instead of backing off; „Erneut versuchen“ works later.
+        // Missing storage: terminal instead of backing off; "Try Again" works later.
         case 503 where error?.code == "space_unavailable": return .fail(.spaceUnavailable, message: message)
         case 413: return .fail(.tooLarge, message: message)
         case 507: return .fail(.insufficientStorage, message: message)

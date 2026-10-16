@@ -11,7 +11,7 @@ final class TrashModel {
     let accountKey: String
     private(set) var entries: [TrashEntry] = []
     private(set) var state: LoadState = .idle
-    /// Transient message („Wiederhergestellt in …“, the server's `409` text, errors).
+    /// Transient message ("Restored to …", the server's `409` text, errors).
     var notice: String?
 
     @ObservationIgnored let api: SyncAPIClient
@@ -72,13 +72,13 @@ final class TrashModel {
         await load()
     }
 
-    /// Entries of „Meine Dateien“ (entries of servers before spaces carry no space id). Only these
+    /// Entries of "My Files" (entries of servers before spaces carry no space id). Only these
     /// are emptied by `DELETE /api/trash`: other spaces' entries stay.
     var personalEntries: [TrashEntry] {
         entries.filter { ($0.spaceId ?? SyncAPIClient.personalSpaceID) == SyncAPIClient.personalSpaceID }
     }
 
-    /// „Papierkorb leeren“ is offered only when it would delete something (like the web).
+    /// "Empty Trash" is offered only when it would delete something (like the web).
     var canEmpty: Bool { state == .loaded && !personalEntries.isEmpty }
 
     /// The confirmation text for emptying (a key of Localizable.xcstrings).

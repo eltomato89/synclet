@@ -28,7 +28,7 @@ extension BackgroundUploader: UploadDriving {}
 ///
 /// The Share extension's session (`tech.jensk.synclet.upload.share`) is attached only for a
 /// while, through a drain-only ``BackgroundUploader``: when the system hands the app its events
-/// (the extension is gone), and to cancel a share-owned upload („Abbrechen“, sign-out). The
+/// (the extension is gone), and to cancel a share-owned upload ("Cancel", sign-out). The
 /// drain-only uploader records final results and hands every next step to the app's uploader;
 /// afterwards the session is relinquished, so the extension can use it again.
 @MainActor
@@ -36,7 +36,7 @@ extension BackgroundUploader: UploadDriving {}
 final class UploadCenter {
     static let shared = UploadCenter.live()
 
-    /// `UserDefaults` key of the setting „Fotos als JPEG hochladen“.
+    /// `UserDefaults` key of the setting "Upload Photos as JPEG".
     static let photosAsJPEGKey = "uploadPhotosAsJPEG"
 
     /// Newest first.
@@ -250,14 +250,14 @@ final class UploadCenter {
 
     // MARK: - Entry actions
 
-    /// „Erneut versuchen“ for a failed upload.
+    /// "Try Again" for a failed upload.
     func retry(_ id: String) {
         queue.retry(id: id)
         reload()
         Task { await uploader.pump() }
     }
 
-    /// „Abbrechen“ (running) and „Entfernen“ (failed): stops the transfer and drops the entry.
+    /// "Cancel" (running) and "Remove" (failed): stops the transfer and drops the entry.
     /// A Share extension upload is cancelled in the extension's session (attached for that).
     func cancel(_ id: String) async {
         if let entry = queue.entry(id: id), Self.isShareOwned(entry) {

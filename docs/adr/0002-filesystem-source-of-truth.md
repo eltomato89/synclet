@@ -1,17 +1,17 @@
-# ADR 0002: Das Dateisystem ist die Source of Truth
+# ADR 0002: The file system is the source of truth
 
-- Status: akzeptiert (2026-10-15)
+- Status: accepted (2026-10-15)
 
-## Kontext
-Nutzer sollen Synclet auf einen bestehenden Ordner richten und den Container jederzeit wegwerfen können. Was Web und Apps anzeigen, muss 1:1 auf der Platte liegen.
+## Context
+Users should be able to point Synclet at an existing folder and throw the container away at any time. What the web app and the apps show must lie 1:1 on disk.
 
-## Entscheidung
-- Der Datenordner (`/data/<username>/`) enthält ausschließlich Nutzerdateien – keine Metadateien, keine xattrs, keine versteckten Ordner. Einzige Ausnahme sind kurzlebige Temp-Dateien `.<name>.synclet-<id>` während eines atomaren Schreibvorgangs; sie werden ignoriert und beim Start aufgeräumt.
-- Alle Metadaten (Item-Index, Journal, Thumbnails, Papierkorb, Versionen, Suchindex) liegen in PostgreSQL bzw. im Volume `/meta`.
-- Der Server erkennt externe Änderungen per Watcher (`@parcel/watcher`, best effort) und periodischem Reconcile-Scan.
-- Stabile Item-IDs: Pfad-Match vor Inode-Match vor delete+create.
+## Decision
+- The data folder (`/data/<username>/`) contains only user files – no metadata files, no xattrs, no hidden folders. The only exception is short-lived temp files `.<name>.synclet-<id>` during an atomic write; they are ignored and cleaned up at startup.
+- All metadata (item index, journal, thumbnails, trash, versions, search index) lives in PostgreSQL or in the `/meta` volume.
+- The server detects external changes with a watcher (`@parcel/watcher`, best effort) and a periodic reconcile scan.
+- Stable item IDs: path match before inode match before delete+create.
 
-## Konsequenzen
-- Externe Löschungen können nicht in den Papierkorb, externe Edits nicht versioniert werden.
-- Auf Netzwerk-Dateisystemen mit instabilen Inodes degradieren externe Moves zu delete+create.
-- Ohne optionalen Same-FS-Modus kosten Papierkorb und Versionen eine Kopie (EXDEV).
+## Consequences
+- External deletions cannot go to the trash, and external edits cannot be versioned.
+- On network file systems with unstable inodes, external moves degrade to delete+create.
+- Without an optional same-FS mode, trash and versions cost a copy (EXDEV).

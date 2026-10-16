@@ -1,7 +1,7 @@
 import SwiftUI
 import SyncletKit
 
-/// „Zuletzt“: recently changed files of the account.
+/// "Recent": recently changed files of the account.
 struct RecentView: View {
     let environment: AppEnvironment
     let entry: AccountEntry

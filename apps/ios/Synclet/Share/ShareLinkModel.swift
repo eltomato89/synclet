@@ -3,7 +3,7 @@ import Observation
 import os
 import SyncletKit
 
-/// „Link teilen“ for one item (spec §2.3): reuses the newest active link or creates one;
+/// "Share Link" for one item (spec §2.3): reuses the newest active link or creates one;
 /// password, expiry, download and (folders only) upload; revoking.
 @MainActor
 @Observable

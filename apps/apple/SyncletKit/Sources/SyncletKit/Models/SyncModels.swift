@@ -305,7 +305,7 @@ public struct SyncSpace: Codable, Sendable, Hashable, Identifiable {
     }
 
     /// `false` while the server reports the space `missing` (its content answers
-    /// `503 space_unavailable`); clients show „Nicht verfügbar“.
+    /// `503 space_unavailable`); clients show "Not Available".
     public var isAvailable: Bool { status != "missing" }
 
     private enum CodingKeys: String, CodingKey { case id, kind, name, rootId, canWrite, status }

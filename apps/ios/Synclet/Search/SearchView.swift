@@ -1,7 +1,7 @@
 import SwiftUI
 import SyncletKit
 
-/// „Suche“ (iPhone tab, iPad sidebar): full-text search over all files of the account.
+/// "Search" (iPhone tab, iPad sidebar): full-text search over all files of the account.
 struct SearchView: View {
     let environment: AppEnvironment
     let entry: AccountEntry
@@ -16,7 +16,7 @@ struct SearchView: View {
     }
 }
 
-/// The search field and the results of the „Suche“ destination.
+/// The search field and the results of the "Search" destination.
 private struct SearchPage: View {
     let spaces: SpaceDirectory
     let open: (FolderRoute) -> Void
@@ -106,7 +106,7 @@ struct SearchResultsList: View {
 /// A hit: thumbnail, name, path and (for content matches) the snippet.
 struct SearchHitRow: View {
     let hit: SyncSearchHit
-    /// The path, with the space in front when the account has several („Team · /Docs/a.pdf“).
+    /// The path, with the space in front when the account has several ("Team · /Docs/a.pdf").
     let location: String
     let api: SyncAPIClient
 
@@ -141,8 +141,8 @@ enum FolderSearchScope: Hashable {
     case folder
 }
 
-/// Search inside „Meine Dateien“ (iPad): a search field on each folder; while searching, the
-/// results cover the folder. „Im Ordner suchen“ limits the search to the folder shown.
+/// Search inside "My Files" (iPad): a search field on each folder; while searching, the
+/// results cover the folder. "Search in Folder" limits the search to the folder shown.
 struct FolderSearch: ViewModifier {
     let model: SearchModel
     let folder: FolderRoute
@@ -194,7 +194,7 @@ private struct FolderSearchOverlay: View {
 }
 
 extension View {
-    /// Search on a folder of „Meine Dateien“ (see ``FolderSearch``); `nil` adds nothing.
+    /// Search on a folder of "My Files" (see ``FolderSearch``); `nil` adds nothing.
     @ViewBuilder
     func folderSearch(_ model: SearchModel?, folder: FolderRoute, spaces: SpaceDirectory,
                       open: @escaping (FolderRoute) -> Void) -> some View {
