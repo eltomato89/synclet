@@ -708,11 +708,51 @@ a folder id is `400 invalid_request` whether versions are on or off.
 
 ---
 
+## 11a. Share links (/api/shares)
+
+Public links to a file or folder. These are the **owner-side** routes (device token or web token,
+paths relative to `/api`); the public side (`/api/public/shares`, the `/s/<token>` page) is a web
+route and not part of this contract. Item ids are Sync ids (`d_<uuid>` / `f_<uuid>`).
+
+`ShareLink`:
+
+```json
+{ "id": "<uuid>", "itemId": "d_…", "itemName": "Photos", "itemType": "folder",
+  "url": "/s/<token>", "hasPassword": true, "expiresAt": "2026-10-17T08:00:00.000Z",
+  "allowDownload": true, "allowUpload": false, "createdAt": "…", "revokedAt": null,
+  "hits": 0, "itemTrashed": false }
+```
+
+- `url` is relative (`/s/<token>`, resolve it against the server origin) unless the server has
+  `SYNCLET_PUBLIC_URL` set, in which case it is absolute. It is always present for the owner and
+  changes on rotate.
+- `itemTrashed`: the item is in the trash; the link answers 404 publicly until the item is
+  restored. Only revoking is possible meanwhile.
+- `allowUpload` is only ever `true` for folders.
+
+Routes:
+
+- `POST /shares` `{ itemId, password?: string|null, expiresAt?: string|null, allowDownload?: boolean
+  (default true), allowUpload?: boolean (default false) }` → `201 ShareLink`. `password` is 1..1024
+  characters; `expiresAt` is ISO 8601 with offset and must be in the future. Unknown fields,
+  `allowUpload` on a file, an invalid `itemId` or a past `expiresAt` → `400 invalid_request`;
+  unknown or trashed item → `404 not_found`.
+- `GET /shares?itemId=<id>` → `ShareLink[]`, newest first: the user's links that are not revoked
+  (`revokedAt` is therefore always `null`), including links of trashed items. `itemId` filters.
+- `PATCH /shares/:id` `{ password?, expiresAt?, allowDownload?, allowUpload? }` (same rules; omitted
+  = unchanged, `null` removes password / expiry) → `200 ShareLink`. Unknown, foreign or revoked id,
+  or a trashed item → `404 not_found`.
+- `POST /shares/:id/rotate` → `200 ShareLink` with a new `url`; the old link stops working at once.
+- `DELETE /shares/:id` → `204`, idempotent. The link is revoked: it disappears from the list and
+  from then on `PATCH`/rotate answer `404`. Unknown or foreign id → `404 not_found`.
+
+---
+
 ## 12. Not part of this contract (yet)
 
 - APNs pushes – Phase 3 (`PUT /devices/current/push` is already accepted).
-- Office editing (`GET /sync/v1/items/:id/office`, `POST /sync/v1/items/new-office`), share links
-  (`/api/shares`, `/api/public/shares`), admin routes (`/api/admin/*`) and SSO (`/api/auth/oidc/*`,
+- Office editing (`GET /sync/v1/items/:id/office`, `POST /sync/v1/items/new-office`), public share
+  routes (`/api/public/shares`; the owner side is §11a), admin routes (`/api/admin/*`) and SSO (`/api/auth/oidc/*`,
   `/api/auth/forward`) are web-app routes and may change without notice to native clients.
 - Pinning ("always keep offline") is purely client-side.
 - Shared folders between users (Phase 5) will introduce capabilities other than all-`true`.
@@ -731,7 +771,7 @@ a folder id is `400 invalid_request` whether versions are on or off.
 | Device platforms | ios, android, macos, windows | + `linux`, `web` |
 | Account | real organization, areas by module | `organizationId = "<serverId>:<userId>"`, `organizationName = "Synclet"`, `slug` = username, only `personal` area, `quotaBytes = 0` |
 | Ids / kinds | `root`, areas (`personal`, `shared`, …), `c_`, `p_`, `o_`, `d_`, `f_`, `l_` | only `root`, `d_<uuid>`, `f_<uuid>`; `kind` ∈ root, folder, file; top-level items have `parentId: "root"` |
-| Links | `l_…` items | none |
+| Links | `l_…` items | none; share links are separate objects, §11a |
 | Folder etag | `t<updatedAtMs>` | opaque `t…`, stable across ancestor moves |
 | Version counting | API writes only | also counts edits made on the server's disk |
 | Modified-at header | `X-Buro-Modified-At` accepted, not evaluated | `X-Synclet-Modified-At` (alias `X-Buro-Modified-At`) **sets** the file's mtime / `modifiedAt` |
@@ -740,6 +780,7 @@ a folder id is `400 invalid_request` whether versions are on or off.
 | Thumbnails, text previews, download tokens | – | §6.2, §9; `SyncItem.preview` |
 | Versions, capabilities | – | §10, §3 |
 | Search, recent | – | §11 |
+| Share links | – | §11a |
 | Changes | trigger-based journal, BIGSERIAL cursor | journal written in the same transaction as the change; per-user sequence; same `410` semantics |
 | Subtree delete in `/changes` | folder only | folder **and** every descendant |
 | Name validation | Buro rules | Windows-safe rules of §4.3 (reserved names, trailing dot/space, 255 bytes), ignored names |
