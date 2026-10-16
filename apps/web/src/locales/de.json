@@ -59,7 +59,8 @@
     "notFoundBody": "Unter dieser Adresse gibt es nichts. Vielleicht wurde der Link gekürzt oder der Ordner verschoben.",
     "notFoundBack": "Zu meinen Dateien",
     "skipToContent": "Zum Inhalt springen",
-    "administration": "Administration"
+    "administration": "Administration",
+    "updateAvailable": "Update verfügbar"
   },
   "spaces": {
     "section": "Bereiche",
@@ -899,6 +900,15 @@
       "uptimeDays": "{{d}} T {{h}} Std",
       "uptimeHours": "{{h}} Std {{m}} Min",
       "uptimeMinutes": "{{m}} Min",
+      "update": {
+        "up-to-date": "Aktuell",
+        "update-available": "Update verfügbar: {{latest}}",
+        "development": "Entwicklungsversion",
+        "unavailable": "Updateprüfung fehlgeschlagen",
+        "disabled": "Updateprüfung deaktiviert"
+      },
+      "newTab": "(öffnet in neuem Tab)",
+      "updateChecked": "Zuletzt geprüft {{time}}",
       "storage": "Speicherplatz",
       "storageHint": "Freier Platz auf den Volumes für Benutzerdateien und für Synclets eigene Daten.",
       "dataHint": "Benutzerdateien",

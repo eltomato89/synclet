@@ -1,5 +1,5 @@
-import type { PublicUser } from '@synclet/shared';
-import { cleanup, render, screen } from '@testing-library/react';
+import type { PublicUser, VersionInfoWire } from '@synclet/shared';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { Sidebar } from '@/components/app-shell/Sidebar';
@@ -60,4 +60,47 @@ it('lists "Administration" in the sidebar only for admins', () => {
   me = admin;
   render(<Wrapper><MemoryRouter><Sidebar /></MemoryRouter></Wrapper>);
   expect(screen.getByRole('link', { name: 'Administration' })).toHaveAttribute('href', '/admin');
+});
+
+function mockStatus(status: VersionInfoWire['status']) {
+  const calls: string[] = [];
+  vi.spyOn(apiMod, 'api').mockImplementation(async (path: string) => {
+    calls.push(path);
+    if (path === '/admin/status') {
+      return { version: { installed: '0.1.2', revision: null, latest: '0.1.3', latestUrl: null, checkedAt: null, status } };
+    }
+    return { usedBytes: 0, quotaBytes: 0 };
+  });
+  return calls;
+}
+
+it('marks "Administration" in the sidebar when an update is available', async () => {
+  const calls = mockStatus('update-available');
+  const { wrapper: Wrapper } = testQueryClient();
+  me = admin;
+  const view = render(<Wrapper><MemoryRouter><Sidebar /></MemoryRouter></Wrapper>);
+  const link = await screen.findByRole('link', { name: 'Administration Update available' });
+  expect(within(link).getByTestId('update-dot')).toBeInTheDocument();
+  // Rerenders reuse the cached status instead of asking the server again.
+  view.rerender(<Wrapper><MemoryRouter><Sidebar /></MemoryRouter></Wrapper>);
+  expect(calls.filter((p) => p === '/admin/status')).toHaveLength(1);
+});
+
+it('shows no update mark when up to date, and never asks for the status as a non-admin', async () => {
+  const calls = mockStatus('up-to-date');
+  const { wrapper: Wrapper } = testQueryClient();
+  me = admin;
+  const { unmount } = render(<Wrapper><MemoryRouter><Sidebar /></MemoryRouter></Wrapper>);
+  await waitFor(() => expect(calls).toContain('/admin/status'));
+  expect(screen.getByRole('link', { name: 'Administration' })).toBeInTheDocument();
+  expect(screen.queryByTestId('update-dot')).toBeNull();
+  unmount();
+
+  const memberCalls = mockStatus('update-available');
+  const second = testQueryClient();
+  me = member;
+  render(<second.wrapper><MemoryRouter><Sidebar /></MemoryRouter></second.wrapper>);
+  await waitFor(() => expect(memberCalls).toContain('/sync/v1/account'));
+  expect(memberCalls).not.toContain('/admin/status');
+  expect(screen.queryByTestId('update-dot')).toBeNull();
 });

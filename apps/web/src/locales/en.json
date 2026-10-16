@@ -59,7 +59,8 @@
     "notFoundBody": "There's nothing at this address. The link may be cut off or the folder may have moved.",
     "notFoundBack": "Go to my files",
     "skipToContent": "Skip to content",
-    "administration": "Administration"
+    "administration": "Administration",
+    "updateAvailable": "Update available"
   },
   "spaces": {
     "section": "Spaces",
@@ -899,6 +900,15 @@
       "uptimeDays": "{{d}} d {{h}} h",
       "uptimeHours": "{{h}} h {{m}} min",
       "uptimeMinutes": "{{m}} min",
+      "update": {
+        "up-to-date": "Up to date",
+        "update-available": "Update available: {{latest}}",
+        "development": "Development build",
+        "unavailable": "Could not check for updates",
+        "disabled": "Update check disabled"
+      },
+      "newTab": "(opens in a new tab)",
+      "updateChecked": "Last checked {{time}}",
       "storage": "Storage",
       "storageHint": "Free space on the volumes for user files and for Synclet's own data.",
       "dataHint": "User files",

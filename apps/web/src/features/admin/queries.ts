@@ -86,12 +86,26 @@ export function useAccessMutations(userId: string) {
   };
 }
 
+const statusKey = [...ADMIN_KEY, 'status'] as const;
+const fetchStatus = () => api<AdminStatusWire>('/admin/status');
+
 export function useAdminStatus() {
-  return useQuery({
-    queryKey: [...ADMIN_KEY, 'status'],
-    queryFn: () => api<AdminStatusWire>('/admin/status'),
-    refetchInterval: STATUS_REFRESH_MS,
+  return useQuery({ queryKey: statusKey, queryFn: fetchStatus, refetchInterval: STATUS_REFRESH_MS });
+}
+
+/** How long the sidebar trusts a status answer before asking again (the server caches the GitHub check for 12 h). */
+export const UPDATE_HINT_STALE_MS = 6 * 3600_000;
+
+/**
+ * True when the server reports a newer release. Shares the status query (and its cache) with the
+ * status page; on its own it fetches once and then at most every 6 hours, never on window focus.
+ */
+export function useUpdateAvailable(enabled: boolean): boolean {
+  const { data } = useQuery({
+    queryKey: statusKey, queryFn: fetchStatus, enabled, staleTime: UPDATE_HINT_STALE_MS,
+    refetchOnWindowFocus: false, retry: false,
   });
+  return enabled && data?.version?.status === 'update-available';
 }
 
 export function adminSharesPath(filter: { userId?: string; status: ShareStatusFilter }): string {

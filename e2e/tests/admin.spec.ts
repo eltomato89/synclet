@@ -103,6 +103,9 @@ test('admin area: users, adopted folder, disable, last admin, sessions, status, 
     await expect(reading('Active users')).toHaveText(String(users.filter((u) => !u.disabled).length));
     await expect(reading('File versions')).toHaveText('On');
     await expect(reading('File watcher')).toHaveText(/Watching|Scans only/);
+    // Source builds (compose.build.yml) carry no release version, so no update check is made.
+    await expect(reading('Version')).toHaveText('Development build');
+    expect((await (await adminApi.get('/api/admin/status')).json()).version).toMatchObject({ installed: 'dev', status: 'development', latest: null });
     const meter = page.getByRole('meter', { name: 'Disk usage of /data' });
     await expect(meter).toBeVisible();
     expect(Number(await meter.getAttribute('aria-valuenow'))).toBeGreaterThan(0);
