@@ -219,6 +219,14 @@ Both settings are needed: `OFFICE_JWT_SECRET` turns office editing on in Synclet
 
 Put the proxy into `SYNCLET_TRUSTED_PROXIES`, otherwise Caddy tells the Document Server the request was plain `http` and it generates `http://` and `ws://` URLs (mixed content; the editor does not load).
 
+Use the address the proxy **arrives with at Caddy**, which is not always the proxy's own IP. If the proxy reaches Synclet through a published port (e.g. `8080:80`) on a host with Docker's userland proxy, every connection arrives from the gateway of Synclet's Docker network (often `172.x.0.1`), and that gateway address is what belongs in `SYNCLET_TRUSTED_PROXIES`. To see the address while a page is open, list Caddy's connections:
+
+```sh
+docker compose exec caddy netstat -tn | grep ':80 '
+```
+
+The remote addresses in the last column are what Caddy sees. Symptom of a wrong value: the editor shows "Download failed" right after opening a document.
+
 **Alternative: Document Server on its own subdomain.** In the default setup the Document Server's pages share Synclet's origin. That is simpler (one hostname, the Content-Security-Policy stays at `'self'`), but it means an XSS vulnerability in the Document Server could act as the signed-in Synclet user (read the web app's state, call the API with the session). On a separate subdomain the browser isolates the two. To use it:
 
 1. Download the override next to `compose.yml` (in a checkout it is `deploy/compose.office.yml`):
