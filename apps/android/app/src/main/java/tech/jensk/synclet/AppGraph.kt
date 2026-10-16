@@ -44,6 +44,7 @@ import tech.jensk.synclet.core.upload.UploadScheduler
 import tech.jensk.synclet.core.upload.Uploader
 import tech.jensk.synclet.provider.ContentResolverNotifier
 import tech.jensk.synclet.provider.ProviderEnvironment
+import tech.jensk.synclet.share.ShareIntentParser
 import tech.jensk.synclet.provider.ProviderNotifier
 import tech.jensk.synclet.sync.ForegroundSync
 import tech.jensk.synclet.core.R as CoreR
@@ -128,18 +129,36 @@ class AppGraph(private val app: Application) : UploadEnvironment, ProviderEnviro
 
     suspend fun enqueueUploads(accountKey: String, parentId: String, parentName: String, uris: List<Uri>): Int {
         var count = 0
-        for (uri in uris) {
-            val (display, mime) = withContext(Dispatchers.IO) { nameAndType(uri) }
-            val name = UploadNames.forShared(display, mime, ZonedDateTime.now(), app.getString(CoreR.string.upload_fallback_name)) {
-                MimeTypeMap.getSingleton().getExtensionFromMimeType(it)
+        try {
+            for (uri in uris) {
+                if (!isSafeSource(uri)) continue
+                val (display, mime) = withContext(Dispatchers.IO) { nameAndType(uri) }
+                val name = UploadNames.forShared(display, mime, ZonedDateTime.now(), app.getString(CoreR.string.upload_fallback_name)) {
+                    MimeTypeMap.getSingleton().getExtensionFromMimeType(it)
+                }
+                uploadQueue.enqueueCreate(accountKey, parentId, parentName, name, {
+                    app.contentResolver.openInputStream(uri) ?: throw FileNotFoundException(uri.toString())
+                })
+                count++
             }
-            uploadQueue.enqueueCreate(accountKey, parentId, parentName, name, {
-                app.contentResolver.openInputStream(uri) ?: throw FileNotFoundException(uri.toString())
-            })
-            count++
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Files already queued stay queued; only a failure before the first one is an error.
+            if (count == 0) throw e
+        } finally {
+            if (count > 0) UploadScheduler.schedule(app, accountKey)
         }
-        if (count > 0) UploadScheduler.schedule(app, accountKey)
         return count
+    }
+
+    /** Foreign `content://` sources only; nothing of this app's own data (defence in depth behind ShareIntentParser). */
+    private fun isSafeSource(uri: Uri): Boolean {
+        if (!ShareIntentParser.isAcceptable(uri, app.packageName)) return false
+        val path = uri.path ?: return true
+        val roots = listOfNotNull(app.filesDir, app.cacheDir, app.dataDir).map { it.canonicalPath }
+        val canonical = runCatching { File(path).canonicalPath }.getOrNull() ?: return true
+        return roots.none { canonical == it || canonical.startsWith(it + File.separator) }
     }
 
     suspend fun enqueueText(accountKey: String, parentId: String, parentName: String, text: String, subject: String?): Int {
