@@ -61,6 +61,14 @@ it('shows "Not available" for a space that answered 503', async () => {
   expect(await within(screen.getByRole('link', { name: /NAS/ })).findByText('Not available')).toBeInTheDocument();
 });
 
+it('shows "Not available" for a space the server reports missing', async () => {
+  spaces = SPACES.map((s) => (s.id === EXT ? { ...s, status: 'missing' as const } : { ...s, status: 'available' as const }));
+  renderAt('/files');
+  const nas = await screen.findByRole('link', { name: /NAS/ });
+  expect(within(nas).getByText('Not available')).toBeInTheDocument();
+  expect(within(screen.getByRole('link', { name: /Familie/ })).queryByText('Not available')).toBeNull();
+});
+
 it('has no spaces section when the account has only the personal space', async () => {
   spaces = SPACES.slice(0, 1);
   renderAt('/files');

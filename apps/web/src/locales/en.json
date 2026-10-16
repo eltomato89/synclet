@@ -554,6 +554,7 @@
   },
   "office": {
     "open": "Open in Office",
+    "view": "View in Office",
     "new": {
       "more": "More …",
       "label": "Name",

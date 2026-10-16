@@ -165,11 +165,11 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   // A space whose storage is missing answers 503: the sidebar marks it until it loads again.
   const loadError = folderQ.error;
   useEffect(() => {
-    if (folder) markSpaceUnavailable(qc, spaceOfItem(folder), false);
-    else if (loadError instanceof ApiError && loadError.code === 'space_unavailable') {
-      const space = spaceIdOfRoot(folderId) ?? qc.getQueryData<SyncItem>(['item', folderId])?.spaceId ?? loadError.item?.spaceId;
+    // The error first: a refetch of a cached folder can fail while its old data is still there.
+    if (loadError instanceof ApiError && loadError.code === 'space_unavailable') {
+      const space = spaceIdOfRoot(folderId) ?? (folder && spaceOfItem(folder)) ?? qc.getQueryData<SyncItem>(['item', folderId])?.spaceId ?? loadError.item?.spaceId;
       if (space) markSpaceUnavailable(qc, space, true);
-    }
+    } else if (folder) markSpaceUnavailable(qc, spaceOfItem(folder), false);
   }, [folder, loadError, folderId, qc]);
 
   const setView = (v: View) => { setViewState(v); writePref(VIEW_KEY, v); };
@@ -404,7 +404,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   let body;
   if (err instanceof ApiError && (err.status === 404 || err.status === 400)) {
     body = <NotFoundMessage />;
-  } else if (!folderQ.data && err instanceof ApiError && err.code === 'space_unavailable') {
+  } else if (err instanceof ApiError && err.code === 'space_unavailable') {
     body = (
       <StatusMessage title={t('spaces.unavailableTitle')} body={t('spaces.unavailableBody')}>
         <Button variant="outline" onClick={() => void folderQ.refetch()} disabled={folderQ.isFetching}>{t('files.loadError.retry')}</Button>
@@ -488,6 +488,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
             onShare={actions.share}
             onOpenInOffice={actions.openInOffice}
             onVersions={actions.versions}
+            writable={(e: SyncItem) => e.capabilities.write !== false}
           />
         )}
         {d?.kind === 'newFolder' && (

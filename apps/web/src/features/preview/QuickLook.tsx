@@ -32,6 +32,8 @@ export interface QuickLookProps<E extends QuickLookEntry> {
   onOpenInOffice?(entry: E): void;
   /** Set when versions are enabled; opens the versions panel for the file. */
   onVersions?(entry: E): void;
+  /** False for files the user can only read: no Share, and Office opens for viewing. Default: writable. */
+  writable?(entry: E): boolean;
 }
 
 type Resolved = { id: string; source: PreviewSource } | { id: string; error: true };
@@ -42,7 +44,7 @@ type Resolved = { id: string; source: PreviewSource } | { id: string; error: tru
  * sort order, Space or Esc closes. Focus is trapped while open and handed back via `onClosed`.
  */
 export function QuickLook<E extends QuickLookEntry>(props: QuickLookProps<E>) {
-  const { entries, activeId, open, onActiveChange, onOpenChange, onClosed, resolveSource, onDownload, onShare, onOpenInOffice, onVersions } = props;
+  const { entries, activeId, open, onActiveChange, onOpenChange, onClosed, resolveSource, onDownload, onShare, onOpenInOffice, onVersions, writable } = props;
   const { t, i18n } = useTranslation();
   const contentRef = useRef<HTMLDivElement>(null);
   // The entry stays displayable if it vanishes from the list (deleted elsewhere) while open.
@@ -138,11 +140,11 @@ export function QuickLook<E extends QuickLookEntry>(props: QuickLookProps<E>) {
             <div className="flex items-center gap-0.5">
               {entry && onOpenInOffice && isOfficeFile(entry.name) && (
                 <Button variant="ghost" size="sm" onClick={() => onOpenInOffice(entry)} className="mr-1 text-muted-foreground hover:text-foreground">
-                  <FilePen /><span className="max-sm:sr-only">{t('office.open')}</span>
+                  <FilePen /><span className="max-sm:sr-only">{writable?.(entry) === false ? t('office.view') : t('office.open')}</span>
                 </Button>
               )}
               {entry && onVersions && <HeaderButton label={t('files.versionsShort')} onClick={() => onVersions(entry)}><History /></HeaderButton>}
-              {entry && onShare && <HeaderButton label={t('preview.share')} onClick={() => onShare(entry)}><Share2 /></HeaderButton>}
+              {entry && onShare && writable?.(entry) !== false && <HeaderButton label={t('preview.share')} onClick={() => onShare(entry)}><Share2 /></HeaderButton>}
               {download && <HeaderButton label={t('common.download')} onClick={download}><Download /></HeaderButton>}
               <span aria-hidden className="mx-1.5 h-5 w-px bg-border" />
               <DialogPrimitive.Close asChild>

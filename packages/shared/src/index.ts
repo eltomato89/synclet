@@ -37,7 +37,11 @@ export interface SyncItem {
 
 export type SyncSpaceKind = 'personal' | 'shared' | 'external';
 /** A top-level space of the account; each has its own root folder. Clients store sync state per space. */
-export interface SyncSpace { id: string; kind: SyncSpaceKind; name: string; rootId: string; canWrite: boolean }
+export interface SyncSpace {
+  id: string; kind: SyncSpaceKind; name: string; rootId: string; canWrite: boolean;
+  /** `missing`: the storage is unreachable (content answers 503); absent from older servers = available. */
+  status?: 'available' | 'missing';
+}
 
 export interface SyncAccount {
   userId: string; email: string | null; displayName: string;

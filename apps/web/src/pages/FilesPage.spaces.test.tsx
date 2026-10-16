@@ -1,5 +1,5 @@
 import type { SyncItem } from '@synclet/shared';
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { Topbar, TopbarProvider } from '@/components/app-shell/Topbar';
@@ -88,4 +88,14 @@ it('an empty read-only folder offers no upload', async () => {
   renderAt(`/files/r_${EXT}`);
   expect(await screen.findByText('Nothing here yet. You can only read in this space.')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Upload files' })).toBeNull();
+});
+
+it('a 503 after the folder had loaded shows the unavailable view and marks the space', async () => {
+  folders[`r_${TEAM}`] = { folder: root(TEAM, 'Familie', false), items: [syncItem({ id: 'f_2', name: 'liste.txt', parentId: `r_${TEAM}`, spaceId: TEAM })] };
+  const { qc } = renderAt(`/files/r_${TEAM}`);
+  expect(await screen.findByText('liste.txt')).toBeInTheDocument();
+  folders[`r_${TEAM}`] = new apiMod.ApiError(503, 'space_unavailable', 'missing');
+  await act(() => qc.refetchQueries({ queryKey: ['folder', `r_${TEAM}`] }));
+  expect(await screen.findByRole('heading', { name: 'This space is not available' })).toBeInTheDocument();
+  expect(qc.getQueryData(['spaces', 'unavailable'])).toEqual([TEAM]);
 });

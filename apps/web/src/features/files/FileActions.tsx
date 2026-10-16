@@ -61,7 +61,7 @@ function ItemMenuItems({ item, actions, parts: { Item, Separator, Shortcut } }: 
       </Item>
       {canOpenInOffice(item, actions) && (
         <Item onSelect={() => actions.openInOffice?.(item)}>
-          <FilePen />{t('office.open')}
+          <FilePen />{item.capabilities.write === false ? t('office.view') : t('office.open')}
         </Item>
       )}
       {actions.preview && item.type === 'file' && (

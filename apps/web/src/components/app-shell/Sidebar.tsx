@@ -97,7 +97,8 @@ function SpacesNav({ current, onNavigate }: { current: string | null; onNavigate
       <ul className="flex flex-col gap-0.5">
         {others.map((s) => {
           const active = current === s.id;
-          const off = isUnavailable(unavailable, s.id);
+          // Reported missing by the server, or answered 503 in this session.
+          const off = s.status === 'missing' || isUnavailable(unavailable, s.id);
           return (
             <li key={s.id}>
               <Link
