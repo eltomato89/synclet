@@ -24,12 +24,13 @@ export class SyncError extends Error {
 @Catch(SyncError)
 export class SyncErrorFilter implements ExceptionFilter {
   /** Installed by SyncModule so error bodies can carry a serialized SyncItem. */
-  static serializeItem?: (row: Item) => Promise<unknown>;
+  static serializeItem?: (row: Item, user?: { id: string }) => Promise<unknown>;
 
   async catch(err: SyncError, host: ArgumentsHost) {
     const reply = host.switchToHttp().getResponse<FastifyReply>();
+    const user = host.switchToHttp().getRequest<{ user?: { id: string } }>()?.user;
     const body: Record<string, unknown> = { statusCode: err.status, message: err.message, code: err.code };
-    if (err.itemRow && SyncErrorFilter.serializeItem) body.item = await SyncErrorFilter.serializeItem(err.itemRow);
+    if (err.itemRow && SyncErrorFilter.serializeItem) body.item = await SyncErrorFilter.serializeItem(err.itemRow, user);
     await reply.status(err.status).send(body);
   }
 }

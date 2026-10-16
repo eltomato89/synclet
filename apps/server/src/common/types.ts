@@ -15,4 +15,6 @@ export interface AuthUser extends IndexUser {
   role: 'admin' | 'user';
   /** Set when the request was authenticated with a device token. */
   deviceId: string | null;
+  /** Set when the request was authenticated with a download token: the space it was minted for. */
+  downloadSpace?: string;
 }

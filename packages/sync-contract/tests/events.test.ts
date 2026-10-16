@@ -105,7 +105,7 @@ describe('events (SSE)', () => {
       const events = s.of('changes');
       const covered = await Promise.all(events.slice(seen).map(async (e) => {
         expect(schemaErrors('EventChanges', e.data)).toBe('');
-        expect(e.data.space).toBe('personal');
+        if (e.data.space !== 'personal') return false; // another space of the account (team, external)
         return !(await drainChanges(api, e.data.cursor)).changes.some((c) => c.op === 'upsert' && c.item.id === folder.id);
       }));
       if (covered.includes(true)) break;

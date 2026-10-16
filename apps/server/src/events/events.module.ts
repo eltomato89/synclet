@@ -1,6 +1,7 @@
 import { Logger, Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
 import { APP_CONFIG, AppConfig } from '../config';
+import { PrismaService } from '../prisma/prisma.service';
 import { ChangeNotifier } from './change-notifier';
 import { EventsController } from './events.controller';
 import { listenClientFactory, usesTransactionPooler } from './pg-listen-client';
@@ -12,14 +13,18 @@ import { listenClientFactory, usesTransactionPooler } from './pg-listen-client';
   providers: [
     {
       provide: ChangeNotifier,
-      inject: [APP_CONFIG],
-      useFactory: (config: AppConfig) => {
+      inject: [APP_CONFIG, PrismaService],
+      useFactory: (config: AppConfig, prisma: PrismaService) => {
         const url = process.env.DATABASE_URL ?? '';
         if (config.role === 'server' && url && usesTransactionPooler(url)) {
           new Logger('ChangeNotifier').warn('DATABASE_URL uses pgbouncer=true: a transaction-pooling connection never delivers notifications; '
             + 'event streams fall back to the check before each ping (README, "PostgreSQL").');
         }
-        return new ChangeNotifier({ enabled: config.role === 'server', createClient: listenClientFactory(url) });
+        return new ChangeNotifier({
+          enabled: config.role === 'server',
+          createClient: listenClientFactory(url),
+          publish: (channel, payload) => prisma.$executeRaw`SELECT pg_notify(${channel}, ${payload})`,
+        });
       },
     },
   ],

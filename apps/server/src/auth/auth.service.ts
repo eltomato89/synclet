@@ -20,7 +20,8 @@ export const DOWNLOAD_TOKEN_TTL_S = 60;
 export const PREVIEW_TOKEN_TTL_S = 6 * 3600;
 
 export interface AccessClaims { sub: string; username: string; role: 'admin' | 'user'; typ: 'access' }
-export interface DownloadClaims { sub: string; item: string; typ: 'dl' }
+/** `s`: space of the item when the token was minted (absent in tokens of older servers = personal). */
+export interface DownloadClaims { sub: string; item: string; s?: string; typ: 'dl' }
 
 let dummyHashPromise: Promise<string> | undefined;
 function dummyHash(): Promise<string> {
@@ -55,9 +56,12 @@ export class AuthService {
     }
   }
 
-  /** Item-bound token accepted as `?dt=` by routes marked `@AllowDownloadToken` (content, thumbnail). */
-  async signDownloadToken(userId: string, itemId: string, ttlSeconds: number = DOWNLOAD_TOKEN_TTL_S): Promise<string> {
-    const claims: DownloadClaims = { sub: userId, item: itemId, typ: 'dl' };
+  /**
+   * Item-bound token accepted as `?dt=` by routes marked `@AllowDownloadToken` (content, thumbnail).
+   * `spaceId` binds it to the item's space; access to that space is checked again on every use.
+   */
+  async signDownloadToken(userId: string, itemId: string, ttlSeconds: number = DOWNLOAD_TOKEN_TTL_S, spaceId?: string): Promise<string> {
+    const claims: DownloadClaims = { sub: userId, item: itemId, typ: 'dl', ...(spaceId ? { s: spaceId } : {}) };
     return this.jwt.signAsync(claims, { secret: await this.secret(), expiresIn: ttlSeconds });
   }
 

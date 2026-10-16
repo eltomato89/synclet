@@ -1,6 +1,6 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { createTestApp, createTestUser, TestContext } from '../../test/context';
+import { createTestApp, createTestSpace, createTestUser, TestContext } from '../../test/context';
 import { AuthService } from '../auth/auth.service';
 import { JournalService } from '../journal/journal.service';
 import { ChangeNotifier } from './change-notifier';
@@ -120,7 +120,7 @@ describe('GET /api/sync/v1/events (SSE)', () => {
     expect(s.headers['content-type']).toMatch(/^text\/event-stream/);
     expect(s.headers['cache-control']).toBe('no-cache, no-transform');
     expect(s.headers['x-accel-buffering']).toBe('no');
-    expect(s.of('hello')[0].data).toEqual({ cursor: account.cursor });
+    expect(s.of('hello')[0].data).toEqual({ cursor: account.cursor, cursors: { personal: account.cursor } });
     expect(account.cursor).not.toBe('0');
   });
 
@@ -257,5 +257,73 @@ describe('GET /api/sync/v1/events (SSE)', () => {
     expect(s.status).toBe(429);
     expect(Number(s.headers['retry-after'])).toBeGreaterThanOrEqual(1);
     expect(JSON.parse(s.body).code).toBe('rate_limited');
+  });
+
+  describe('spaces', () => {
+    it('hello carries the cursor of every readable space', async () => {
+      const team = await createTestSpace(ctx, 'Familie');
+      await ctx.prisma.spaceMember.create({ data: { spaceId: team.id, userId, role: 'read' } });
+      await createTestSpace(ctx, 'Hidden');
+      await ctx.prisma.syncScope.update({ where: { spaceId: team.id }, data: { seq: 7n } });
+      const personal = (await api('GET', '/sync/v1/cursor')).json().cursor;
+      const s = await opened();
+      expect(s.of('hello')[0].data).toEqual({ cursor: personal, cursors: { personal, [team.id]: '7' } });
+    });
+
+    it('an edit in a team space emits `changes` with the team id to member streams only', async () => {
+      const team = await createTestSpace(ctx, 'Familie');
+      await ctx.prisma.spaceMember.create({ data: { spaceId: team.id, userId, role: 'write' } });
+      const bob = await createTestUser(ctx, 'bob');
+      const bobToken = await ctx.app.get(AuthService).signAccess(await ctx.prisma.user.findUniqueOrThrow({ where: { id: bob.id } }));
+      const mine = await opened();
+      const theirs = await opened(bobToken);
+      expect((await api('POST', '/sync/v1/items', { parentId: `r_${team.id}`, type: 'folder', name: 'T' })).statusCode).toBe(201);
+      const { cursor } = (await api('GET', `/sync/v1/cursor?space=${team.id}`)).json();
+      await mine.until(() => mine.of('changes').length > 0, 3000, 'team changes');
+      expect(mine.of('changes')).toEqual([{ event: 'changes', data: { space: team.id, cursor } }]);
+      await sleep(800);
+      expect(theirs.of('changes')).toEqual([]);
+    });
+
+    it('notifyAccount emits `account` (with a data line) and re-subscribes to the new space set', async () => {
+      const s = await opened();
+      const team = await createTestSpace(ctx, 'Neu');
+      await ctx.prisma.spaceMember.create({ data: { spaceId: team.id, userId, role: 'write' } });
+      await ctx.app.get(ChangeNotifier).notifyAccount([userId]);
+      await s.until(() => s.of('account').length > 0, 3000, 'account');
+      expect(s.of('account')).toEqual([{ event: 'account', data: {} }]);
+      expect(s.body).toContain('event: account\ndata: {}\n\n');
+      // The stream now follows the new space too.
+      expect((await api('POST', '/sync/v1/items', { parentId: `r_${team.id}`, type: 'folder', name: 'T' })).statusCode).toBe(201);
+      await s.until(() => s.of('changes').some((e) => (e.data as { space: string }).space === team.id), 3000, 'changes of the new space');
+    });
+
+    it('a stream stops following a space whose access was revoked', async () => {
+      const team = await createTestSpace(ctx, 'Familie');
+      await ctx.prisma.spaceMember.create({ data: { spaceId: team.id, userId, role: 'write' } });
+      const s = await opened();
+      await ctx.prisma.spaceMember.deleteMany({ where: { spaceId: team.id } });
+      await ctx.app.get(ChangeNotifier).notifyAccount([userId]);
+      await s.until(() => s.of('account').length > 0, 3000, 'account');
+      const journal = ctx.app.get(JournalService);
+      await ctx.prisma.$transaction(async (tx) => {
+        await journal.lockSpace(tx, team.id);
+        await journal.record(tx, team.id, [{ id: '00000000-0000-4000-8000-000000000001', type: 'folder' }], 'upsert');
+      });
+      await sleep(1500); // includes a ping catch-up
+      expect(s.of('changes')).toEqual([]);
+    });
+
+    it('a LISTEN reconnect (wakeAll) re-follows without `account` unless the space set changed', async () => {
+      const s = await opened();
+      const notifier = ctx.app.get(ChangeNotifier);
+      notifier.wakeAll();
+      await sleep(600);
+      expect(s.of('account')).toEqual([]);
+      const team = await createTestSpace(ctx, 'Neu');
+      await ctx.prisma.spaceMember.create({ data: { spaceId: team.id, userId, role: 'read' } });
+      notifier.wakeAll();
+      await s.until(() => s.of('account').length > 0, 3000, 'account after a changed set');
+    });
   });
 });
