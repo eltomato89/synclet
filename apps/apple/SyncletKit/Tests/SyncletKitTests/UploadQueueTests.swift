@@ -219,4 +219,18 @@ final class UploadQueueTests: XCTestCase {
         XCTAssertNil(retried.owner); XCTAssertNil(retried.leaseUntil)
         XCTAssertEqual(q.runnable().map(\.id), [e.id])
     }
+
+    /// A remove whose queue write fails keeps the entry and its copy together.
+    func testRemoveKeepsTheCopyWhenTheWriteFails() throws {
+        let dir = Fixtures.tempDirectory(); let q = UploadQueue(directory: dir)
+        let e = try enqueue(q)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: dir.path)
+        q.remove(id: e.id)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.path)
+        XCTAssertNotNil(q.entry(id: e.id))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: q.fileURL(for: e.id).path))
+        q.remove(id: e.id)
+        XCTAssertNil(q.entry(id: e.id))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: q.fileURL(for: e.id).path))
+    }
 }

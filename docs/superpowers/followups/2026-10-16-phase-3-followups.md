@@ -17,6 +17,8 @@ Stand: 2026-10-16, Branch phase-3 (T1–T10).
 - R12: die Thumbnail-Aufgabe hängt auch an `preview.thumbnail` (frische Uploads bekommen ihr Vorschaubild) — Kosten: keine
 - R13: iPad mit zweispaltigem `NavigationSplitView` (Seitenleiste + Inhalt, QuickLook als Sheet) statt drei Spalten wie in Spec §2.3 — Kosten, falls falsch: später eine Detailspalte
 - R14: „Suche“ auch in der iPad-Seitenleiste; „Link teilen“ für jedes lesbare Item (der Server hat kein Freigabe-Capability-Bit) — Kosten: kleine UI-Änderung, falls nicht gewollt
+- R15 (finale Review, ersetzt die Lease-Dauer aus R6): die Session hat `timeoutIntervalForResource` = 6 h, und jeder Task-Start setzt `leaseUntil` = Start + 6 h + 10 min. Kein Task überlebt den Claim, unter dem er gestartet wurde – auch wenn niemand verlängert (Share-Extension beendet, App suspendiert, Task wartet offline). Die Verlängerung bei Fortschritt entfällt. Chunk-Dateien tragen den Session-Identifier (`<id>-<offset>@<session>`) — Kosten: Einträge eines wirklich toten Prozesses (ohne laufende Aufgabe) übernimmt der andere Prozess erst nach bis zu 6 h 10 min; ein Chunk, der länger als 6 h auf Netz wartet, scheitert und zählt als Versuch
+- R16 (finale Review): die App hängt sich nur zeitweise an die Session der Share-Extension, mit einem `drainOnly`-Uploader: beim Zustellen ihrer Events (danach `finishTasksAndInvalidate`, verworfen nach `didBecomeInvalid`) und zum Abbrechen eines Share-Uploads („Abbrechen“, Abmelden: Aufgaben per `taskDescription`-Tag abbrechen, danach wieder freigeben). Der drainOnly-Uploader startet nie einen Request: er verbucht Endergebnisse und gibt jeden Folgeschritt (tus-PATCH nach Create/HEAD) als `waiting` an den App-Uploader zurück. Verworfen: ein Grabstein-Flag im Eintrag – ohne laufenden Prozess sieht ihn niemand, bevor die Systemaufgabe die Datei veröffentlicht — Kosten: siehe Einschränkungen „Share-Upload abbrechen“
 
 ## Ergebnis T10 (Tests, Auslieferung)
 - `scripts/ios-live-tests.sh` läuft grün: SyncletKit-Live-Tests inkl. `LiveBackgroundUploadTests` (40 MiB per tus, Abbruch während des zweiten PATCH, neuer Uploader setzt per `HEAD` dieselbe tus-Upload-URL fort, sha256 gleich, genau ein Item) und die UI-Tests (`LaunchTests`, `BrowserFlowUITests`) auf einem privaten Simulator.
@@ -31,7 +33,10 @@ Stand: 2026-10-16, Branch phase-3 (T1–T10).
 - **Kein Offline-Pinning** („Immer auf diesem Gerät behalten“) auf iOS: Die Pin-Logik der SyncletKit bleibt unter `#if os(macOS)`. In der File-Provider-Erweiterung laufen Pin-Aufrufe ins Leere (alle Items `.inherited`). Geöffnete Dateien liegen in der App nur im LRU-Cache (≤ 1 GB); in der Dateien-App verwaltet das System die lokalen Kopien.
 - **Kein APNs/Push.** Aktuell ist die App nur im Vordergrund (SSE pro Konto, sonst Polling alle 60 s) und beim Öffnen. Die Dateien-App sieht Server-Änderungen erst, wenn sie den Ort öffnet bzw. aufzählt.
 - **Hintergrundaktualisierung:** iOS bestimmt, wann `BGAppRefreshTask` (`tech.jensk.synclet.ios.refresh`, frühestens nach 30 min) läuft. Das kann Stunden dauern oder ganz ausbleiben (Energiesparmodus, selten genutzte App). Auch Hintergrund-Uploads verzögert iOS nach eigenem Ermessen. Der Fortschritt bleibt aber erhalten.
-- **Nicht automatisiert getestet:** Dateien-App (File Provider), Share-Extension (Fotos/Safari), Hintergrund-Upload bei gesperrtem Gerät, 507-Pfad auf dem Gerät, Geräte-Widerruf und Abmelden in der Dateien-App. Dafür gibt es die Geräte-Checkliste in `apps/ios/README.md` (15 Schritte), die noch aussteht.
+- **Nicht automatisiert getestet:** Dateien-App (File Provider), Share-Extension (Fotos/Safari), Hintergrund-Upload bei gesperrtem Gerät, 507-Pfad auf dem Gerät, Geräte-Widerruf und Abmelden in der Dateien-App, das Zusammenspiel App ↔ Share-Session. Dafür gibt es die Geräte-Checkliste in `apps/ios/README.md` (17 Schritte), die noch aussteht.
+- **Verlorene Antwort → „(2)“-Kopie:** Hat der Server ein einzelnes `POST /items/upload` (bzw. den letzten tus-PATCH) bereits übernommen, geht aber die Antwort verloren (Verbindungsabbruch, Timeout), wiederholt der Uploader und `onConflict=rename` legt „Name (2)“ an. Das ist dem Protokoll inhärent (kein Idempotenz-Schlüssel).
+- **Backoff nur im Prozess geweckt:** Einen wartenden Retry (`nextAttemptAt`) startet nur ein laufender Prozess (`UploadCenter` plant einen Pump bzw. der nächste Vordergrund/Launch). Nach einem Hintergrund-Wecken wartet er daher bis zum nächsten Vordergrund.
+- **Share-Upload abbrechen:** Die App bricht die Aufgabe in der Share-Session ab, bevor sie den Eintrag entfernt. Hat die Systemaufgabe die Datei bis dahin schon veröffentlicht (Antwort unterwegs), bleibt sie auf dem Server; der Eintrag verschwindet trotzdem (kein `done`, kein Löschen auf dem Server). Läuft die Share-Extension in dem Moment noch (iPad Split View, oder Sekunden nach „Hochladen“), benutzen kurz zwei Prozesse dieselbe Session; das Verhalten bestimmt dann das System. Dasselbe gilt, wenn die Extension erneut startet, solange die App die Session noch nicht freigegeben hat (laufende Aufgaben anderer Einträge).
 - **Upload im UI-Test:** Der UI-Test kann den System-Dateiimporter im Simulator nicht zuverlässig bedienen. Deshalb nimmt in DEBUG-Builds „Dateien“ mit dem Launch-Argument `-SyncletTestUpload <Pfad>` diese Datei direkt in die Warteschlange; den echten Importer prüft nur die Checkliste.
 - **`search.field`:** `.searchable` nimmt keinen Accessibility-Identifier an. Der UI-Test findet das Suchfeld über `app.searchFields.firstMatch`.
 - **UI-Tests nur im iPhone-Layout:** Der Flow erwartet Tab-Leiste und „Mehr“. Das iPad-Layout (Seitenleiste) prüft nur die Checkliste (Schritt 15). Drag & Drop aus der Dateien-App in die App gehört nicht zum Umfang.
@@ -43,8 +48,7 @@ Stand: 2026-10-16, Branch phase-3 (T1–T10).
   - Einrückung der Folgezeilen in `send`/`sendNoContent`/`sendRaw`; doppelte Leerzeile in `AppModels.swift`.
   - Es fehlen Tests für `expiresAt: .some(nil)` → `null` und für die Standardwerte der Suche.
 - **SyncletKit – Upload-Warteschlange (T4):**
-  - `update()` unterscheidet nicht zwischen „Eintrag weg“ und „Schreiben fehlgeschlagen“ (beides `nil`).
-  - `removeWhere` löscht Dateien auch dann, wenn das Schreiben der Queue fehlschlug.
+  - `update()` unterscheidet nicht zwischen „Eintrag weg“ und „Schreiben fehlgeschlagen“ (beides `nil`; Schreibfehler werden seit der finalen Review geloggt, und `.finished` löscht die Kopie nur bei gespeichertem `done`).
   - Die `change`-Closure läuft unter dem `flock` (nur dokumentieren).
   - Nur `createdAt` wird auf Millisekunden gerundet. Encoder und Formatter werden pro Datum neu gebaut.
   - `corrupt-*`-Dateien werden nie aufgeräumt.
@@ -52,13 +56,10 @@ Stand: 2026-10-16, Branch phase-3 (T1–T10).
   - Eine dauerhaft unlesbare Queue heilt nie von selbst.
   - Testlücken: Retry als No-op, `update` mit unbekannter ID, zwei Prozesse, zeitliches Verhalten beim Kopieren in die Warteschlange.
 - **SyncletKit – BackgroundUploader (T5):**
-  - Die Wiederherstellung prüft `inFlight` außerhalb des Queue-Updates.
   - `restartTus` ist unbegrenzt und zählt nicht als Versuch; `attempts` wird nach Fortschritt nie zurückgesetzt.
   - `pumpLater` läuft asynchron vor der Suspendierung.
   - Der Bearer-Token bei Cross-Origin-Redirects wird nicht verhindert (wie im übrigen Kit).
   - Es gibt keinen Uploader-Test für den Cross-Origin-Schutz der gespeicherten tus-URL; die Assertion „not runnable before time“ ist fast wirkungslos; der Testname `…IsRetry` prüft einen Fehlschlag.
-  - Chunk-Pfade werden von beiden Prozessen geteilt (Identifier in den Pfad aufnehmen).
-  - Das `eventsFinished`-Flag läuft nie ab: Ein späteres Aufwecken im selben Prozess schließt dann zu früh ab.
 - **SyncletKit – Testinfrastruktur (T1):**
   - `swiftkit-test-ios.sh` gibt bei fehlendem Gerätetyp nur den nackten `simctl`-Fehler aus.
   - Der Darwin-Notification-Test ist prozessglobal.
@@ -90,10 +91,17 @@ Stand: 2026-10-16, Branch phase-3 (T1–T10).
   - Die Suchtests sind zeitabhängig; es fehlen Tests für den Abbruch laufender Anfragen und für den Wechsel des Suchbereichs.
 - **App – Uploads/Share-Extension (T9):**
   - „Erledigte entfernen“ leert die Uploads aller Konten.
-  - Beim Abmelden werden nur die Übertragungen des App-Uploaders abgebrochen; eine Übertragung der Share-Session für das entfernte Konto läuft weiter.
   - Pro Fortschritts-Callback entsteht eine MainActor-Task; nach einem Retry kann der alte Fortschritt stehen bleiben.
   - Kein Kit-Test für `onProgress`.
-  - Der Share-Session-Uploader der App bleibt aktiv (zwei Prozesse mit demselben Identifier).
   - Die Item-Anzahl der Share-Extension zählt übersprungene Links mit.
   - Die Aktivierungsregel erlaubt 50 Anhänge pro Extension-Item.
   - Ausgewählte Videos werden zweimal kopiert.
+
+## Re-Review der Final-Fixwelle (offen, bewusst nicht mehr behoben)
+
+- **N1 – Abbrechen hält die Share-Session:** Bricht man in der App einen Share-Upload ab, während andere Share-Aufgaben noch laufen, bleibt die App bis zu deren Ende (bis 6 h) an die Share-Session gebunden. Teilt man in diesem Fenster erneut, können beide Prozesse dieselbe Session-Kennung halten; im ungünstigsten Fall entsteht ein Duplikat „(2)“. Alternative für später: `invalidateAndCancel` im Abbruchpfad und Fortsetzen der übrigen Einträge durch den App-Uploader.
+- **N2 – verwaiste Chunk-Dateien:** Übernimmt ein Prozess einen Eintrag nach abgelaufener Lease, bleibt die Chunk-Datei des alten Besitzers (bis 16 MiB) in `uploads/chunks/` liegen. Ein Aufräumen alter Chunk-Dateien beim Start fehlt.
+- **N3/O1 – Share-Einträge ohne Aufgabe blockieren bis 6 h 10 min:** Wird die Share-Extension zwischen Claim und Start beendet oder wurde eine fertige Rückmeldung nie zugestellt (App aus dem App-Umschalter beendet), wartet der Eintrag bis zum Lease-Ende; danach kann ein bereits veröffentlichter Upload ein „(2)“ erzeugen. Verbesserung: beim App-Start drain-only an die Share-Session hängen, `allTasks` prüfen und ausstehende Rückmeldungen abholen.
+- **N4 – Cache nach Abmelden:** Ein Download, der beim Abmelden noch läuft, kann danach noch eine Datei in den Cache schreiben (kurzes Fenster).
+- **O2 – verspätete eigene Rückmeldung nach Neustart:** Wird eine fertige Aufgabe erst nach der Wiederherstellung zugestellt, kann sie als veraltet verworfen werden. Bei Checklisten-Schritt 9 beobachten.
+- **O3:** `handleBackgroundEvents` überschreibt einen noch offenen Completion-Handler, wenn ein zweiter vor Abschluss des ersten kommt.

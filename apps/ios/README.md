@@ -138,12 +138,20 @@ LAN-Adresse) mit zwei Benutzerkonten, die Web-Oberfläche im Browser eines Rechn
     eine Anmeldung nötig ist. „Neu anmelden“ führt zum Browser-Login und danach geht alles wieder.
 14. **Abmelden:** unter „Konten verwalten …“ Konto B abmelden.
     → Der Synclet-Ort von Konto B verschwindet aus der Dateien-App; seine Uploads verschwinden aus
-    „Uploads“.
+    „Uploads“. Zuvor geöffnete Dateien und Vorschaubilder sind vom Gerät gelöscht (Einstellungen →
+    Cache-Größe 0 bzw. Vorschaubilder laden beim nächsten Öffnen neu).
 15. **iPad:** die Schritte 2–7 auf einem iPad; zusätzlich Split View mit einer zweiten App und Drehen.
     → Seitenleiste mit Konten und „Meine Dateien“/„Zuletzt“/„Suche“/„Papierkorb“/„Uploads“, Inhalt
     rechts; das Layout bleibt in Split View und beim Drehen bedienbar (schmale Breite: Tab-Leiste wie
     auf dem iPhone). Drag & Drop aus der Dateien-App in die App gehört nicht zum Umfang (nicht prüfen).
-16. **Spaces:** Voraussetzung: Konto A ist Mitglied eines Team-Ordners „Familie“ (Schreibrechte) und eines
+16. **Share-Extension offline, App viel später:** Flugmodus an; in Fotos 3 Fotos → Teilen → „Synclet“ →
+    „Hochladen“. Mehr als 10 Minuten warten, dann die App öffnen (Flugmodus noch an), danach den
+    Flugmodus ausschalten und warten, bis „Uploads“ alle drei als „Hochgeladen“ zeigt.
+    → Im Zielordner liegt jedes Foto genau einmal (kein „IMG_… (2).heic“).
+17. **Share-Upload aus der App abbrechen:** Flugmodus an; in Fotos ein Foto → Teilen → „Synclet“ →
+    „Hochladen“. App öffnen → „Uploads“ → beim Foto „Abbrechen“. Flugmodus aus, eine Minute warten.
+    → Der Eintrag ist weg, und die Datei erscheint nicht im Zielordner (Web und App).
+18. **Spaces:** Voraussetzung: Konto A ist Mitglied eines Team-Ordners „Familie“ (Schreibrechte) und eines
     schreibgeschützten Spaces; Konto A hat zusätzlich „Meine Dateien“.
     - Team-Ordner: in der Dateien-App und in der App erscheint „Familie“ neben „Meine Dateien“; eine
       Datei aus dem Web ist sichtbar.

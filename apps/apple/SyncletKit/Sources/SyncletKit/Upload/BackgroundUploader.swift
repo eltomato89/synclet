@@ -14,10 +14,18 @@ import Synchronization
 ///   (`waiting` → `uploading`) under the queue's file lock, so the app and the Share
 ///   extension never start the same entry twice.
 /// - The device token is read from the ``CredentialStore`` for every request.
-/// - A claim records `owner` (this session's identifier) and `leaseUntil` (now + 10 min,
-///   renewed on progress at most every 30 s and on every handled completion). After a
-///   launch only abandoned `uploading` entries go back to `waiting`: our own without a live
-///   task, or any whose lease expired – never one the other process is still running.
+/// - A claim records `owner` (this session's identifier) and `leaseUntil`. Every task start
+///   sets the lease to now + ``leaseDuration`` = ``resourceTimeout`` + a margin, and the
+///   session's `timeoutIntervalForResource` is ``resourceTimeout``: no task outlives the claim
+///   it was started under, even when nobody renews it (the Share extension is gone, the app
+///   suspended, the task waits offline). After a launch only abandoned `uploading` entries go
+///   back to `waiting`: our own without a live task, or any whose lease expired – never one
+///   whose owner's task may still be running.
+/// - Chunk files carry the session identifier, so the two processes never share one.
+/// - `drainOnly` (the app's uploader for the Share extension's session): it receives that
+///   session's completions and records final results, but starts nothing – a step that needs
+///   a next request goes back to `waiting` for the app's own uploader. ``relinquish()`` then
+///   gives the session back (only one process may use a background session at a time).
 public final class BackgroundUploader: NSObject, Sendable {
     /// In-flight entries per process.
     public static let maxConcurrent = 2
@@ -25,10 +33,12 @@ public final class BackgroundUploader: NSObject, Sendable {
     public static let maxAttempts = 10
     /// Upper bound of the retry delay (seconds).
     public static let maxBackoff: TimeInterval = 300
-    /// How long a claim (`owner` + `leaseUntil`) holds without being renewed.
-    public static let leaseDuration: TimeInterval = 10 * 60
-    /// Minimum spacing of lease renewals on progress.
-    public static let leaseRenewalInterval: TimeInterval = 30
+    /// `timeoutIntervalForResource` of the session: the longest any task may live, including
+    /// waiting for connectivity. A tus upload is many tasks (one per chunk), each bounded by it.
+    public static let resourceTimeout: TimeInterval = 6 * 3600
+    /// How long a claim (`owner` + `leaseUntil`) holds after a task start: the task's whole
+    /// possible lifetime plus a margin for delivering its completion.
+    public static let leaseDuration: TimeInterval = resourceTimeout + 10 * 60
 
     /// `taskDescription` of every task: which entry and which step it belongs to.
     struct TaskTag: Codable, Hashable {
@@ -59,9 +69,10 @@ public final class BackgroundUploader: NSObject, Sendable {
         var bodies: [Int: Data] = [:]
         /// Entries cancelled while in flight; their completions are dropped.
         var cancelled: Set<String> = []
-        /// Last lease write per entry (throttles renewals on progress).
-        var leaseRenewedAt: [String: Date] = [:]
         var recovered = false
+        /// Records completions only, starts nothing (see the type's documentation).
+        var drainOnly = false
+        var invalidated = false
         var backgroundCompletion: (@Sendable () -> Void)?
         /// `urlSessionDidFinishEvents` fired before a completion handler was handed over.
         var eventsFinished = false
@@ -75,19 +86,26 @@ public final class BackgroundUploader: NSObject, Sendable {
     private let now: @Sendable () -> Date
     private let onChange: @Sendable (UploadEntry) -> Void
     private let onProgress: @Sendable (_ entryId: String, _ bytesSent: Int64) -> Void
+    private let onInvalidated: @Sendable () -> Void
     private let state = Mutex(State())
 
     /// - Parameters:
     ///   - identifier: `tech.jensk.synclet.upload.app` (app) or `tech.jensk.synclet.upload.share` (extension).
     ///   - appGroup: `sharedContainerIdentifier` of the background session.
     ///   - sessionConfiguration: replaces the background configuration (tests: `.ephemeral` + a `URLProtocol`).
+    ///     Its `timeoutIntervalForResource` is set to ``resourceTimeout`` either way.
+    ///   - drainOnly: only receive the session's completions, never start a request (the app
+    ///     attached to the Share extension's session).
     ///   - onProgress: bytes of the entry's file sent so far (tus: offset of the chunk + its sent bytes);
     ///     called on the session's delegate queue, often.
+    ///   - onInvalidated: the session became invalid (after ``relinquish()``).
     public init(identifier: String, queue: UploadQueue, appGroup: String?, accounts: AccountStore, credentials: CredentialStore,
                 sessionConfiguration: URLSessionConfiguration? = nil,
+                drainOnly: Bool = false,
                 now: @escaping @Sendable () -> Date = { Date() },
                 onChange: @escaping @Sendable (UploadEntry) -> Void = { _ in },
-                onProgress: @escaping @Sendable (_ entryId: String, _ bytesSent: Int64) -> Void = { _, _ in }) {
+                onProgress: @escaping @Sendable (_ entryId: String, _ bytesSent: Int64) -> Void = { _, _ in },
+                onInvalidated: @escaping @Sendable () -> Void = {}) {
         self.identifier = identifier
         self.queue = queue
         self.accounts = accounts
@@ -95,14 +113,18 @@ public final class BackgroundUploader: NSObject, Sendable {
         self.now = now
         self.onChange = onChange
         self.onProgress = onProgress
+        self.onInvalidated = onInvalidated
         super.init()
-        let configuration = sessionConfiguration ?? {
+        state.withLock { $0.drainOnly = drainOnly }
+        let configuration = (sessionConfiguration?.copy() as? URLSessionConfiguration) ?? {
             let configuration = URLSessionConfiguration.background(withIdentifier: identifier)
             configuration.sharedContainerIdentifier = appGroup
             configuration.sessionSendsLaunchEvents = true
             configuration.isDiscretionary = false
             return configuration
         }()
+        // Bounds every task's lifetime, so a lease set at its start outlives it (``leaseDuration``).
+        configuration.timeoutIntervalForResource = Self.resourceTimeout
         let delegateQueue = OperationQueue()
         delegateQueue.maxConcurrentOperationCount = 1
         delegateQueue.name = "tech.jensk.synclet.upload.delegate"
@@ -119,12 +141,36 @@ public final class BackgroundUploader: NSObject, Sendable {
         session.invalidateAndCancel()
     }
 
+    /// `timeoutIntervalForResource` of the session (tests).
+    var sessionResourceTimeout: TimeInterval {
+        session.configuration.timeoutIntervalForResource
+    }
+
+    /// Switches a running uploader to drain-only (tests: a task started earlier completes while draining).
+    func enterDrainOnly() {
+        state.withLock { $0.drainOnly = true }
+    }
+
+    /// The session became invalid; this uploader receives nothing any more.
+    public var isInvalidated: Bool {
+        state.withLock { $0.invalidated }
+    }
+
+    /// Gives the session up: running tasks finish (their completions still arrive here while
+    /// the process lives), then the session is invalidated and `onInvalidated` called. For the
+    /// app's drain-only uploader of the Share extension's session once its events are handled.
+    public func relinquish() {
+        session.finishTasksAndInvalidate()
+    }
+
     // MARK: - API
 
     /// Starts runnable entries (max ``maxConcurrent`` per process) that are not already in
     /// flight in this session. The first call after a launch first returns `uploading`
     /// entries without a live task to `waiting`.
     public func pump() async {
+        // Draining another process' session: starting work there is the owner's (or the app uploader's) job.
+        guard !state.withLock({ $0.drainOnly || $0.invalidated }) else { return }
         await recoverIfNeeded()
         let candidates = queue.runnable()
         let picked: [UploadEntry] = state.withLock { s in
@@ -145,8 +191,11 @@ public final class BackgroundUploader: NSObject, Sendable {
             return s.tasks[id]
         }
         task?.cancel()
-        // Tasks of an earlier launch this process has not seen yet.
-        for task in await session.allTasks where TaskTag(task.taskDescription)?.entryId == id { task.cancel() }
+        // Tasks of an earlier launch (or, draining, of the Share extension) this process has not seen yet.
+        for task in await session.allTasks where TaskTag(task.taskDescription)?.entryId == id {
+            state.withLock { _ = $0.cancelled.insert(id) }
+            task.cancel()
+        }
         queue.remove(id: id)
         removeChunks(of: id)
         Log.upload.info("upload cancelled")
@@ -192,7 +241,9 @@ public final class BackgroundUploader: NSObject, Sendable {
             guard !state.withLock({ $0.inFlight.contains(entry.id) }) else { continue }
             var reset = false
             let updated = queue.update(id: entry.id) { e in
-                guard e.status == .uploading, self.isAbandoned(e, at: at) else { return }
+                // Re-checked under the queue lock: a concurrent pump may have claimed it meanwhile.
+                guard e.status == .uploading, !self.state.withLock({ $0.inFlight.contains(e.id) }),
+                      self.isAbandoned(e, at: at) else { return }
                 e.status = .waiting
                 e.nextAttemptAt = nil
                 e.owner = nil
@@ -212,8 +263,9 @@ public final class BackgroundUploader: NSObject, Sendable {
     }
 
     /// An `uploading` entry nobody runs any more: ours without a live task in this session
-    /// (the caller checked that), or one whose lease ran out (its process died). An entry of
-    /// another process (the Share extension) with a valid lease is left alone.
+    /// (the caller checked that), or one whose lease ran out (no task started under it can
+    /// still be alive). An entry of another process (the Share extension) with a valid lease
+    /// is left alone, even when that process is gone: its task may still run in the system.
     private func isAbandoned(_ entry: UploadEntry, at date: Date) -> Bool {
         if entry.owner == identifier { return true }
         guard let lease = entry.leaseUntil else { return true }
@@ -233,7 +285,6 @@ public final class BackgroundUploader: NSObject, Sendable {
             e.leaseUntil = at.addingTimeInterval(Self.leaseDuration)
             claimed = true
         }
-        if claimed { state.withLock { $0.leaseRenewedAt[candidate.id] = at } }
         guard claimed, let entry else {
             release(candidate.id)
             return
@@ -315,7 +366,11 @@ public final class BackgroundUploader: NSObject, Sendable {
     // MARK: - Completion
 
     private func complete(_ task: URLSessionTask, error: Error?) {
-        let body = state.withLock { $0.bodies.removeValue(forKey: task.taskIdentifier) } ?? Data()
+        let body = state.withLock { s -> Data? in
+            // A new delivery started: an earlier `urlSessionDidFinishEvents` no longer stands for it.
+            s.eventsFinished = false
+            return s.bodies.removeValue(forKey: task.taskIdentifier)
+        } ?? Data()
         guard let tag = TaskTag(task.taskDescription) else {
             Log.upload.error("finished task without a tag")
             return
@@ -411,9 +466,12 @@ public final class BackgroundUploader: NSObject, Sendable {
                 e.owner = nil
                 e.leaseUntil = nil
             }
-            try? FileManager.default.removeItem(at: queue.fileURL(for: entryId))
-            removeChunks(of: entryId)
-            Log.upload.info("upload finished")
+            // Only once `done` is stored: an entry whose write failed keeps its copy for the next attempt.
+            if updated != nil {
+                try? FileManager.default.removeItem(at: queue.fileURL(for: entryId))
+                removeChunks(of: entryId)
+                Log.upload.info("upload finished")
+            }
         case .tusCreated(let url):
             updated = queue.update(id: entryId) { e in
                 guard e.status == .uploading, e.owner == identifier else { return }
@@ -488,10 +546,13 @@ public final class BackgroundUploader: NSObject, Sendable {
             pumpLater()
             return
         }
-        if updated.status == .uploading { state.withLock { $0.leaseRenewedAt[entryId] = at } }
         onChange(updated)
         if let next, updated.status == .uploading {
-            start(updated, next)
+            if state.withLock({ $0.drainOnly }) {
+                handBack(entryId)
+            } else {
+                start(updated, next)
+            }
         } else {
             release(entryId)
             pumpLater()
@@ -503,20 +564,23 @@ public final class BackgroundUploader: NSObject, Sendable {
         min(2 * pow(2, Double(n)), maxBackoff)
     }
 
-    /// Extends the claim while bytes flow, at most every ``leaseRenewalInterval``.
-    private func renewLease(of entryId: String) {
-        let at = now()
-        let due = state.withLock { s -> Bool in
-            guard s.inFlight.contains(entryId), !s.cancelled.contains(entryId) else { return false }
-            if let last = s.leaseRenewedAt[entryId], at.timeIntervalSince(last) < Self.leaseRenewalInterval { return false }
-            s.leaseRenewedAt[entryId] = at
-            return true
-        }
-        guard due else { return }
+    /// Draining: the entry's next request is the app uploader's – back to `waiting` (no attempt
+    /// counted, tus URL and offset kept) and the slot freed.
+    private func handBack(_ entryId: String) {
         let identifier = identifier
-        queue.update(id: entryId) { e in
+        var changed = false
+        let updated = queue.update(id: entryId) { e in
             guard e.status == .uploading, e.owner == identifier else { return }
-            e.leaseUntil = at.addingTimeInterval(Self.leaseDuration)
+            e.status = .waiting
+            e.nextAttemptAt = nil
+            e.owner = nil
+            e.leaseUntil = nil
+            changed = true
+        }
+        release(entryId)
+        if changed, let updated {
+            Log.upload.info("drained step handed back to the app's uploader")
+            onChange(updated)
         }
     }
 
@@ -529,7 +593,6 @@ public final class BackgroundUploader: NSObject, Sendable {
             s.inFlight.remove(entryId)
             s.tasks.removeValue(forKey: entryId)
             s.cancelled.remove(entryId)
-            s.leaseRenewedAt.removeValue(forKey: entryId)
         }
     }
 
@@ -543,9 +606,13 @@ public final class BackgroundUploader: NSObject, Sendable {
         queue.filesDirectory.deletingLastPathComponent().appending(path: "chunks", directoryHint: .isDirectory)
     }
 
-    private func chunkURL(of entryId: String, offset: Int64) -> URL {
-        chunksDirectory.appending(path: "\(AccountStore.safeComponent(entryId))-\(offset)", directoryHint: .notDirectory)
+    /// `<entry>-<offset>@<session>`: per session, so a takeover never touches the other process' file.
+    func chunkURL(of entryId: String, offset: Int64) -> URL {
+        chunksDirectory.appending(path: "\(AccountStore.safeComponent(entryId))-\(offset)@\(chunkSuffix)",
+                                  directoryHint: .notDirectory)
     }
+
+    private var chunkSuffix: String { AccountStore.safeComponent(identifier) }
 
     /// Bytes `[offset, offset + length)` of the copy, in their own file (upload tasks need a file).
     private func writeChunk(of entryId: String, offset: Int64, length: Int64) -> URL? {
@@ -572,7 +639,9 @@ public final class BackgroundUploader: NSObject, Sendable {
     private func removeChunks(of entryId: String) {
         let fm = FileManager.default
         let prefix = AccountStore.safeComponent(entryId) + "-"
-        for name in (try? fm.contentsOfDirectory(atPath: chunksDirectory.path)) ?? [] where name.hasPrefix(prefix) {
+        let suffix = "@" + chunkSuffix
+        for name in (try? fm.contentsOfDirectory(atPath: chunksDirectory.path)) ?? []
+        where name.hasPrefix(prefix) && name.hasSuffix(suffix) {
             try? fm.removeItem(at: chunksDirectory.appending(path: name, directoryHint: .notDirectory))
         }
     }
@@ -592,11 +661,10 @@ extension BackgroundUploader: URLSessionDataDelegate, URLSessionDownloadDelegate
         state.withLock { $0.bodies[downloadTask.taskIdentifier] = data }
     }
 
-    /// Progress renews the entry's lease (throttled) and is reported through `onProgress`.
+    /// Progress is reported through `onProgress` (the lease needs no renewal: it covers the task).
     public func urlSession(_ session: URLSession, task: URLSessionTask, didSendBodyData bytesSent: Int64,
                            totalBytesSent: Int64, totalBytesExpectedToSend: Int64) {
         guard let tag = TaskTag(task.taskDescription) else { return }
-        renewLease(of: tag.entryId)
         switch tag.step {
         case .single: onProgress(tag.entryId, totalBytesSent)
         case .tusPatch(let offset, _): onProgress(tag.entryId, offset + totalBytesSent)
@@ -618,5 +686,10 @@ extension BackgroundUploader: URLSessionDataDelegate, URLSessionDownloadDelegate
             return completion
         }
         if let completion { DispatchQueue.main.async { completion() } }
+    }
+
+    public func urlSession(_ session: URLSession, didBecomeInvalidWithError error: (any Error)?) {
+        state.withLock { $0.invalidated = true }
+        onInvalidated()
     }
 }

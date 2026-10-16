@@ -242,6 +242,11 @@ final class FakeBrowser: WebAuthenticating {
     }
 }
 
+@MainActor
+final class CacheClearCounter {
+    var count = 0
+}
+
 /// A fresh app-group stand-in plus the account machinery wired to fakes (in-memory keychain,
 /// private `UserDefaults` suite).
 @MainActor
@@ -251,6 +256,8 @@ struct Harness {
     let domains = FakeDomains()
     let resolver = FakeResolver()
     let defaultsSuite = "synclet-tests-\(UUID().uuidString)"
+    /// Sign-outs that cleared the opened-file and thumbnail caches.
+    let cacheClears = CacheClearCounter()
     let defaults: UserDefaults
     let manager: AccountManager
     let accounts: AccountsModel
@@ -262,12 +269,16 @@ struct Harness {
         manager = AccountManager(credentials: CredentialStore(storage: storage), accounts: AccountStore(directory: directory),
                                  domains: domains, session: MockURLProtocol.session(), deviceName: "Test iPhone",
                                  installationID: { "installation" })
-        accounts = AccountsModel(manager: manager, resolver: resolver, defaults: defaults)
+        let cacheClears = cacheClears
+        accounts = AccountsModel(manager: manager, resolver: resolver, defaults: defaults,
+                                 clearCaches: { @MainActor in cacheClears.count += 1 })
     }
 
     /// Another model over the same store and defaults (an app relaunch).
     func relaunch() -> AccountsModel {
-        AccountsModel(manager: manager, resolver: resolver, defaults: defaults)
+        let cacheClears = cacheClears
+        return AccountsModel(manager: manager, resolver: resolver, defaults: defaults,
+                             clearCaches: { @MainActor in cacheClears.count += 1 })
     }
 
     func cleanUp() {
@@ -421,10 +432,25 @@ final class SignalRecorder {
 final class FakeUploadDriver: UploadDriving {
     private(set) var pumps = 0
     private(set) var cancelled: [String] = []
+    private(set) var relinquished = 0
+    var isInvalidated = false
+    /// Keeps the events handler instead of calling it right away (see ``finishEvents()``).
+    var holdEvents = false
+    private var pendingEvents: [@Sendable () -> Void] = []
 
     func pump() async { pumps += 1 }
     func cancel(id: String) async { cancelled.append(id) }
-    func handleBackgroundEvents(completion: @escaping @Sendable () -> Void) { completion() }
+    func handleBackgroundEvents(completion: @escaping @Sendable () -> Void) {
+        if holdEvents { pendingEvents.append(completion) } else { completion() }
+    }
+    func relinquish() { relinquished += 1 }
+
+    /// The session delivered its events (`urlSessionDidFinishEvents`).
+    func finishEvents() {
+        let pending = pendingEvents
+        pendingEvents = []
+        for completion in pending { completion() }
+    }
 }
 
 // MARK: - Search, recent, trash, share links

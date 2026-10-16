@@ -115,6 +115,116 @@ final class UploadCenterTests: XCTestCase {
         XCTAssertEqual(driver.cancelled, [entry.id])
     }
 
+    // MARK: Share extension session (final review, finding 2)
+
+    private func makeCenterWithShare() -> (UploadCenter, () -> [FakeUploadDriver]) {
+        let driver = driver!
+        var made: [FakeUploadDriver] = []
+        let center = UploadCenter(queue: queue, signal: signals.callback,
+                                  shareUploader: { _ in let d = FakeUploadDriver(); made.append(d); return d },
+                                  uploader: { _ in driver })
+        return (center, { made })
+    }
+
+    private func shareOwnedEntry(_ name: String = "s.txt", accountKey: String = "k1") throws -> UploadEntry {
+        let entry = try queue.enqueue(source: try tempFile(name, "x"), name: name, accountKey: accountKey,
+                                      parentId: "root", parentName: "Meine Dateien")
+        queue.update(id: entry.id) { e in
+            e.status = .uploading
+            e.owner = UploadSignal.shareSessionIdentifier
+            e.leaseUntil = Date().addingTimeInterval(3600)
+        }
+        return entry
+    }
+
+    func testCancellingAShareUploadCancelsItInTheShareSessionAndGivesItBack() async throws {
+        let (center, shares) = makeCenterWithShare()
+        let entry = try shareOwnedEntry()
+        center.reload()
+
+        await center.cancel(entry.id)
+
+        XCTAssertEqual(shares().count, 1)
+        XCTAssertEqual(shares().first?.cancelled, [entry.id])
+        XCTAssertEqual(shares().first?.relinquished, 1)
+        XCTAssertEqual(driver.cancelled, [entry.id])
+    }
+
+    func testCancellingAnAppUploadLeavesTheShareSessionAlone() async throws {
+        let (center, shares) = makeCenterWithShare()
+        let entry = try queue.enqueue(source: try tempFile("x.txt", "x"), name: "x.txt", accountKey: "k1",
+                                      parentId: "root", parentName: "Meine Dateien")
+        queue.update(id: entry.id) { e in e.status = .uploading; e.owner = UploadSignal.appSessionIdentifier }
+        center.reload()
+
+        await center.cancel(entry.id)
+
+        XCTAssertTrue(shares().isEmpty)
+        XCTAssertEqual(driver.cancelled, [entry.id])
+    }
+
+    func testSignOutCancelsShareUploadsInTheShareSession() async throws {
+        let (center, shares) = makeCenterWithShare()
+        let mine = try shareOwnedEntry("a.txt", accountKey: "k1")
+        let other = try shareOwnedEntry("b.txt", accountKey: "k2")
+        center.reload()
+
+        await center.accountSignedOut("k1")
+
+        XCTAssertEqual(shares().first?.cancelled, [mine.id])
+        XCTAssertEqual(shares().first?.relinquished, 1)
+        XCTAssertEqual(queue.all().map(\.id), [other.id])
+    }
+
+    func testShareSessionEventsAreDrainedThenTheSessionIsGivenBack() async throws {
+        let (center, shares) = makeCenterWithShare()
+        let handled = expectation(description: "system handler")
+        center.handleBackgroundEvents(identifier: UploadSignal.shareSessionIdentifier) { handled.fulfill() }
+        await fulfillment(of: [handled], timeout: 3)
+        XCTAssertEqual(shares().count, 1)
+        XCTAssertEqual(shares().first?.relinquished, 1)
+
+        // Invalid: dropped; the next delivery attaches a fresh uploader.
+        shares().first?.isInvalidated = true
+        center.shareUploaderInvalidated()
+        XCTAssertNil(center.shareUploader)
+        let again = expectation(description: "second handler")
+        center.handleBackgroundEvents(identifier: UploadSignal.shareSessionIdentifier) { again.fulfill() }
+        await fulfillment(of: [again], timeout: 3)
+        XCTAssertEqual(shares().count, 2)
+    }
+
+    func testCancelDuringShareEventsWaitsForTheEventsBeforeGivingTheSessionBack() async throws {
+        let (center, shares) = makeCenterWithShare()
+        let entry = try shareOwnedEntry()
+        center.reload()
+        let handled = expectation(description: "system handler")
+        center.handleBackgroundEvents(identifier: UploadSignal.shareSessionIdentifier) { handled.fulfill() }
+        let share = try XCTUnwrap(shares().first)
+        share.holdEvents = true
+        // The fake answered the first handler right away; hold the next delivery.
+        await fulfillment(of: [handled], timeout: 3)
+        let relinquishedBefore = share.relinquished
+        let second = expectation(description: "second handler")
+        center.handleBackgroundEvents(identifier: UploadSignal.shareSessionIdentifier) { second.fulfill() }
+        await center.cancel(entry.id)
+        XCTAssertEqual(share.cancelled, [entry.id])
+        XCTAssertEqual(share.relinquished, relinquishedBefore, "not while the system's handler is outstanding")
+        share.finishEvents()
+        await fulfillment(of: [second], timeout: 3)
+        XCTAssertEqual(share.relinquished, relinquishedBefore + 1)
+    }
+
+    func testShareUploaderChangesWakeTheAppUploader() async throws {
+        let (center, _) = makeCenterWithShare()
+        let entry = try queue.enqueue(source: try tempFile("x.txt", "x"), name: "x.txt", accountKey: "k1",
+                                      parentId: "root", parentName: "Meine Dateien")
+        let before = driver.pumps
+        center.shareUploaderChanged(entry)
+        let pumped = await eventually { self.driver.pumps > before }
+        XCTAssertTrue(pumped)
+    }
+
     func testFinishedUploadSignalsWorkingSet() async throws {
         let center = makeCenter()
         let entry = try queue.enqueue(source: try tempFile("x.txt", "x"), name: "x.txt", accountKey: "k1",

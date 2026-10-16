@@ -79,6 +79,7 @@ final class AccountsModelTests: XCTestCase {
         XCTAssertTrue(MockURLProtocol.requests.contains { $0.method == "DELETE" && $0.path == "/api/sync/v1/devices/current" })
         XCTAssertEqual(harness.accounts.selectedKey, second.key)
         XCTAssertEqual(harness.defaults.string(forKey: "selectedAccount"), second.key)
+        XCTAssertEqual(harness.cacheClears.count, 1, "opened files and thumbnails are cleared on sign-out")
 
         await harness.accounts.signOut(key: second.key)
         XCTAssertTrue(harness.accounts.entries.isEmpty)

@@ -85,12 +85,20 @@ final class AccountsModel {
     @ObservationIgnored private var subscribers: [UUID: AsyncStream<String>.Continuation] = [:]
     /// Called with the key after an account was signed out (the upload center drops its uploads).
     @ObservationIgnored var onSignOut: ((String) async -> Void)?
+    /// Removes opened files and thumbnails on sign-out (spec §2.2: the account's data goes;
+    /// the caches are not keyed for a per-account sweep, so all of them are cleared).
+    @ObservationIgnored private let clearCaches: () async -> Void
 
     init(manager: AccountManager, resolver: FileProviderResolving = SystemFileProviderResolver(),
-         defaults: UserDefaults = .standard) {
+         defaults: UserDefaults = .standard,
+         clearCaches: (() async -> Void)? = nil) {
         self.manager = manager
         self.resolver = resolver
         self.defaults = defaults
+        self.clearCaches = clearCaches ?? {
+            await FileCache.shared.clear()
+            await ThumbnailCache.shared.clear()
+        }
         selectedKey = defaults.string(forKey: Self.selectedAccountKey)
         reload()
     }
@@ -146,8 +154,9 @@ final class AccountsModel {
         await resolver.resolveAuthentication(domain: manager.domain(for: stored.key))
     }
 
-    /// Signs out: revokes the device (best effort), removes the domain, token and state. The
-    /// selection moves to the next account in the list (the previous one for the last).
+    /// Signs out: revokes the device (best effort), removes the domain, token and state, and
+    /// clears the opened-file and thumbnail caches. The selection moves to the next account in
+    /// the list (the previous one for the last).
     func signOut(key: String) async {
         let key16 = AccountStore.key16(for: key)
         let wasSelected = selectedKey == key
@@ -156,6 +165,7 @@ final class AccountsModel {
         monitors[key] = nil
         await manager.remove(key: key)
         AuthFailureSignal.clear(container: container, key16: key16)
+        await clearCaches()
         if wasSelected { selectedKey = nil }
         reload()
         if wasSelected, let index, !entries.isEmpty {

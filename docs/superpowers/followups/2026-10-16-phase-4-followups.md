@@ -17,7 +17,7 @@ Stand: 2026-10-16, Branch phase-4 (T1–T10 und die abschließende Fix-Welle). S
 - R10a: T10 startete mit den Docs und der Wegwerf-Test-Erweiterung, bevor die zurückgestellten Branches (Web/macOS/iOS live) gemergt waren; die komplette End-to-End-Verifikation (alle Suiten, Live-Skripte, Playwright) macht der Controller nach dem Merge — Kosten: keine
 
 ## Ergebnis T10
-- `deploy/README.md` (Abschnitt „Team-Ordner und externe Speicher“, Anker `#team-ordner-und-externe-speicher`, vom Web-Admin verlinkt), Funktionsliste im `README.md`, Geräte-Checklisten für Spaces in `apps/macos/README.md` (Schritt 31) und `apps/ios/README.md` (Schritt 16).
+- `deploy/README.md` (Abschnitt „Team-Ordner und externe Speicher“, Anker `#team-ordner-und-externe-speicher`, vom Web-Admin verlinkt), Funktionsliste im `README.md`, Geräte-Checklisten für Spaces in `apps/macos/README.md` (Schritt 31) und `apps/ios/README.md` (Schritt 18).
 - `scripts/throwaway-test.sh` ist um `/teams` erweitert (`SYNCLET_TEAMS` im Temp-Ordner): ein vorhandener Team-Ordner wird entdeckt und zugewiesen, ein per Admin-API angelegter Team-Ordner (Datei + Unterordner über die Sync-API), „Entfernen“ lässt den Inhalt liegen. Nach `down -v` enthält `/teams` genau die erwarteten Dateien und keine `.synclet-*`-Reste. Lauf grün (PASS).
 - Die übrige Verifikation aus Schritt 2 des Briefs liegt beim Controller (R10a).
 
@@ -28,7 +28,7 @@ Stand: 2026-10-16, Branch phase-4 (T1–T10 und die abschließende Fix-Welle). S
 - **Verschachtelte Mounts** (ein Mount unterhalb eines Space-Ordners) werden nicht gesondert behandelt.
 - **Admins haben keinen impliziten Zugriff** auf fremde Spaces; sie weisen sich selbst zu.
 - **Ein entfernter (ausgeblendeter) Space** behält seine Ordner auf der Platte; er hat nach „Wieder aufnehmen“ keine Mitglieder.
-- Die Geräte-Checklisten (macOS Schritt 31, iOS Schritt 16) sind manuelle Schritte.
+- Die Geräte-Checklisten (macOS Schritt 31, iOS Schritt 18) sind manuelle Schritte.
 
 ## Offene Kleinigkeiten (deferred, aus den Reviews)
 - **Server – Spaces/Index (T1):**
