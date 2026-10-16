@@ -1,6 +1,6 @@
 # Phase 2 – Follow-ups (aus den Reviews)
 
-Stand: 2026-10-16, Branch phase-2 (T1–T8, T5b, T9, T10).
+Stand: 2026-10-16, Branch phase-2 (T1–T8, T5b, T9, T10, Final-Fixwelle).
 
 ## Rulings (Entscheidungen während der Umsetzung)
 - Ruling: Wave 0 = T1, T2, T3 parallel in eigenen Worktrees — Kosten: Merge-Konflikte in docs/openapi (vom Controller aufgelöst)
@@ -27,11 +27,12 @@ Stand: 2026-10-16, Branch phase-2 (T1–T8, T5b, T9, T10).
   - das Notary-Profil `synclet-notary`
 
   Das Archive (Release) baut. Der Export bricht mit genau diesen Fehlern ab. Den DMG-Teil des Skripts (Hintergrund, Applications-Link, Volume-Icon, Finder-Layout) habe ich separat mit der archivierten App geprüft. Nach der Einrichtung (README „Signing and notarization“) `apps/macos/build_and_notarize.sh` erneut laufen lassen.
-- **Manuelle Finder-Checkliste** (`apps/macos/README.md`, 30 Schritte) steht aus. Sie entscheidet über:
+- **Manuelle Finder-Checkliste** (`apps/macos/README.md`, 31 Schritte) steht aus. Sie entscheidet über:
   - `.cannotSynchronize` vs. `.fileWriteNoPermission` (Schritt 7)
   - ob die Extension in den Systemeinstellungen aktiviert werden muss (Schritt 4)
   - ob der Resume-Key über `createItem`-Retries stabil ist (Schritt 15)
   - die Pin-Vererbung (Schritt 19)
+  - ob ein Upload nach 507 innerhalb von 1 Minute weiterläuft, sobald wieder Platz ist (Schritt 30, Final-Review I2)
 - Das Finder-Layout des DMG nutzt AppleScript und braucht eine GUI-Sitzung mit Automation-Recht. Ohne sie warnt das Skript, und die DMG hat dann kein Hintergrundbild. Finder entfernt beim Layout `.VolumeIcon.icns` samt Custom-Icon-Flag, darum setzt das Skript beides erst nach dem Layout.
 - Compiler-Warnung `BrowserLogin.swift:49` (implizit starkes `self` neben `[weak self]`) besteht seit T4.
 
@@ -54,6 +55,8 @@ Stand: 2026-10-16, Branch phase-2 (T1–T8, T5b, T9, T10).
   - ein schneller zweiter Login kann im Callback eine neuere `ASWebAuthenticationSession` auf `nil` setzen
   - ein `URLError.cancelled` während der Server-Prüfung zeigt in einem geschlossenen Fenster „nicht erreichbar“
 - T5 M3: beim Abbruch wird der Server-Upload nicht beendet (DELETE). Der Server räumt nach 24 h auf.
+- T5 M5 (teilweise, akzeptiert): `LazyHash` ist abbrechbar und gibt alle 16 MiB ab, läuft aber weiter auf dem kooperativen Pool (kein eigener Thread).
+- T5 M6 (teilweise, akzeptiert): der Test-Fake liefert `.partial`-Fehler weiter mit `asyncAfter(0.1)`; keine Assertion hängt mehr am genauen Offset.
 - T5b n1: der transiente Zweig von m2 vergleicht `item.size` nicht.
 - T5b n2: antwortet tus-POST für ein Replace dauerhaft 404, während `GET /items/:id` das Item liefert, löst sich das nie auf. Es fehlt eine Logzeile bzw. eine Eskalation.
 - T6:
@@ -73,6 +76,15 @@ Stand: 2026-10-16, Branch phase-2 (T1–T8, T5b, T9, T10).
   - seltener ETag/Daten-Mismatch bei parallelen `store` verschiedener Versionen (xattr getrennt von der atomaren Datei)
   - der Ablauf-Timer von `ProblemsModel` wird beim Teardown nicht explizit abgebrochen
   - ein wohl unerreichbarer `catch .notFound`-Zweig im Thumbnail-Fetcher
+- T8 M4 (erledigt im T8-Re-Review, hier nur vermerkt): `message` wird in der Sprache der Extension gespeichert; die App lokalisiert neu aus `code`, der gespeicherte Text ist nur Fallback für unbekannte Codes.
 - T10 Minor 1: der tus-Test „captures the previous content as a version“ prüft nur den Spy, nicht die Versionszeile.
 - T10 Minor 4: `validateMeta` wiederholt beim Publish die ungesperrte Vorprüfung (harmlos, liefert früh 412/404).
-- T9: die Menüzeile „Offline-Inhalte“ zeigt „noch nicht gemessen“, bis ein Offline-Walk gelaufen ist (z. B. nach dem Öffnen der Offline-Einstellungen). Eine Messung beim App-Start wäre schöner.
+- T9: die Menüzeile „Offline-Inhalte“ zeigt „noch nicht gemessen“, bis ein Offline-Walk gelaufen ist. Seit der Final-Fixwelle stellt der App-Start die Größen des letzten Walks wieder her (`offline-walk.json`); nur vor dem allerersten Walk fehlt die Zahl.
+
+## Final-Review (c8bd62c..7bd5a29): offen bzw. Restrisiko nach der Fixwelle
+- **M5 – Löschen ohne `If-Match` (nicht umgesetzt, Vertrag):** `DELETE /items/:id` kennt laut SYNC_API.md §8.3 kein `If-Match`. Ein lokales Löschen entfernt daher auch eine neuere Server-Version, die dieser Mac noch nicht kennt, und ein rekursives Ordner-Löschen auch zwischenzeitlich remote hinzugefügte Kinder. Beides liegt im Server-Papierkorb. Für eine echte Lösung braucht der Vertrag ein additives `If-Match` auf `DELETE` (Datei: Content-ETag; Ordner: offen, z. B. nur leer-oder-unverändert). Im Code dokumentiert (`SyncletReplicatedExtension.delete`).
+- **I2 – Zeitpunkt:** die App hebt `.serverUnreachable`/`.insufficientQuota` bei jedem neuen SSE-`hello` und nach jedem erfolgreichen periodischen `/account`-Refresh auf. Wird der Server-Speicher frei, während der Stream verbunden bleibt, kann das bis zu 15 min dauern, falls macOS nicht von selbst erneut versucht (Checkliste Schritt 30 misst es). `.tooLarge` (413) mappt weiter auf `.insufficientQuota` und wird dabei mit aufgehoben: ein erneuter Versuch endet wieder mit 413 (der Problem-Eintrag wird ersetzt, nicht verdoppelt).
+- **M2 – Rest:** die Vorschaubilder eines abgemeldeten Kontos löscht die Extension beim nächsten Start ihres Prozesses (die App erreicht deren Caches nicht). Meldet sich das letzte Konto ab, bleiben sie bis zur nächsten Anmeldung bzw. LRU-Verdrängung liegen.
+- **M3 – Rest:** ein 401 einer Operation, die vor dem Speichern des neuen Tokens begann, aber das neue Token schon las, wird einmal ignoriert (wird beim nächsten Fehler gemeldet). Toleranz 1 ms wegen der Millisekunden im Marker.
+- **M6 – Rest:** ohne Pins und oberhalb von 50.000 Ordnern wird die Parent-Map geleert. Ein Ordner, den die Map danach nicht kennt und der remote in einen Pin verschoben wird, löst keinen Re-Walk seines Teilbaums aus (seine schon gemeldeten Kinder behalten `.inherited`, bis sie erneut gemeldet werden). Vorher galt das nur für nie gesehene Ordner.
+- **M7 – Rest:** der Launch-Walk entfällt nur, wenn die Pins dem letzten abgeschlossenen Walk entsprechen. Von macOS doch verdrängte gepinnte Dateien (sollte mit `keepDownloaded` nicht passieren) werden dann erst beim nächsten Walk (Umschalten, Offline-Tab) erneut angefordert.

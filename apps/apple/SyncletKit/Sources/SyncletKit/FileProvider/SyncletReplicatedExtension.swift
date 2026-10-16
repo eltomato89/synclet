@@ -578,6 +578,11 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
     /// Deletes an item (already deleted ⇒ success). Without `.recursive` a non-empty
     /// folder is refused (`directoryNotEmpty`). The root container and space folders
     /// cannot be deleted (`CocoaError(.featureUnsupported)`).
+    ///
+    /// Unconditional: `DELETE /items/:id` takes no `If-Match` (SYNC_API.md §8.3), so a local
+    /// delete also removes a newer remote version this Mac has not seen yet, and a recursive
+    /// folder delete removes children added remotely meanwhile. Both stay recoverable from
+    /// the server trash (§8.4).
     func delete(_ identifier: NSFileProviderItemIdentifier, recursive: Bool, context: Context) async throws {
         if context.layout.isTopLevel(identifier) { throw CocoaError(.featureUnsupported) }
         let id = try serverID(identifier, layout: context.layout)
