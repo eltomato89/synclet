@@ -4,6 +4,7 @@
 
 [![Website](https://img.shields.io/badge/website-eltomato89.github.io%2Fsynclet-0f7c8a)](https://eltomato89.github.io/synclet/)
 [![Download for macOS](https://img.shields.io/badge/download-macOS%20(.dmg)-0f7c8a)](https://github.com/eltomato89/synclet/releases/latest/download/Synclet.dmg)
+[![iPhone & iPad beta on TestFlight](https://img.shields.io/badge/iPhone%20%26%20iPad-TestFlight%20beta-0f7c8a)](https://testflight.apple.com/join/NA3Aphqe)
 [![Install](https://img.shields.io/badge/install-docker%20compose-0f7c8a)](#quickstart)
 [![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
