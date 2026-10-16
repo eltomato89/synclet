@@ -77,6 +77,59 @@ final class SearchModelTests: XCTestCase {
         XCTAssertEqual(searches.map { AppFixtures.query($0)["limit"] }, ["20", "20", "20"])
     }
 
+    /// Answers searches like ``serve(total:)``, but page requests (`offset` > 0) only after
+    /// `gate` opens.
+    private func serveGated(total: Int, gate: LockedBox<Bool>) {
+        MockURLProtocol.reset { request in
+            if AppFixtures.query(request)["offset"] != "0" {
+                while !gate.value { usleep(5_000) }
+            }
+            return Self.respond(request, total: total)
+        }
+    }
+
+    func testNewQueryDuringLoadMoreKeepsPagingWorking() async {
+        let gate = LockedBox(false)
+        serveGated(total: 45, gate: gate)
+        let model = SearchModel(api: AppFixtures.client())
+        model.query = "abc"
+        model.queryChanged()
+        _ = await eventually { model.hits.count == 20 }
+        let page = Task { await model.loadMore() }
+        _ = await eventually { model.isLoadingMore }
+        model.query = "xyz"
+        model.queryChanged()
+        XCTAssertFalse(model.isLoadingMore)
+        gate.value = true
+        await page.value
+        let fresh = await eventually { !model.isSearchPending && model.hits.count == 20 }
+        XCTAssertTrue(fresh)
+        XCTAssertFalse(model.isLoadingMore)
+        await model.loadMore()
+        XCTAssertEqual(model.hits.count, 40)
+        let last = searches.last.map(AppFixtures.query)
+        XCTAssertEqual(last?["q"], "xyz")
+        XCTAssertEqual(last?["offset"], "20")
+    }
+
+    func testNoPagingWithNewQueryWhileSearchPending() async {
+        serve(total: 45)
+        let model = SearchModel(api: AppFixtures.client())
+        model.query = "abc"
+        model.queryChanged()
+        _ = await eventually { model.hits.count == 20 }
+        model.debounce = .milliseconds(200)
+        model.query = "xyz"
+        model.queryChanged()
+        XCTAssertFalse(model.canLoadMore)
+        await model.loadMore()
+        XCTAssertFalse(searches.contains { AppFixtures.query($0)["q"] == "xyz" && AppFixtures.query($0)["offset"] != "0" })
+        _ = await eventually { !model.isSearchPending }
+        XCTAssertEqual(model.hits.count, 20)
+        XCTAssertEqual(model.hits.first?.item.name, "hit0.txt")
+        XCTAssertEqual(searches.last.map(AppFixtures.query)?["q"], "xyz")
+    }
+
     func testScopeFolderIsSent() async {
         serve(total: 1)
         let model = SearchModel(api: AppFixtures.client())
