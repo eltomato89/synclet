@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Synclet: self-hosted file sync</title>
+    <meta name="description" content="Synclet is a self-hosted, open-source alternative to Dropbox and OneDrive. Your folder stays your folder: files on your disk are the source of truth, with a web app and native apps for Mac, iPhone and iPad." />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#f3f6f6" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#111819" media="(prefers-color-scheme: dark)" />
+    <meta property="og:title" content="Synclet: your folder stays your folder" />
+    <meta property="og:description" content="Self-hosted, open-source file sync with a web app and native apps for Mac, iPhone and iPad." />
+    <meta property="og:type" content="website" />
+    <link rel="icon" type="image/png" sizes="32x32" href="%BASE_URL%favicon-32.png" />
+    <link rel="apple-touch-icon" href="%BASE_URL%apple-touch-icon.png" />
+    <script type="module" src="./src/main.ts"></script>
+  </head>
+  <body>
+    <a href="#main" class="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:shadow">Skip to content</a>
+
+    <header class="sticky top-0 z-40 border-b bg-canvas/85 backdrop-blur supports-[backdrop-filter]:bg-canvas/70">
+      <nav class="container-site flex h-14 items-center justify-between gap-4" aria-label="Main">
+        <a href="#top" class="flex items-center gap-2.5 font-semibold tracking-tight">
+          <img src="./src/assets/icon-128.webp" alt="" width="28" height="28" class="size-7" />
+          <span class="text-[17px]">Synclet</span>
+        </a>
+        <ul class="hidden items-center gap-6 text-sm text-muted-foreground md:flex">
+          <li><a class="hover:text-foreground" href="#features">Features</a></li>
+          <li><a class="hover:text-foreground" href="#download">Download</a></li>
+          <li><a class="hover:text-foreground" href="#install">Install</a></li>
+          <li><a class="hover:text-foreground" href="#faq">FAQ</a></li>
+        </ul>
+        <a class="btn btn-secondary min-h-9 px-3 text-sm" href="https://github.com/eltomato89/synclet">
+          <svg viewBox="0 0 24 24" class="size-4" aria-hidden="true" fill="currentColor"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a10.9 10.9 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.39-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
+          GitHub
+        </a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <!-- 1. Hero -->
+      <section id="top" class="relative overflow-hidden pt-14 pb-16 sm:pt-20 sm:pb-24" aria-labelledby="hero-title">
+        <svg aria-hidden="true" viewBox="0 0 1200 1200" fill="none" class="pointer-events-none absolute -top-[420px] left-1/2 w-[1400px] max-w-none -translate-x-1/2 text-border">
+          <circle cx="600" cy="600" r="200" stroke="currentColor" stroke-width="1.25" />
+          <circle cx="600" cy="600" r="300" stroke="currentColor" stroke-width="1.25" opacity=".85" />
+          <circle cx="600" cy="600" r="400" stroke="currentColor" stroke-width="1.25" opacity=".7" />
+          <circle cx="600" cy="600" r="500" stroke="currentColor" stroke-width="1.25" opacity=".55" />
+          <circle cx="823" cy="823" r="7" class="fill-primary" opacity=".5" />
+          <circle cx="317" cy="883" r="7" class="fill-primary" opacity=".35" />
+        </svg>
+        <div class="container-site relative">
+          <div class="mx-auto max-w-3xl text-center">
+            <img src="./src/assets/icon-256.webp" alt="Synclet app icon" width="96" height="96" class="mx-auto size-20 sm:size-24" />
+            <p class="mt-6 chip">Self-hosted · Open source</p>
+            <h1 id="hero-title" class="mt-4 text-4xl font-semibold sm:text-6xl">Your folder stays your folder.</h1>
+            <p class="mx-auto mt-5 max-w-2xl text-base text-muted-foreground sm:text-lg">
+              Synclet is a self-hosted alternative to Dropbox and OneDrive. The folder on your disk is the source of truth:
+              Synclet indexes and serves the files that are already there, and never puts its own metadata inside.
+              Throw the containers away and a normal folder remains.
+            </p>
+            <div class="mt-8 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
+              <a class="btn btn-primary" data-link="mac-dmg" href="https://github.com/eltomato89/synclet/releases/latest/download/Synclet.dmg">
+                <svg viewBox="0 0 24 24" class="size-4" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></svg>
+                Download for Mac
+              </a>
+              <a class="btn btn-secondary" href="#install">
+                <svg viewBox="0 0 24 24" class="size-4" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01M6 18h.01"/></svg>
+                Self-host with Docker
+              </a>
+            </div>
+            <p class="mt-3 text-[13px] text-muted-foreground">Mac app requires macOS 26 or later. Server runs anywhere Docker Compose does.</p>
+          </div>
+
+          <!-- Product image: the web app, with the phone layout and the Finder location as accents. -->
+          <div class="relative mx-auto mt-14 max-w-5xl sm:mt-16">
+            <figure class="frame-browser">
+              <div class="frame-browser-bar" aria-hidden="true">
+                <i></i><i></i><i></i>
+                <span class="mx-auto rounded-md bg-background px-3 py-0.5 text-xs text-muted-foreground">files.example.com</span>
+              </div>
+              <picture>
+                <source media="(prefers-color-scheme: dark)" srcset="./src/assets/screenshots/files-dark.webp" />
+                <img src="./src/assets/screenshots/files-light.webp" width="2000" height="1250" fetchpriority="high"
+                  alt="The Synclet web app showing the folders Photos, Projects, Documents and Music, landscape photos, PDFs and text files in grid view, with the spaces Family and Archive in the sidebar."
+                  class="block h-auto w-full" />
+              </picture>
+              <figcaption class="sr-only">The Synclet web app (sample data).</figcaption>
+            </figure>
+
+            <figure class="frame-phone absolute -right-2 -bottom-10 w-[30%] max-w-[230px] sm:-right-6 md:-right-10">
+              <picture>
+                <source media="(prefers-color-scheme: dark)" srcset="./src/assets/screenshots/mobile-dark.webp" />
+                <img src="./src/assets/screenshots/mobile-light.webp" width="600" height="1298" loading="lazy"
+                  alt="The Synclet web app in a phone-sized browser window." class="block h-auto w-full" />
+              </picture>
+            </figure>
+
+            <figure class="absolute -bottom-12 -left-10 hidden w-72 rounded-xl border bg-background p-3 text-[13px] md:block lg:-left-16" style="box-shadow: var(--shadow-frame)" aria-label="Illustration: Synclet appears in Finder under Locations, with files downloaded on demand.">
+              <div aria-hidden="true">
+                <p class="px-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">Locations</p>
+                <div class="mt-1 flex items-center gap-2 rounded-md bg-accent-soft px-2 py-1.5 font-medium">
+                  <img src="./src/assets/icon-128.webp" alt="" width="16" height="16" class="size-4" />
+                  Synclet – alex@files.example.com
+                </div>
+                <ul class="mt-2 space-y-1 px-1">
+                  <li class="flex items-center gap-2"><span class="text-primary">▸</span> My files <span class="ml-auto text-muted-foreground">on disk</span></li>
+                  <li class="flex items-center gap-2 pl-4">Photos <span class="ml-auto inline-flex items-center gap-1 text-primary"><svg viewBox="0 0 24 24" class="size-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>offline</span></li>
+                  <li class="flex items-center gap-2 pl-4">Itinerary.pdf <span class="ml-auto inline-flex items-center gap-1 text-muted-foreground"><svg viewBox="0 0 24 24" class="size-3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/></svg>on demand</span></li>
+                  <li class="flex items-center gap-2"><span class="text-primary">▸</span> Family</li>
+                </ul>
+              </div>
+              <figcaption class="mt-2 border-t px-1 pt-2 text-[12px] text-muted-foreground">Finder, via File Provider (illustration)</figcaption>
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <!-- The promise, in three points -->
+      <section class="border-y bg-background" aria-labelledby="promise-title">
+        <div class="container-site py-14 sm:py-16">
+          <h2 id="promise-title" class="sr-only">How Synclet treats your files</h2>
+          <ul class="grid gap-8 sm:grid-cols-3">
+            <li>
+              <h3 class="text-lg font-semibold">Nothing hidden in your folder</h3>
+              <p class="mt-2 text-muted-foreground">No hidden directories, no extended attributes, no database files. Trash, versions and previews live in a separate metadata folder; the index lives in PostgreSQL.</p>
+            </li>
+            <li>
+              <h3 class="text-lg font-semibold">Edit on disk or in Synclet</h3>
+              <p class="mt-2 text-muted-foreground">Point Synclet at a folder you already have. Change files on the host, in the web app or from your Mac and iPhone: everyone sees the same thing.</p>
+            </li>
+            <li>
+              <h3 class="text-lg font-semibold">Leave whenever you like</h3>
+              <p class="mt-2 text-muted-foreground">Stop the stack, delete the containers. Your files are still a plain folder, organised exactly the way you left them.</p>
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <!-- 2. Features -->
+      <section id="features" class="section" aria-labelledby="features-title">
+        <div class="container-site">
+          <p class="eyebrow">Features</p>
+          <h2 id="features-title" class="h2">Everything you expect from a cloud drive, on your hardware.</h2>
+          <p class="lead">A fast web app, native apps that live in Finder and the Files app, shared folders for your team or family, and optional Office editing.</p>
+
+          <ul class="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <li class="card">
+              <svg viewBox="0 0 24 24" class="size-6 text-primary" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+              <h3 class="mt-4 text-lg font-semibold">Web app</h3>
+              <ul class="mt-2 space-y-1 text-muted-foreground">
+                <li>QuickLook previews for photos (also HEIC), video, PDF, text and code</li>
+                <li>Search in file names and document text</li>
+                <li>Trash with 30 days to restore</li>
+                <li>File versions (optional)</li>
+                <li>Share links with password and expiry</li>
+                <li>Resumable uploads, also of whole folders</li>
+              </ul>
+            </li>
+            <li class="card">
+              <svg viewBox="0 0 24 24" class="size-6 text-primary" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 16V7a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9m16 0H4m16 0 1.28 2.55a1 1 0 0 1-.9 1.45H3.62a1 1 0 0 1-.9-1.45L4 16"/></svg>
+              <h3 class="mt-4 text-lg font-semibold">Mac</h3>
+              <ul class="mt-2 space-y-1 text-muted-foreground">
+                <li>Your files in Finder under Locations, via File Provider</li>
+                <li>Files download on demand when you open them</li>
+                <li>Pin folders or whole spaces for offline use</li>
+                <li>Live updates within seconds, several accounts</li>
+                <li>Menu bar app, notarized DMG, macOS 26+</li>
+              </ul>
+            </li>
+            <li class="card">
+              <svg viewBox="0 0 24 24" class="size-6 text-primary" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="20" x="5" y="2" rx="2"/><path d="M12 18h.01"/></svg>
+              <h3 class="mt-4 text-lg font-semibold">iPhone &amp; iPad</h3>
+              <ul class="mt-2 space-y-1 text-muted-foreground">
+                <li>Browse, preview, search and share in the app</li>
+                <li>Synclet as a location in the Files app</li>
+                <li>Share extension: save from any app</li>
+                <li>Uploads continue in the background</li>
+                <li>iOS and iPadOS 26+, TestFlight beta</li>
+              </ul>
+            </li>
+            <li class="card">
+              <svg viewBox="0 0 24 24" class="size-6 text-primary" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              <h3 class="mt-4 text-lg font-semibold">Spaces</h3>
+              <ul class="mt-2 space-y-1 text-muted-foreground">
+                <li>Team folders next to everyone's personal folder</li>
+                <li>External storage: NAS shares (SMB, NFS) and other disks</li>
+                <li>Users and groups with read or write access</li>
+                <li>Missing mounts are flagged, never treated as deleted</li>
+              </ul>
+            </li>
+            <li class="card">
+              <svg viewBox="0 0 24 24" class="size-6 text-primary" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4M16 13H8M16 17H8M10 9H8"/></svg>
+              <h3 class="mt-4 text-lg font-semibold">Office</h3>
+              <ul class="mt-2 space-y-1 text-muted-foreground">
+                <li>Edit Word, Excel and PowerPoint files (and ODF) in the browser</li>
+                <li>Powered by the Euro-Office Document Server</li>
+                <li>Optional extra container on its own subdomain</li>
+                <li>Concurrent changes are kept as a conflict copy</li>
+              </ul>
+            </li>
+            <li class="card">
+              <svg viewBox="0 0 24 24" class="size-6 text-primary" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01M6 18h.01"/></svg>
+              <h3 class="mt-4 text-lg font-semibold">Self-hosted &amp; open source</h3>
+              <ul class="mt-2 space-y-1 text-muted-foreground">
+                <li>One Docker Compose stack on your own hardware</li>
+                <li>Automatic HTTPS with Caddy, or behind your proxy</li>
+                <li>Single sign-on with OIDC (Authentik, Keycloak, Authelia) or forward-auth</li>
+                <li>Admin area for users, devices, shares and status</li>
+              </ul>
+            </li>
+          </ul>
+
+          <div class="mt-16 grid items-center gap-10 lg:grid-cols-2">
+            <div>
+              <h3 class="text-2xl font-semibold">Look before you download.</h3>
+              <p class="mt-3 text-muted-foreground">Press the space bar on any file for a QuickLook preview: photos, video, PDFs, Markdown and source code open right in the browser. Thumbnails and previews are generated in the background and stored outside your folder.</p>
+            </div>
+            <figure class="frame-browser">
+              <picture>
+                <source media="(prefers-color-scheme: dark)" srcset="./src/assets/screenshots/preview-dark.webp" />
+                <img src="./src/assets/screenshots/preview-light.webp" width="2000" height="1250" loading="lazy" decoding="async"
+                  alt="QuickLook preview of a landscape photo opened from the Synclet web app." class="block h-auto w-full" />
+              </picture>
+            </figure>
+          </div>
+
+          <div class="mt-16 grid items-center gap-10 lg:grid-cols-2">
+            <div class="lg:order-2">
+              <h3 class="text-2xl font-semibold">Shared folders, and the NAS you already own.</h3>
+              <p class="mt-3 text-muted-foreground">Create a team folder for the family or the office, mount an SMB or NFS share as external storage, and decide per user or group who may read or write. Every space is still a normal folder on disk.</p>
+            </div>
+            <figure class="frame-browser lg:order-1">
+              <picture>
+                <source media="(prefers-color-scheme: dark)" srcset="./src/assets/screenshots/spaces-dark.webp" />
+                <img src="./src/assets/screenshots/spaces-light.webp" width="2000" height="778" loading="lazy" decoding="async"
+                  alt="The admin page Spaces listing the team folder Family and the external storage Archive with their members and status." class="block h-auto w-full" />
+              </picture>
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <!-- 3. Downloads -->
+      <section id="download" class="section border-t bg-background" aria-labelledby="download-title">
+        <div class="container-site">
+          <p class="eyebrow">Download</p>
+          <h2 id="download-title" class="h2">Get Synclet.</h2>
+          <p class="lead">Start with the server, then add the apps. The web app works in any modern browser.</p>
+          <ul class="mt-10 grid gap-4 md:grid-cols-3">
+            <li class="card flex flex-col bg-canvas">
+              <h3 class="text-lg font-semibold">Mac</h3>
+              <p class="mt-2 text-muted-foreground">Menu bar app with Finder integration. Notarized DMG.</p>
+              <p class="mt-1 text-[13px] text-muted-foreground">Requires macOS 26 or later.</p>
+              <div class="mt-auto pt-6">
+                <a class="btn btn-primary w-full" data-link="mac-dmg" href="https://github.com/eltomato89/synclet/releases/latest/download/Synclet.dmg">Download Synclet.dmg</a>
+              </div>
+            </li>
+            <li class="card flex flex-col bg-canvas">
+              <h3 class="text-lg font-semibold">iPhone &amp; iPad</h3>
+              <p class="mt-2 text-muted-foreground">App with Files app integration and share extension.</p>
+              <p class="mt-1 text-[13px] text-muted-foreground">Requires iOS or iPadOS 26 or later.</p>
+              <div class="mt-auto pt-6" data-ios-download>
+                <span class="chip w-full justify-center py-2.5">TestFlight beta coming soon</span>
+              </div>
+            </li>
+            <li class="card flex flex-col bg-canvas">
+              <h3 class="text-lg font-semibold">Server</h3>
+              <p class="mt-2 text-muted-foreground">Docker Compose stack: server, worker, PostgreSQL and Caddy.</p>
+              <p class="mt-1 text-[13px] text-muted-foreground">Linux recommended; anything that runs Docker works.</p>
+              <div class="mt-auto flex flex-col gap-2 pt-6">
+                <a class="btn btn-primary w-full" href="#install">Install guide</a>
+                <a class="btn btn-secondary w-full" href="https://github.com/eltomato89/synclet">Source on GitHub</a>
+              </div>
+            </li>
+          </ul>
+          <p class="mt-6 text-sm text-muted-foreground">Windows and Android apps are coming later.</p>
+        </div>
+      </section>
+
+      <!-- 4. Install -->
+      <section id="install" class="section border-t" aria-labelledby="install-title">
+        <div class="container-site">
+          <p class="eyebrow">Install</p>
+          <h2 id="install-title" class="h2">Up and running in five minutes.</h2>
+          <p class="lead">You need a machine with <strong class="font-medium text-foreground">Docker</strong> and <strong class="font-medium text-foreground">Docker Compose</strong>, and a folder with your files (or an empty one).</p>
+
+          <ol class="mt-10 grid gap-8 lg:grid-cols-2 [&>li]:min-w-0">
+            <li>
+              <h3 class="text-lg font-semibold">1. Get the code and the config</h3>
+              <figure class="code-block mt-3">
+                <button type="button" class="copy-btn" data-copy hidden>Copy</button>
+                <pre><code>git clone https://github.com/eltomato89/synclet.git
+cd synclet
+cp deploy/.env.example deploy/.env</code></pre>
+              </figure>
+            </li>
+            <li>
+              <h3 class="text-lg font-semibold">2. Point it at your folders</h3>
+              <p class="mt-2 text-muted-foreground">Edit <code class="inline-code">deploy/.env</code>:</p>
+              <figure class="code-block mt-3">
+                <pre><code><span class="comment"># your files; each user gets a subfolder named like the username</span>
+SYNCLET_DATA=/srv/files
+<span class="comment"># trash, versions, previews: must exist, outside SYNCLET_DATA</span>
+SYNCLET_META=/srv/synclet-meta
+<span class="comment"># team folders (optional, default deploy/teams)</span>
+SYNCLET_TEAMS=/srv/teams
+<span class="comment"># owner of your files (id -u / id -g)</span>
+PUID=1000
+PGID=1000
+<span class="comment"># openssl rand -hex 24</span>
+POSTGRES_PASSWORD=…</code></pre>
+              </figure>
+              <p class="mt-2 text-sm text-muted-foreground">The meta and team folders must exist before the first start and be writable by <code class="inline-code">PUID:PGID</code>.</p>
+            </li>
+            <li>
+              <h3 class="text-lg font-semibold">3. Start the stack</h3>
+              <figure class="code-block mt-3">
+                <button type="button" class="copy-btn" data-copy hidden>Copy</button>
+                <pre><code>docker compose -f deploy/compose.yml --env-file deploy/.env up -d --build</code></pre>
+              </figure>
+              <p class="mt-3 text-muted-foreground">Open <code class="inline-code">http://localhost:8080</code> and complete the setup wizard. The username you choose is the folder name below <code class="inline-code">SYNCLET_DATA</code>; an existing folder with that name is adopted, and its files appear right away.</p>
+            </li>
+            <li>
+              <h3 class="text-lg font-semibold">4. Put it on the internet</h3>
+              <p class="mt-2 text-muted-foreground"><strong class="font-medium text-foreground">Automatic HTTPS:</strong> set <code class="inline-code">SYNCLET_SITE_ADDRESS</code> to your domain, <code class="inline-code">SYNCLET_PORT=80</code>, <code class="inline-code">SYNCLET_TLS_PORT=443</code> and <code class="inline-code">SYNCLET_PUBLIC_URL</code>; the bundled Caddy fetches a Let's Encrypt certificate.</p>
+              <p class="mt-2 text-muted-foreground"><strong class="font-medium text-foreground">Behind your own reverse proxy</strong> (nginx, Traefik, Nginx Proxy Manager): keep the defaults, set <code class="inline-code">SYNCLET_PUBLIC_URL</code> and put the proxy's address into <code class="inline-code">SYNCLET_TRUSTED_PROXIES</code>. Its read timeout must be longer than 25 seconds for live updates.</p>
+            </li>
+            <li class="lg:col-span-2">
+              <h3 class="text-lg font-semibold">NAS and other disks</h3>
+              <p class="mt-2 text-muted-foreground">Every folder mounted below <code class="inline-code">/storage</code> becomes a space. Add it to the <code class="inline-code">server</code> service and, read-only, to the <code class="inline-code">worker</code> in <code class="inline-code">deploy/compose.yml</code> (commented examples, including an SMB/CIFS volume, are in the file). For network shares, switch the space to scheduled scans in the admin area. Then assign users or groups to the space.</p>
+              <figure class="code-block mt-3">
+                <pre><code>  server:
+    volumes:
+      - /mnt/archive:/storage/Archive
+  worker:
+    volumes:
+      - /mnt/archive:/storage/Archive:ro</code></pre>
+              </figure>
+            </li>
+          </ol>
+
+          <div class="mt-10 card">
+            <h3 class="font-semibold">Full documentation on GitHub</h3>
+            <ul class="mt-3 grid gap-2 text-sm sm:grid-cols-3">
+              <li><a class="prose-link" href="https://github.com/eltomato89/synclet/blob/main/README.md">README: configuration, SSO, Office, versions</a></li>
+              <li><a class="prose-link" href="https://github.com/eltomato89/synclet/blob/main/deploy/README.md">deploy/README: team folders and external storage</a></li>
+              <li><a class="prose-link" href="https://github.com/eltomato89/synclet/blob/main/docs/sync/SYNC_API.md">Sync API reference</a></li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- 5. FAQ -->
+      <section id="faq" class="section border-t bg-background" aria-labelledby="faq-title">
+        <div class="container-site grid gap-10 lg:grid-cols-[1fr_2fr]">
+          <div>
+            <p class="eyebrow">FAQ</p>
+            <h2 id="faq-title" class="h2">Questions, answered.</h2>
+          </div>
+          <div class="faq border-t">
+            <details>
+              <summary>What happens to my files if I stop using Synclet?</summary>
+              <div><p>Nothing. They are a normal folder on your disk and stay exactly as they are. Synclet keeps its index in PostgreSQL and its trash, versions and previews in a separate metadata folder. Removing the containers (even with their volumes) leaves your files untouched.</p></div>
+            </details>
+            <details>
+              <summary>Do I need the apps?</summary>
+              <div><p>No. The web app does everything in the browser: upload, preview, search, share, restore from the trash. The Mac and iPhone/iPad apps add integration with Finder and the Files app, offline folders and background uploads.</p></div>
+            </details>
+            <details>
+              <summary>How do backups work?</summary>
+              <div><p>Back up your files folder (and team folders) with any tool you like: they are plain files. To keep trash, versions, users and share links too, also back up the metadata folder and the database (for example with <code class="inline-code">pg_dump</code>).</p></div>
+            </details>
+            <details>
+              <summary>Can I use my NAS or an SMB share?</summary>
+              <div><p>Yes. Mount it below <code class="inline-code">/storage</code> as a bind mount or as a Docker CIFS/NFS volume and it shows up as a space. Network file systems don't report changes reliably, so Synclet scans them on a schedule you set. If the share goes offline, the space is marked unavailable; nothing is deleted.</p></div>
+            </details>
+            <details>
+              <summary>Multiple users and shared folders?</summary>
+              <div><p>Yes. Every user gets a personal folder. Admins create team folders and groups and grant read or write access per user or group. Public share links work for files and folders.</p></div>
+            </details>
+            <details>
+              <summary>Is there an app for Windows or Android?</summary>
+              <div><p>Not yet. Windows and Android apps are coming later. Until then, use the web app in any browser.</p></div>
+            </details>
+            <details>
+              <summary>Is it free? What's the license?</summary>
+              <div><p>Synclet is free and open source; the code is on <a href="https://github.com/eltomato89/synclet">GitHub</a>. It is released under the <a href="https://github.com/eltomato89/synclet/blob/main/LICENSE">MIT license</a>.</p></div>
+            </details>
+            <details>
+              <summary>How are updates done?</summary>
+              <div><p>Pull the new version and run the same <code class="inline-code">docker compose … up -d --build</code> command. The server migrates the database on start. Downgrading after a migration is not supported, so back up the database before updating if you want a way back.</p></div>
+            </details>
+            <details>
+              <summary>How secure is it?</summary>
+              <div>
+                <p>Passwords are stored as Argon2 hashes and sign-ins are rate-limited. Single sign-on works with OIDC (with PKCE) or a forward-auth proxy, and admins always keep a password fallback. The apps sign in through the browser and receive a device token you can revoke at any time. Share links can have a password and an expiry date, and you can revoke them; admins see all links. HTTPS is automatic with the bundled Caddy.</p>
+              </div>
+            </details>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="border-t">
+      <div class="container-site flex flex-col gap-6 py-10 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+        <div class="flex items-center gap-2.5">
+          <img src="./src/assets/icon-128.webp" alt="" width="24" height="24" class="size-6" />
+          <span>© <span data-year>2026</span> Synclet contributors</span>
+        </div>
+        <nav aria-label="Footer">
+          <ul class="flex flex-wrap gap-x-5 gap-y-2">
+            <li><a class="hover:text-foreground" href="https://github.com/eltomato89/synclet">GitHub</a></li>
+            <li><a class="hover:text-foreground" href="https://github.com/eltomato89/synclet/blob/main/README.md">Documentation</a></li>
+            <li><a class="hover:text-foreground" href="https://github.com/eltomato89/synclet/blob/main/deploy/README.md">Deployment</a></li>
+            <li><a class="hover:text-foreground" href="https://github.com/eltomato89/synclet/blob/main/docs/sync/SYNC_API.md">Sync API</a></li>
+            <li><a class="hover:text-foreground" href="https://github.com/eltomato89/synclet/releases">Releases</a></li>
+          </ul>
+        </nav>
+      </div>
+    </footer>
+  </body>
+</html>

@@ -96,6 +96,17 @@ Only the test code signs in with a password. The app always uses the browser log
 
 **Output:** `build/Synclet-<version>.dmg`.
 
+### Publishing a release
+
+The website's download button links to `https://github.com/eltomato89/synclet/releases/latest/download/Synclet.dmg`,
+so every release needs an asset named exactly `Synclet.dmg`. `gh release create` keeps the file name
+(`file#label` only sets a display label), so copy the DMG first:
+
+```sh
+cp build/Synclet-<version>.dmg build/Synclet.dmg
+gh release create v<version> build/Synclet.dmg --title "Synclet <version>" --notes "…"
+```
+
 ### One-time setup on the build Mac
 
 1. **Developer ID Application certificate** of team `JC32M95WLZ` in the login keychain. Either:

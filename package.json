@@ -11,6 +11,8 @@
     "test:throwaway": "bash scripts/throwaway-test.sh",
     "test:e2e": "pnpm --filter @synclet/e2e test",
     "test:e2e:fresh": "bash scripts/e2e-fresh.sh",
-    "test:contract": "pnpm --filter @synclet/sync-contract test:contract"
+    "test:contract": "pnpm --filter @synclet/sync-contract test:contract",
+    "site:dev": "pnpm --filter @synclet/site dev",
+    "site:build": "pnpm --filter @synclet/site build"
   }
 }
