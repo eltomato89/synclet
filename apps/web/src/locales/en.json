@@ -681,7 +681,9 @@
       "users": "Users",
       "status": "Status",
       "shares": "Share links",
-      "sso": "Sign-in"
+      "sso": "Sign-in",
+      "groups": "Groups",
+      "spaces": "Spaces"
     },
     "tags": {
       "remove": "Remove {{value}}"
@@ -696,7 +698,8 @@
       "folderMissing": "This folder doesn't exist in the data directory anymore. Reload the list and pick another one.",
       "usernameInvalid": "This name can't be used as a folder name. It can't start with a dot or contain characters like / \\ : * ? @.",
       "dataNotWritable": "The server can't write to the data directory. Check the permissions of the /data volume.",
-      "invalid": "The server didn't accept these values. Check the fields and try again."
+      "invalid": "The server didn't accept these values. Check the fields and try again.",
+      "nameTaken": "That name is already in use."
     },
     "users": {
       "title": "Users",
@@ -840,7 +843,9 @@
           "submit": "Revoke device",
           "done": "Device revoked"
         }
-      }
+      },
+      "groups": "Groups",
+      "groupsEmpty": "Not in any group"
     },
     "status": {
       "title": "Server status",
@@ -1033,6 +1038,119 @@
         "header": "Use only letters, digits and hyphens.",
         "cidr": "“{{value}}” isn't an IP address or CIDR range.",
         "proxyRequired": "Add at least one trusted proxy address before turning on the auth proxy."
+      }
+    },
+    "groups": {
+      "title": "Groups",
+      "create": "New group",
+      "loadError": "Couldn't load groups",
+      "empty": "No groups yet",
+      "emptyBody": "Groups let you give several people access to a space at once.",
+      "noMembers": "No members",
+      "columns": {
+        "name": "Name",
+        "members": "Members"
+      },
+      "form": {
+        "createTitle": "New group",
+        "editTitle": "Edit {{name}}",
+        "name": "Name",
+        "members": "Members",
+        "create": "Create group",
+        "creating": "Creating …"
+      },
+      "toast": {
+        "created": "Group {{name}} created",
+        "updated": "Group {{name}} saved"
+      },
+      "delete": {
+        "action": "Delete",
+        "title": "Delete {{name}}?",
+        "body": "Members lose the access this group gave them. Their accounts and files are not affected.",
+        "submit": "Delete group",
+        "submitting": "Deleting …",
+        "done": "Group {{name}} deleted"
+      }
+    },
+    "spaces": {
+      "title": "Spaces",
+      "create": "New team folder",
+      "loadError": "Couldn't load spaces",
+      "empty": "No team folders or external storages yet.",
+      "noMembers": "No members",
+      "membersCount_one": "{{count}} member",
+      "membersCount_other": "{{count}} members",
+      "readOnly": "Read only",
+      "scan": "Scan now",
+      "mountHint": "External storages appear here automatically once they are mounted under /storage.",
+      "mountLink": "How to mount external storage",
+      "columns": {
+        "name": "Name",
+        "path": "Path",
+        "status": "Status",
+        "size": "Size",
+        "members": "Members"
+      },
+      "kind": {
+        "team": "Team folder",
+        "external": "External storage"
+      },
+      "status": {
+        "available": "Available",
+        "missing": "Unavailable"
+      },
+      "watch": {
+        "auto": "Automatic (watch for changes)",
+        "off": "Off (scan only)"
+      },
+      "members": {
+        "title": "Members",
+        "empty": "Nobody has access yet.",
+        "kind": {
+          "user": "User",
+          "group": "Group"
+        },
+        "role": {
+          "read": "Read",
+          "write": "Write"
+        },
+        "roleFor": "Access for {{name}}",
+        "remove": "Remove {{name}}",
+        "add": "Add member",
+        "addPlaceholder": "Add group or user …",
+        "groups": "Groups",
+        "users": "Users"
+      },
+      "form": {
+        "createTitle": "New team folder",
+        "createDescription": "Creates a folder under /teams.",
+        "editTitle": "Edit {{name}}",
+        "name": "Name",
+        "nameHint": "Used as the folder name on disk.",
+        "create": "Create team folder",
+        "creating": "Creating …",
+        "watch": "Watch mode",
+        "watchHint": "If watching fails, the storage is scanned periodically instead.",
+        "interval": "Scan interval (seconds)",
+        "intervalHint": "Leave empty to use the global default.",
+        "errors": {
+          "required": "Enter a name.",
+          "invalid": "This can't be used as a name. Avoid / \\ : * ? \" < > |, and trailing spaces or dots.",
+          "interval": "Enter a whole number of seconds, 1 or more."
+        }
+      },
+      "toast": {
+        "created": "Team folder {{name}} created",
+        "updated": "{{name}} saved",
+        "scanned": "Scan of {{name}} started"
+      },
+      "remove": {
+        "action": "Remove",
+        "title": "Remove {{name}}?",
+        "body": "Members lose access and the index is dropped. The folder stays on disk.",
+        "submit": "Remove folder",
+        "submitting": "Removing …",
+        "done": "{{name}} removed. The folder stays on disk."
       }
     }
   }

@@ -35,7 +35,7 @@ export function userPatch(user: AdminUserWire, v: UserFormValues): UserPatch {
   return patch;
 }
 
-function Field({ id, label, hint, error, children }: { id: string; label: string; hint?: string; error?: string; children: ReactNode }) {
+export function Field({ id, label, hint, error, children }: { id: string; label: string; hint?: string; error?: string; children: ReactNode }) {
   return (
     <div>
       <label htmlFor={id} className="mb-1.5 block text-sm font-medium text-foreground">{label}</label>

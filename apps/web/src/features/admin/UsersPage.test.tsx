@@ -115,3 +115,15 @@ it('creates a user from an unassigned folder', async () => {
     username: 'Altbestand', displayName: 'Altbestand', email: null, password: 'long enough pw', role: 'user', adoptExistingFolder: true,
   });
 });
+
+it('does not call an unmapped 409 in the user dialog "name taken"', async () => {
+  patchError = new ApiError(409, 'conflict', 'something else');
+  renderPage();
+  fireEvent.click(within(await openMenu('Boss')).getByRole('menuitem', { name: 'Edit' }));
+  const dialog = await screen.findByRole('dialog');
+  fireEvent.change(within(dialog).getByLabelText('Display name'), { target: { value: 'Boss 2' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+  await waitFor(() => expect(calls.some((c) => c.init?.method === 'PATCH')).toBe(true));
+  await new Promise((r) => setTimeout(r, 20));
+  expect(screen.queryByText('That name is already in use.')).toBeNull();
+});
