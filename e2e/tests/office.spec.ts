@@ -23,10 +23,11 @@ test('a new document opens in the Euro-Office editor', async ({ page, context })
 
   const editor = await popupPromise;
   await expect(editor).toHaveURL(/\/office\/f_/);
-  // DocsAPI replaces the placeholder with the editor iframe served by the Document Server origin.
+  // DocsAPI replaces the placeholder with the editor iframe served by the Document Server
+  // (below /documentserver of the Synclet site).
   const frame = editor.locator('iframe[name="frameEditor"]');
   await expect(frame).toBeAttached({ timeout: 90_000 });
-  expect(new URL((await frame.getAttribute('src'))!, editor.url()).origin).toBe(E2E.officeUrl);
+  expect(new URL((await frame.getAttribute('src'))!, editor.url()).href.startsWith(`${E2E.officeUrl}/`)).toBe(true);
   // The editor app inside the frame has loaded the document (its canvas area exists).
   await expect(editor.frameLocator('iframe[name="frameEditor"]').locator('#editor_sdk')).toBeAttached({ timeout: 120_000 });
 });

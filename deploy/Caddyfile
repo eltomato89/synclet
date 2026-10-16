@@ -64,13 +64,53 @@
 		}
 	}
 
+	# Euro-Office Document Server under /documentserver on this site (the default office setup, see
+	# README "Office"). Active with SYNCLET_OFFICE_ENABLED=on (compose.yml sets it when
+	# OFFICE_JWT_SECRET is set), unless the Document Server has its own subdomain instead
+	# (compose.office.yml sets SYNCLET_CADDY_OFFICE=on). Otherwise everything below /documentserver
+	# is answered 404 here, never by the web app. The prefix must not be a web app route (/office/:id).
+	@documentserver path /documentserver /documentserver/*
+	handle @documentserver {
+		route {
+			@office_off expression `"{$SYNCLET_OFFICE_ENABLED:}" != "on" || "{$SYNCLET_CADDY_OFFICE:}" == "on"`
+			respond @office_off 404
+			# The Document Server's welcome and example pages are not needed by Synclet and run in this
+			# site's origin: 404 unless SYNCLET_OFFICE_WELCOME=on. (Path matching is case-insensitive
+			# and works on the cleaned, unescaped path.)
+			@office_extras {
+				path /documentserver/welcome /documentserver/welcome/* /documentserver/example /documentserver/example/*
+				expression `"{$SYNCLET_OFFICE_WELCOME:}" != "on"`
+			}
+			respond @office_extras 404
+			redir /documentserver /documentserver/ 308
+			uri strip_prefix /documentserver
+			reverse_proxy office:80 {
+				# The Document Server builds every absolute URL (editor, websocket, downloads) from these;
+				# the "host/prefix" form makes it generate URLs below /documentserver. {hostport} keeps a
+				# non-default port. Client-sent values are replaced. {scheme} is https for a domain
+				# address; behind a TLS-terminating outer proxy set SYNCLET_TRUSTED_PROXIES so the outer
+				# proxy's X-Forwarded-Proto is honoured.
+				header_up X-Forwarded-Host {hostport}/documentserver
+				header_up X-Forwarded-Proto {scheme}
+				# WebSocket upgrades are proxied automatically; never buffer, no timeouts.
+				flush_interval -1
+				transport http {
+					read_timeout 0
+					write_timeout 0
+				}
+			}
+		}
+	}
+
 	handle {
-		# Euro-Office origin for the CSP below. Empty without compose.office.yml (strict CSP); with it
-		# SYNCLET_OFFICE_PUBLIC_URL (https://office.example.com) allows the editor script, frame and
-		# its websocket (wss://...) from exactly that origin. `map` derives the ws(s) origin (the "#"
-		# keeps the source non-empty, `map` rejects an empty argument).
+		# Euro-Office origin for the CSP below. Empty for the default /documentserver setup: the
+		# editor is same-origin and 'self' covers its script, frame and websocket. With the office on
+		# its own subdomain (compose.office.yml) SYNCLET_OFFICE_PUBLIC_URL (https://office.example.com)
+		# allows the editor script, frame and its websocket (wss://...) from exactly that origin.
+		# `map` derives the ws(s) origin, dropping any path (the "#" keeps the source non-empty, `map`
+		# rejects an empty argument).
 		map "{$SYNCLET_OFFICE_PUBLIC_URL:}#" {office_ws} {
-			~^http(s?)://([^/#]+)/?#$ ws${1}://${2}
+			~^http(s?)://([^/#]+)(/[^#]*)?#$ ws${1}://${2}
 			default ""
 		}
 		# Static web app only. Never add `encode` to the /api/* block above: it would buffer the
@@ -96,8 +136,9 @@
 	header @https Strict-Transport-Security "max-age=31536000"
 }
 
-# Euro-Office Document Server site (Caddyfile.office, baked into the image as
-# /etc/caddy/office/on/office.caddy). compose.office.yml sets SYNCLET_CADDY_OFFICE=on to enable it;
+# Euro-Office Document Server on its own subdomain (the alternative to /documentserver above;
+# Caddyfile.office, baked into the image as /etc/caddy/office/on/office.caddy). compose.office.yml
+# sets SYNCLET_CADDY_OFFICE=on to enable it;
 # otherwise the glob points at a folder that does not exist, which is not an error.
 import /etc/caddy/office/{$SYNCLET_CADDY_OFFICE:off}/*.caddy
 
