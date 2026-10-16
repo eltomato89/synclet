@@ -171,6 +171,8 @@ private fun PreviewActionButtons(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val saved = stringResource(R.string.preview_saved)
+    val noApp = stringResource(R.string.preview_no_app)
     // Runs a file action after the original is in the FileCache, so the provider answers immediately.
     fun withOriginal(action: suspend (java.io.File) -> Unit) {
         scope.launch {
@@ -192,10 +194,10 @@ private fun PreviewActionButtons(
     IconButton(onClick = {
         withOriginal { file ->
             MediaStoreSaver.saveToDownloads(context, file, item.name, item.mime)
-            snackbar.showSnackbar(context.getString(R.string.preview_saved))
+            snackbar.showSnackbar(saved)
         }
     }) { Icon(Icons.Outlined.Download, stringResource(R.string.preview_download)) }
     IconButton(onClick = {
-        withOriginal { if (!openWith(context, accountKey, item)) snackbar.showSnackbar(context.getString(R.string.preview_no_app)) }
+        withOriginal { if (!openWith(context, accountKey, item)) snackbar.showSnackbar(noApp) }
     }) { Icon(Icons.AutoMirrored.Outlined.OpenInNew, stringResource(R.string.preview_open_with)) }
 }

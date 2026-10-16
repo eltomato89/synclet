@@ -74,9 +74,9 @@ fun TrashScreen(graph: AppGraph, onBack: (() -> Unit)?) {
     val message = state.message
     val messageText = when (message) {
         null -> null
-        is UiMessage.Text -> context.getString(message.res, *message.args.toTypedArray())
+        is UiMessage.Text -> stringResource(message.res, *message.args.toTypedArray())
         is UiMessage.Error -> message.error.let { e ->
-            if (e is SyncError.Http && e.status == 409) context.getString(R.string.trash_busy, e.serverMessage.orEmpty())
+            if (e is SyncError.Http && e.status == 409) stringResource(R.string.trash_busy, e.serverMessage.orEmpty())
             else context.syncErrorMessage(e)
         }
     }

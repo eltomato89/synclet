@@ -31,12 +31,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import tech.jensk.synclet.core.api.SyncItem
 import tech.jensk.synclet.ui.components.iconFor
 
+// PlayerView's controller settings are @UnstableApi in media3.
+@OptIn(UnstableApi::class)
 @Composable
 fun MediaPage(vm: PreviewViewModel, item: SyncItem, isCurrent: Boolean, modifier: Modifier = Modifier) {
     val context = LocalContext.current

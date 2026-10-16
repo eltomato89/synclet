@@ -44,6 +44,7 @@ fun OtherPage(
         Icon(iconFor(item), null, Modifier.size(96.dp), tint = MaterialTheme.colorScheme.primary)
         Text(item.name, style = MaterialTheme.typography.titleMedium)
         Text(formatBytes(item.size), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        val noApp = stringResource(R.string.preview_no_app)
         if (busy) {
             LoadingProgress(state.progress[item.id])
         } else {
@@ -52,7 +53,7 @@ fun OtherPage(
                 scope.launch {
                     try {
                         vm.original(item)
-                        if (!openWith(context, accountKey, item)) onMessage(context.getString(R.string.preview_no_app))
+                        if (!openWith(context, accountKey, item)) onMessage(noApp)
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
