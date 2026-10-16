@@ -387,7 +387,7 @@ Planned work is tracked in the issue tracker.
 
 ## License
 
-TBD by the maintainer before the first public release.
+[MIT](LICENSE) © 2026 Jens Köhler
 
 ## Built with AI assistance
 
