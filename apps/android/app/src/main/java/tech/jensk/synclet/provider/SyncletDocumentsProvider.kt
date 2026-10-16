@@ -33,12 +33,14 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import tech.jensk.synclet.R
 import tech.jensk.synclet.core.account.AccountSession
 import tech.jensk.synclet.core.api.ErrorCodes
 import tech.jensk.synclet.core.api.NameRules
 import tech.jensk.synclet.core.api.OnConflict
 import tech.jensk.synclet.core.api.SyncError
+import tech.jensk.synclet.core.api.SyncApi
 import tech.jensk.synclet.core.api.SyncItem
 import tech.jensk.synclet.core.api.SyncSpace
 import tech.jensk.synclet.core.api.recent
@@ -46,6 +48,10 @@ import tech.jensk.synclet.core.api.search
 import tech.jensk.synclet.core.api.sha256Hex
 import tech.jensk.synclet.core.layout.DocumentIds
 import tech.jensk.synclet.core.layout.SpaceLayout
+import tech.jensk.synclet.core.upload.TusClient
+import tech.jensk.synclet.core.upload.UploadKind
+import tech.jensk.synclet.core.upload.UploadNotifications
+import tech.jensk.synclet.core.upload.UploadStatus
 import tech.jensk.synclet.ui.components.nameProblemMessage
 import tech.jensk.synclet.ui.components.syncErrorMessage
 
@@ -58,6 +64,10 @@ import tech.jensk.synclet.ui.components.syncErrorMessage
  * Writes go to a working copy in `cacheDir/provider-work` (never `filesDir/uploads`, whose unknown files the upload
  * queue prunes); on close a changed copy is handed to the upload queue as a `replace` with the etag seen at open.
  * Until that upload is done, reads serve the queued copy (read-after-write returns the new content).
+ *
+ * Limitation: a client that calls `ParcelFileDescriptor.detachFd()` on a writable descriptor reports "detached"
+ * through the close channel, which the listener sees as an error – its edit is dropped like a crashed writer's
+ * (with an "upload failed" notification), because the provider can no longer tell when the content is final.
  */
 class SyncletDocumentsProvider : DocumentsProvider() {
     internal var environmentOverride: ProviderEnvironment? = null
@@ -240,7 +250,7 @@ class SyncletDocumentsProvider : DocumentsProvider() {
 
         // A writer that just closed may still be handing its copy to the queue: wait for it, so this open sees it.
         val writeKey = DocumentIds.of(ref.accountKey, item.id)
-        writes.awaitIdle(writeKey, HAND_OVER_WAIT_MS)
+        writes.awaitIdle(writeKey, HAND_OVER_WAIT_MS, signal)
         val pending = blocking(null) { env.uploadQueue.pendingReplace(ref.accountKey, item.id) }
         val pendingCopy = pending?.let { env.uploadQueue.copyFile(it.id) }?.takeIf { it.exists() }
 
@@ -262,6 +272,9 @@ class SyncletDocumentsProvider : DocumentsProvider() {
         }
         val accountKey = ref.accountKey
         val ifMatch = item.contentEtag ?: item.etag
+        val parentId = item.parentId ?: SyncItem.ROOT_ID
+        val parentName = env.listingCache.item(accountKey, parentId)?.name ?: ""
+        val appContext = requireContext().applicationContext
         writes.begin(writeKey)
         try {
             return ParcelFileDescriptor.open(work, accessMode, closeHandler) { error ->
@@ -271,16 +284,20 @@ class SyncletDocumentsProvider : DocumentsProvider() {
                         baseSha != null && sha256Hex(work) == baseSha -> work.delete()   // opened rw, nothing changed
                         else -> {
                             runBlocking {
-                                env.uploadQueue.enqueueReplace(accountKey, item.id, item.parentId ?: SyncItem.ROOT_ID, "", item.name,
+                                env.uploadQueue.enqueueReplace(accountKey, item.id, parentId, parentName, item.name,
                                     ifMatch, work, chainAfter = pending?.id)
                             }
                             env.scheduleUploads(accountKey)
                             env.notifier.documentChanged(accountKey, item.id)
+                            // DocumentsUI shows the new size/mtime once the parent listing is reloaded.
+                            changed(accountKey, parentId)
                         }
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "could not queue the changed document", e)
                     work.delete()
+                    // Never lose an edit silently.
+                    runCatching { UploadNotifications.failed(appContext, item.name) }
                 } finally {
                     writes.end(writeKey)
                 }
@@ -335,7 +352,7 @@ class SyncletDocumentsProvider : DocumentsProvider() {
         val session = session(parent.accountKey)
         val folder = item(parent, null)
         if (!session.layout.canCreateIn(folder)) throw UnsupportedOperationException(forbidden())
-        val created = mutate(parent.accountKey, folder.id) {
+        val created = mutate(parent.accountKey, null, folder.id) {
             if (mimeType == Document.MIME_TYPE_DIR) session.api.createFolder(folder.id, name, OnConflict.RENAME)
             else {
                 // A new file gets its id right away; the app's writes then arrive as `replace` (Spec §2.7).
@@ -356,7 +373,7 @@ class SyncletDocumentsProvider : DocumentsProvider() {
         val session = session(ref.accountKey)
         val item = item(ref, null)
         if (!item.capabilities.rename) throw UnsupportedOperationException(forbidden())
-        val updated = mutate(ref.accountKey, item.parentId) { session.api.patchItem(item.id, name = name, ifMatch = item.etag) }
+        val updated = mutate(ref.accountKey, item.id, item.parentId) { session.api.patchItem(item.id, name = name, ifMatch = item.etag) }
         env.listingCache.putItem(ref.accountKey, updated)
         updated.parentId?.let { changed(ref.accountKey, it) }
         env.notifier.documentChanged(ref.accountKey, item.id)
@@ -373,7 +390,7 @@ class SyncletDocumentsProvider : DocumentsProvider() {
         val item = item(source, null)
         val folder = item(target, null)
         if (!item.capabilities.move || !session.layout.canCreateIn(folder)) throw UnsupportedOperationException(forbidden())
-        val updated = mutate(source.accountKey, item.parentId) { session.api.patchItem(item.id, parentId = folder.id, ifMatch = item.etag) }
+        val updated = mutate(source.accountKey, item.id, item.parentId) { session.api.patchItem(item.id, parentId = folder.id, ifMatch = item.etag) }
         env.listingCache.putItem(source.accountKey, updated)
         item.parentId?.let { changed(source.accountKey, it) }
         changed(source.accountKey, folder.id)
@@ -387,14 +404,40 @@ class SyncletDocumentsProvider : DocumentsProvider() {
         val session = session(ref.accountKey)
         val item = item(ref, null)
         if (!item.capabilities.delete) throw UnsupportedOperationException(forbidden())
-        try {
-            mutate(ref.accountKey, item.parentId) { session.api.deleteItem(item.id, ifMatch = item.etag) }
+        val alreadyGone = try {
+            mutate(ref.accountKey, item.id, item.parentId) { session.api.deleteItem(item.id, ifMatch = item.etag) }
+            false
         } catch (e: FileNotFoundException) {
-            // already gone
+            true                                   // mutate already invalidated and notified the parent
         }
         env.listingCache.removeItem(ref.accountKey, item.id)
         env.fileCache.evict(ref.accountKey, item.id)
-        item.parentId?.let { changed(ref.accountKey, it) }
+        dropPendingReplaces(session, ref.accountKey, item.id)
+        if (!alreadyGone) item.parentId?.let { changed(ref.accountKey, it) }
+    }
+
+    /**
+     * An explicitly deleted file must not come back: queued replaces of it would hit 404 and be re-uploaded as a new
+     * file (Spec-Klärung 9). Waiting ones are removed; a running one is removed too (the uploader stops when its entry
+     * is gone) and its tus upload terminated, best effort.
+     */
+    private fun dropPendingReplaces(session: AccountSession, accountKey: String, itemId: String) {
+        blocking(null) { env.uploadQueue.load() }
+        val doomed = env.uploadQueue.entries.value.filter {
+            it.accountKey == accountKey && it.itemId == itemId && it.kind == UploadKind.REPLACE &&
+                (it.status == UploadStatus.WAITING || it.status == UploadStatus.UPLOADING)
+        }
+        for (entry in doomed) {
+            try {
+                blocking(null) {
+                    env.uploadQueue.remove(entry.id)
+                    val tus = entry.tusUrl?.toHttpUrlOrNull()?.takeIf { SyncApi.sameOrigin(it, session.api.origin) }
+                    if (entry.status == UploadStatus.UPLOADING && tus != null) runCatching { TusClient(session.api).terminate(tus) }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "could not drop a queued replace of a deleted file", e)
+            }
+        }
     }
 
     override fun removeDocument(documentId: String, parentDocumentId: String) = deleteDocument(documentId)
@@ -425,10 +468,15 @@ class SyncletDocumentsProvider : DocumentsProvider() {
         }
     }
 
-    /** Runs a mutation; maps errors to exceptions DocumentsUI can show. 412/404 also invalidate the parent listing. */
-    private fun <T> mutate(accountKey: String, parentId: String?, block: suspend () -> T): T = try {
+    /**
+     * Runs a mutation; maps errors to exceptions DocumentsUI can show. 412/404 also invalidate the parent listing and
+     * refresh the item index (412: the server's current item, so a retry sends the new etag; 404: forget the item).
+     */
+    private fun <T> mutate(accountKey: String, itemId: String?, parentId: String?, block: suspend () -> T): T = try {
         blocking(null) { block() }
     } catch (e: SyncError.Http) {
+        if (e.status == 412) e.item?.let { env.listingCache.putItem(accountKey, it) } ?: itemId?.let { env.listingCache.removeItem(accountKey, it) }
+        if (e.status == 404) itemId?.let { env.listingCache.removeItem(accountKey, it) }
         if (e.status == 412 || e.status == 404) parentId?.let { changed(accountKey, it) }
         throw if (e.status == 404) FileNotFoundException(requireContext().syncErrorMessage(e))
               else IllegalStateException(requireContext().syncErrorMessage(e))
@@ -510,10 +558,18 @@ class SyncletDocumentsProvider : DocumentsProvider() {
             idle.signalAll()
         }
 
-        /** Waits until no writer of [key] is open, at most [timeoutMs] (a writer that stays open is not waited for). */
-        fun awaitIdle(key: String, timeoutMs: Long) = lock.withLock {
-            var nanos = TimeUnit.MILLISECONDS.toNanos(timeoutMs)
-            while (open.containsKey(key) && nanos > 0) nanos = idle.awaitNanos(nanos)
+        /**
+         * Waits until no writer of [key] is open, at most [timeoutMs] (a writer that stays open is not waited for
+         * longer). Checks [signal] every few milliseconds: a cancelled open stops waiting at once.
+         */
+        fun awaitIdle(key: String, timeoutMs: Long, signal: CancellationSignal?) = lock.withLock {
+            val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+            while (open.containsKey(key)) {
+                if (signal?.isCanceled == true) throw OperationCanceledException()
+                val left = deadline - System.nanoTime()
+                if (left <= 0) return@withLock
+                idle.awaitNanos(minOf(left, TimeUnit.MILLISECONDS.toNanos(CANCEL_POLL_MS)))
+            }
         }
     }
 
@@ -521,7 +577,8 @@ class SyncletDocumentsProvider : DocumentsProvider() {
         private const val TAG = "SyncletProvider"
         private const val FRESH_MS = 30_000L
         private const val MAX_DEPTH = 64
-        private const val HAND_OVER_WAIT_MS = 3_000L
+        private const val HAND_OVER_WAIT_MS = 1_000L
+        private const val CANCEL_POLL_MS = 20L
         private const val WORK_DIR = "provider-work"
         private val ROOT_PROJECTION = arrayOf(Root.COLUMN_ROOT_ID, Root.COLUMN_DOCUMENT_ID, Root.COLUMN_TITLE, Root.COLUMN_SUMMARY,
             Root.COLUMN_FLAGS, Root.COLUMN_ICON, Root.COLUMN_AVAILABLE_BYTES)

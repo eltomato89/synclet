@@ -1,6 +1,8 @@
 package tech.jensk.synclet.provider
 
 import android.content.Context
+import android.os.CancellationSignal
+import android.os.OperationCanceledException
 import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract.Document
 import androidx.test.core.app.ApplicationProvider
@@ -16,6 +18,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import tech.jensk.synclet.core.upload.UploadStatus
 import tech.jensk.synclet.testing.D1
 import tech.jensk.synclet.testing.F1
 import tech.jensk.synclet.testing.F2
@@ -128,6 +131,23 @@ class ProviderWriteTest : ProviderTestBase() {
         assertEquals("\"v3\"", request.getHeader("If-Match"))
         assertEquals(0L, env.listingCache.get("srv:u1", "root")!!.loadedAt)        // invalidated
         assertTrue(env.notifier.children.contains("srv:u1" to "root"))
+        // The 412 carried the current item: a retry (e.g. from search, where no listing reload happens) uses its etag.
+        server.json(itemJson(fileItem(F1, "b.txt", version = 4)))
+        provider.renameDocument("srv:u1/$F1", "b.txt")
+        assertEquals("\"v4\"", server.takeRequest().getHeader("If-Match"))
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test fun conflictWithoutItemForgetsTheCachedItem() {
+        env.listingCache.put("srv:u1", "root", listOf(fileItem(F1, "a.txt", version = 3)))
+        server.error(412, "conflict")
+        assertThrows(IllegalStateException::class.java) { provider.renameDocument("srv:u1/$F1", "b.txt") }
+        server.takeRequest()
+        server.json(itemJson(fileItem(F1, "a.txt", version = 5)))
+        server.json(itemJson(fileItem(F1, "b.txt", version = 5)))
+        provider.renameDocument("srv:u1/$F1", "b.txt")
+        assertEquals("GET", server.takeRequest().method)                           // fetched again
+        assertEquals("\"v5\"", server.takeRequest().getHeader("If-Match"))
     }
 
     @Test fun renameUpdatesTheCache() {
@@ -146,7 +166,71 @@ class ProviderWriteTest : ProviderTestBase() {
         assertEquals("DELETE", request.method)
         assertEquals("\"v3\"", request.getHeader("If-Match"))
         assertNull(env.listingCache.item("srv:u1", F1))
-        assertTrue(env.notifier.children.contains("srv:u1" to "root"))
+        assertEquals(listOf("srv:u1" to "root"), env.notifier.children.toList())   // notified once
+    }
+
+    @Test fun deleteDropsAWaitingReplaceSoTheFileDoesNotReappear() {
+        server.json(itemJson(fileItem(F1, "a.txt", version = 3)))
+        write("srv:u1/$F1", "w", "edit")
+        assertEquals(1, env.uploadQueue.entries.value.size)
+        server.enqueue(MockResponse().setResponseCode(204))
+        provider.deleteDocument("srv:u1/$F1")
+        assertTrue(env.uploadQueue.entries.value.isEmpty())
+        assertNull(runBlocking { env.uploadQueue.pendingReplace("srv:u1", F1) })
+    }
+
+    @Test fun deleteDropsARunningReplaceAndTerminatesItsTusUpload() {
+        server.json(itemJson(fileItem(F1, "a.txt", version = 3)))
+        write("srv:u1/$F1", "w", "edit")
+        val tus = server.url("/api/sync/v1/tus/abc").toString()
+        val running = runBlocking { env.uploadQueue.claimNext("srv:u1")!!.let { e -> env.uploadQueue.update(e.id) { it.copy(tusUrl = tus) } } }!!
+        assertEquals(UploadStatus.UPLOADING, running.status)
+        server.enqueue(MockResponse().setResponseCode(204))      // DELETE item
+        server.enqueue(MockResponse().setResponseCode(204))      // DELETE tus
+        provider.deleteDocument("srv:u1/$F1")
+        assertTrue(env.uploadQueue.entries.value.isEmpty())
+        server.takeRequest(); server.takeRequest()                // GET item (write), DELETE item
+        val terminate = server.takeRequest()
+        assertEquals("DELETE", terminate.method)
+        assertEquals("/api/sync/v1/tus/abc", terminate.path)
+    }
+
+    @Test fun failedDeleteKeepsTheQueuedEdit() {
+        server.json(itemJson(fileItem(F1, "a.txt", version = 3)))
+        write("srv:u1/$F1", "w", "edit")
+        server.error(412, "conflict", item = fileItem(F1, "a.txt", version = 4))
+        assertThrows(IllegalStateException::class.java) { provider.deleteDocument("srv:u1/$F1") }
+        assertEquals(1, env.uploadQueue.entries.value.size)
+    }
+
+    @Test fun queuedWriteNamesTheParentAndRefreshesItsListing() {
+        env.listingCache.put("srv:u1", "root", listOf(folderItem(D1, "Docs")))
+        env.listingCache.put("srv:u1", D1, listOf(fileItem(F1, "a.txt", parentId = D1, version = 3)))
+        server.json(itemJson(fileItem(F1, "a.txt", parentId = D1, version = 3)))
+        write("srv:u1/$F1", "w", "edit")
+        val entry = runBlocking { env.uploadQueue.pendingReplace("srv:u1", F1) }!!
+        assertEquals("Docs", entry.parentName)
+        assertEquals(D1, entry.parentId)
+        waitUntil { env.notifier.children.contains("srv:u1" to D1) }
+        assertEquals(0L, env.listingCache.get("srv:u1", D1)!!.loadedAt)
+    }
+
+    @Test fun waitForAnOpenWriterIsCappedAndCancellable() {
+        server.json(itemJson(fileItem(F1, "a.txt", version = 3)))
+        val writer = provider.openDocument("srv:u1/$F1", "w", null)          // stays open
+        server.json(itemJson(fileItem(F1, "a.txt", version = 3)))
+        server.enqueue(MockResponse().setBody("old"))
+        val start = System.currentTimeMillis()
+        assertEquals("old", read("srv:u1/$F1"))
+        assertTrue(System.currentTimeMillis() - start < 2_000)               // capped at about 1 s
+
+        server.json(itemJson(fileItem(F1, "a.txt", version = 3)))
+        val signal = CancellationSignal()
+        Thread { Thread.sleep(150); signal.cancel() }.start()
+        val cancelStart = System.currentTimeMillis()
+        assertThrows(OperationCanceledException::class.java) { provider.openDocument("srv:u1/$F1", "r", signal) }
+        assertTrue(System.currentTimeMillis() - cancelStart < 800)
+        writer.close()
     }
 
     @Test fun moveSendsTheNewParent() {
