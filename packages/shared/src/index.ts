@@ -164,6 +164,20 @@ export type SsoSettingsInput = Partial<Omit<SsoSettingsWire, 'emergency' | 'oidc
 export interface AdminUserWire extends PublicUser {
   disabled: boolean; createdAt: string; lastLoginAt: string | null;
   identities: { provider: string; subject: string }[]; usedBytes: number; devices: number;
+  /** Groups the user belongs to, by name (Phase 4; older servers omit it). */
+  groups?: { id: string; name: string }[];
+}
+// Phase 4 admin API: groups and spaces (team folders, external storages).
+export interface AdminGroupWire { id: string; name: string; members: { id: string; username: string; displayName: string }[] }
+export type AdminSpaceRole = 'read' | 'write';
+export interface AdminSpaceMemberInput { kind: 'user' | 'group'; id: string; role: AdminSpaceRole }
+export interface AdminSpaceMemberWire extends AdminSpaceMemberInput { name: string }
+export interface AdminSpaceWire {
+  id: string; kind: 'team' | 'external'; name: string; rootPath: string;
+  /** `ignored`: removed from Synclet (folder kept, no members, no index) until restored. */
+  status: 'available' | 'missing' | 'ignored';
+  readOnly: boolean; watch: 'auto' | 'off'; scanIntervalSec: number | null;
+  sizeBytes: number; itemCount: number; members: AdminSpaceMemberWire[];
 }
 export interface AdminSessionWire { id: string; userAgent: string | null; createdAt: string; expiresAt: string }
 export interface AdminDeviceWire extends SyncDevice { userId: string }

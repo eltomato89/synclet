@@ -40,12 +40,15 @@ export async function uploadFile(api: SyncletClient, parentId: string, name: str
   return expectStatus(await api.upload(parentId, name, data), 201, `upload ${name}`).json<SyncItem>();
 }
 
-/** Drains /changes from `cursor` (following hasMore) and returns all changes plus the final cursor. */
-export async function drainChanges(api: SyncletClient, cursor: string, limit = 500) {
+/**
+ * Drains /changes from `cursor` (following hasMore) and returns all changes plus the final cursor.
+ * `space`: API space id (`?space=`); omitted = the server default (personal).
+ */
+export async function drainChanges(api: SyncletClient, cursor: string, limit = 500, space?: string) {
   const changes: ({ op: 'upsert'; item: SyncItem } | { op: 'delete'; id: string })[] = [];
   let c = cursor;
   for (let i = 0; i < 1000; i++) {
-    const page = expectStatus(await api.get(`/sync/v1/changes?cursor=${c}&limit=${limit}`), 200, 'changes').json<{ changes: typeof changes; cursor: string; hasMore: boolean }>();
+    const page = expectStatus(await api.get(`/sync/v1/changes?cursor=${c}&limit=${limit}${space ? `&space=${encodeURIComponent(space)}` : ''}`), 200, 'changes').json<{ changes: typeof changes; cursor: string; hasMore: boolean }>();
     changes.push(...page.changes);
     c = page.cursor;
     if (!page.hasMore) break;

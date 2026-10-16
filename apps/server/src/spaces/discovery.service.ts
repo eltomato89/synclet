@@ -12,7 +12,8 @@ import { isRealDir as isDir } from '../common/paths';
 import { SyncError } from '../common/sync-error';
 import { JournalService } from '../journal/journal.service';
 import { PrismaService, TX_OPTS } from '../prisma/prisma.service';
-import type { SpaceRow } from './space-access.service';
+import { AccountSignal } from './account-signal';
+import { SpaceAccess, type SpaceRow } from './space-access.service';
 
 type Tx = Prisma.TransactionClient;
 type DiscoveredKind = Extract<SpaceKind, 'team' | 'external'>;
@@ -41,14 +42,20 @@ export class DiscoveryService {
     private readonly prisma: PrismaService,
     private readonly journal: JournalService,
     private readonly events: AppEvents,
+    private readonly access: SpaceAccess,
+    private readonly signal: AccountSignal,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
-  /** Scans teamsRoot and storageRoot; creates new spaces (no members), marks missing/available, detects readOnly. */
+  /**
+   * Scans teamsRoot and storageRoot; creates new spaces (no members), marks missing/available,
+   * detects readOnly. Members of changed spaces get an `account` signal (status/canWrite in /account).
+   */
   discover(): Promise<{ created: string[]; changed: string[] }> {
     return this.serial(async () => {
       const created: string[] = [];
       const changed: string[] = [];
+      const affected = new Set<string>();
       for (const [kind, parent] of [['team', this.config.teamsRoot], ['external', this.config.storageRoot]] as const) {
         const names = await this.candidates(parent);
         const rows = await this.prisma.space.findMany({ where: { kind } });
@@ -70,17 +77,22 @@ export class DiscoveryService {
             await tx.space.update({ where: { id: row.id }, data: next });
           }, TX_OPTS);
           changed.push(row.id);
+          for (const u of await this.access.usersOf(row.id)) affected.add(u);
           const what = next.status !== row.status ? `now ${next.status}` : `readOnly=${next.readOnly}`;
           (next.status === 'missing' ? this.log.warn.bind(this.log) : this.log.log.bind(this.log))(`${kind} space "${row.name}" (${row.rootPath}) ${what}`);
         }
       }
       if (created.length || changed.length) this.events.emit('spaces.changed');
+      await this.signal.notify(affected);
       return { created, changed };
     });
   }
 
-  /** Creates the team folder `teamsRoot/<name>` and its space (no members). */
-  createTeam(rawName: string): Promise<SpaceRow> {
+  /**
+   * Creates the team folder `teamsRoot/<name>` and its space. `init` runs in the same transaction
+   * (e.g. adding members): when it throws, neither the row nor the folder is left behind.
+   */
+  createTeam(rawName: string, init?: (tx: Tx, row: Space) => Promise<void>): Promise<SpaceRow> {
     return this.serial(async () => {
       const name = this.checkName(rawName);
       const parent = this.config.teamsRoot;
@@ -97,7 +109,9 @@ export class DiscoveryService {
           throw e;
         }
         try {
-          return await this.insert(tx, 'team', name, root, false);
+          const created = await this.insert(tx, 'team', name, root, false);
+          await init?.(tx, created);
+          return created;
         } catch (e) {
           await rmdir(root).catch(() => {});
           throw e;

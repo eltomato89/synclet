@@ -34,7 +34,7 @@ export class AdminUsersController {
   constructor(private readonly prisma: PrismaService, private readonly users: UsersService) {}
 
   private async wires(where?: { id: string }): Promise<AdminUserWire[]> {
-    const rows = await this.prisma.user.findMany({ where, orderBy: { createdAt: 'asc' }, include: { identities: true } });
+    const rows = await this.prisma.user.findMany({ where, orderBy: { createdAt: 'asc' }, include: { identities: true, groups: { include: { group: { select: { id: true, name: true } } } } } });
     const ids = rows.map((r) => r.id);
     // Personal space id = user id.
     const sizes = await this.prisma.item.groupBy({ by: ['spaceId'], where: { spaceId: { in: ids }, type: 'file', deletedAt: null }, _sum: { size: true } });
@@ -44,6 +44,7 @@ export class AdminUsersController {
     return rows.map((u) => ({
       ...this.users.toPublic(u), disabled: u.disabledAt !== null, createdAt: u.createdAt.toISOString(), lastLoginAt: u.lastLoginAt?.toISOString() ?? null,
       identities: u.identities.map((i) => ({ provider: i.provider, subject: i.subject })), usedBytes: used.get(u.id) ?? 0, devices: dev.get(u.id) ?? 0,
+      groups: u.groups.map((m) => m.group).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })),
     }));
   }
 

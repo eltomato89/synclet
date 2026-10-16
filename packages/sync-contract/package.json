@@ -7,6 +7,7 @@
   "scripts": {
     "test:contract": "vitest run",
     "lint:openapi": "redocly lint openapi.yaml",
+    "lint": "redocly lint openapi.yaml",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {

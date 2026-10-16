@@ -83,6 +83,29 @@ describe('DiscoveryService', () => {
     expect(await ctx.prisma.item.count({ where: { deletedAt: null } })).toBe(2);
   });
 
+  it('status changes signal `account` to the space members via Postgres (works from any process)', async () => {
+    const alice = await createTestUser(ctx, 'alice');
+    const bob = await createTestUser(ctx, 'bob');
+    await mkdir(team('Familie'));
+    await writeFile(path.join(team('Familie'), 'b.txt'), 'b');
+    await discovery.discover();
+    const [fam] = await spaces();
+    await ctx.app.get(IndexerService).fullScan(ctx.app.get(SpacesRepo).toIndexSpace(fam));
+    await ctx.prisma.spaceMember.create({ data: { spaceId: fam.id, userId: alice.id, role: 'write' } });
+    // Only the database channel is used, never the in-process notifier.
+    const sent: unknown[][] = [];
+    const prisma = ctx.prisma;
+    const raw = prisma.$executeRaw.bind(prisma);
+    jest.spyOn(prisma, '$executeRaw').mockImplementation(((q: TemplateStringsArray, ...v: unknown[]) => {
+      if (q.join('?').includes('pg_notify')) sent.push(v);
+      return raw(q, ...v);
+    }) as typeof prisma.$executeRaw);
+    await rm(team('Familie'), { recursive: true });
+    expect((await discovery.discover()).changed).toEqual([fam.id]);
+    expect(sent).toEqual([['synclet_account', alice.id]]);
+    expect(sent.flat()).not.toContain(bob.id);
+  });
+
   it('an empty team space root with live items is missing, an empty one without items is not', async () => {
     await mkdir(team('Leer'));
     await mkdir(team('Voll'));

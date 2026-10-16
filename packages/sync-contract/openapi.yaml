@@ -356,13 +356,13 @@ paths:
               schema: { $ref: '#/components/schemas/ChangesPage' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '410':
           description: '`cursor_expired` – re-enumerate from scratch.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
 
   /sync/v1/events:
     get:
@@ -417,9 +417,10 @@ paths:
               schema: { $ref: '#/components/schemas/SyncItem' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '503': { $ref: '#/components/responses/SpaceUnavailable' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/NameConflict' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
   /sync/v1/items/{id}:
     parameters:
       - $ref: '#/components/parameters/ItemId'
@@ -435,8 +436,8 @@ paths:
               schema: { $ref: '#/components/schemas/SyncItem' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
     patch:
       tags: [items]
       operationId: updateItem
@@ -460,11 +461,11 @@ paths:
               schema: { $ref: '#/components/schemas/SyncItem' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/NameConflict' }
         '412': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
     delete:
       tags: [items]
       operationId: deleteItem
@@ -473,9 +474,9 @@ paths:
         '204': { description: Deleted. }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
   /sync/v1/items/{id}/children:
     parameters:
       - $ref: '#/components/parameters/ItemId'
@@ -494,8 +495,8 @@ paths:
               schema: { $ref: '#/components/schemas/ChildrenPage' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
   /sync/v1/items/upload:
     post:
       tags: [content]
@@ -520,10 +521,11 @@ paths:
               schema: { $ref: '#/components/schemas/SyncItem' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '503': { $ref: '#/components/responses/SpaceUnavailable' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/NameConflict' }
         '413': { $ref: '#/components/responses/TooLarge' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '507': { $ref: '#/components/responses/InsufficientStorage' }
   /sync/v1/items/{id}/content:
     parameters:
@@ -562,7 +564,6 @@ paths:
         '304': { description: '`If-None-Match` matched (`"v<version>"` or `*`).' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '416':
           description: '`range_not_satisfiable`, with `Content-Range: bytes */<size>`.'
@@ -571,6 +572,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
     put:
       tags: [content]
       operationId: replaceContent
@@ -596,7 +598,7 @@ paths:
               schema: { $ref: '#/components/schemas/SyncItem' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '503': { $ref: '#/components/responses/SpaceUnavailable' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '412': { $ref: '#/components/responses/Conflict' }
         '413': { $ref: '#/components/responses/TooLarge' }
@@ -605,6 +607,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '507': { $ref: '#/components/responses/InsufficientStorage' }
   /sync/v1/items/{id}/download-token:
     parameters:
@@ -623,8 +626,8 @@ paths:
               schema: { $ref: '#/components/schemas/DownloadToken' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
   /sync/v1/items/{id}/thumbnail:
     parameters:
       - $ref: '#/components/parameters/ItemId'
@@ -650,8 +653,8 @@ paths:
         '304': { description: Not modified. }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
   /sync/v1/items/{id}/preview-text:
     parameters:
       - $ref: '#/components/parameters/ItemId'
@@ -667,13 +670,13 @@ paths:
               schema: { $ref: '#/components/schemas/PreviewText' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '415':
           description: '`invalid_request` (status 415) – the file type has no text preview.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
 
   /sync/v1/items/{id}/versions:
     parameters:
@@ -697,6 +700,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
   /sync/v1/items/{id}/versions/{versionId}/content:
     parameters:
       - $ref: '#/components/parameters/ItemId'
@@ -723,6 +727,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '416': { $ref: '#/components/responses/RangeNotSatisfiable' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
   /sync/v1/items/{id}/versions/{versionId}/restore:
     parameters:
       - $ref: '#/components/parameters/ItemId'
@@ -739,7 +744,9 @@ paths:
               schema: { $ref: '#/components/schemas/SyncItem' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '507': { $ref: '#/components/responses/InsufficientStorage' }
 
   /sync/v1/search:
@@ -752,6 +759,11 @@ paths:
         - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
         - { name: offset, in: query, required: false, schema: { type: integer, minimum: 0, maximum: 10000, default: 0 } }
         - { name: folder, in: query, required: false, schema: { type: string }, description: Restrict to the subtree of this folder id. }
+        - name: space
+          in: query
+          required: false
+          description: 'Restrict to one space (API space id from `GET /sync/v1/account`). Default: every readable space. No access → `404`.'
+          schema: { type: string }
       responses:
         '200':
           description: Hits, best first.
@@ -765,9 +777,14 @@ paths:
     get:
       tags: [search]
       operationId: recent
-      summary: Most recently modified files
+      summary: Most recently modified files (all readable spaces)
       parameters:
         - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - name: space
+          in: query
+          required: false
+          description: Restrict to one space (API space id). Default - every readable space.
+          schema: { type: string }
       responses:
         '200':
           description: Files, newest `modifiedAt` first.
@@ -823,12 +840,13 @@ paths:
               schema: { $ref: '#/components/schemas/SyncItem' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
-        '503': { $ref: '#/components/responses/SpaceUnavailable' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/NameConflict' }
         '412': { $ref: '#/components/responses/Conflict' }
         '413': { description: '`Upload-Length` above `Tus-Max-Size`.' }
         '428': { description: '`precondition_required` – `itemId` without `ifMatch`.', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '507': { $ref: '#/components/responses/InsufficientStorage' }
   /sync/v1/uploads/{uploadId}:
     parameters:
@@ -898,7 +916,7 @@ paths:
     get:
       tags: [trash]
       operationId: listTrash
-      summary: Trash entries, most recently deleted first
+      summary: Trash entries of every space the user can write, most recently deleted first
       responses:
         '200':
           description: Entries.
@@ -911,7 +929,13 @@ paths:
     delete:
       tags: [trash]
       operationId: emptyTrash
-      summary: Empty the whole trash
+      summary: Empty the trash of one space (default the personal one)
+      parameters:
+        - name: space
+          in: query
+          required: false
+          description: 'API space id (`personal` by default); needs write access, else `404`/`403`.'
+          schema: { type: string }
       responses:
         '200':
           description: Number of removed entries.
@@ -929,6 +953,7 @@ paths:
       responses:
         '204': { description: Deleted forever. }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/TrashBusy' }
   /trash/{trashId}/restore:
@@ -945,8 +970,10 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/RestoreResult' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/TrashBusy' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '507': { $ref: '#/components/responses/InsufficientStorage' }
 
   /shares:
@@ -1104,12 +1131,12 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
     Forbidden:
-      description: '`forbidden`.'
+      description: '`forbidden` (e.g. a write in a space the user can only read, or on a space root).'
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
     NotFound:
-      description: '`not_found`.'
+      description: '`not_found` (also: an item or space the user has no access to).'
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -1259,7 +1286,11 @@ components:
         canWrite: { type: boolean }
         spaces:
           type: array
-          description: Top-level spaces. Phase 2 servers return exactly the personal space. Clients keep sync state per space and show an unknown `kind` as an ordinary folder.
+          description: |
+            Top-level spaces the user can read: personal, then team folders (`shared`), then external
+            storages, each by name. Phase 2 servers return exactly the personal space. Clients keep
+            sync state (cursor) per space, show an unknown `kind` as an ordinary folder, and reload
+            this list on the SSE `account` event.
           items: { $ref: '#/components/schemas/SyncSpace' }
         areas:
           type: object
@@ -1272,16 +1303,18 @@ components:
         quotaBytes: { type: integer, minimum: 0, description: 0 = no quota. }
         usedBytes: { type: integer, minimum: 0 }
         maxUploadBytes: { type: integer, minimum: 0 }
-        cursor: { $ref: '#/components/schemas/Cursor' }
+        cursor:
+          $ref: '#/components/schemas/Cursor'
+          description: Current cursor of the personal space (other spaces - `GET /sync/v1/cursor?space=`).
     SyncSpace:
       type: object
       required: [id, kind, name, rootId, canWrite]
       properties:
-        id: { type: string }
-        kind: { type: string, enum: [personal, shared, external] }
+        id: { type: string, description: 'API space id: `personal` for the own files, else the space uuid (`?space=`, `SyncItem.spaceId`).' }
+        kind: { type: string, enum: [personal, shared, external], description: '`shared` = team folder, `external` = external storage.' }
         name: { type: string }
-        rootId: { type: string, description: The space's root folder id (`root` for the personal space). }
-        canWrite: { type: boolean }
+        rootId: { type: string, description: 'The space''s root folder id: `root` for the personal space, else `r_<uuid>`.' }
+        canWrite: { type: boolean, description: 'False with read-only access, a read-only mount, or `status: missing`.' }
         status:
           type: string
           enum: [available, missing]
@@ -1456,7 +1489,7 @@ components:
       required: [item, path, snippet, matched]
       properties:
         item: { $ref: '#/components/schemas/SyncItem' }
-        path: { type: string, description: Parent folder path relative to the user root ('' = top level). }
+        path: { type: string, description: "Parent folder path relative to the root of the item's space ('' = top level); the space is `item.spaceId`." }
         snippet: { type: [string, 'null'], description: 'Content excerpt, matches wrapped in « ».' }
         matched: { type: string, enum: [name, content, both] }
     SearchResponse:
@@ -1481,6 +1514,8 @@ components:
         deletedAt: { type: string, format: date-time }
         expiresAt: { type: [string, 'null'], format: date-time }
         itemCount: { type: integer, minimum: 1 }
+        spaceId: { type: string, description: 'API id of the entry''s space (`personal` or the space uuid); absent from older servers = personal.' }
+        deletedBy: { type: [string, 'null'], format: uuid, description: 'User id of whoever deleted it; null when unknown (e.g. deleted on disk).' }
     RestoreResult:
       type: object
       required: [item, restoredTo, renamed]
@@ -1515,6 +1550,7 @@ components:
         revokedAt: { type: [string, 'null'], format: date-time, description: Always null in `GET /shares` (revoked links are not listed). }
         hits: { type: integer, minimum: 0 }
         itemTrashed: { type: boolean, description: The item is in the trash; the link answers 404 until it is restored. }
+        spaceId: { type: string, description: 'API id of the shared item''s space (`personal` or the space uuid); absent from older servers = personal.' }
     CreateShareLink:
       type: object
       required: [itemId]
