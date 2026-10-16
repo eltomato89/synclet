@@ -71,7 +71,7 @@ services:
   caddy:
     image: synclet-ioslive/caddy:$TAG
 YML
-DC=(docker compose -p "$PROJECT" -f "$ROOT/deploy/compose.yml" -f "$WORK/compose.ioslive.yml" --env-file "$WORK/.env")
+DC=(docker compose -p "$PROJECT" -f "$ROOT/deploy/compose.yml" -f "$ROOT/deploy/compose.build.yml" -f "$WORK/compose.ioslive.yml" --env-file "$WORK/.env")
 cleanup() {
   local rc=$?
   if [ "$rc" -ne 0 ] && [ "${IOSLIVE_LOGS:-0}" = 1 ]; then "${DC[@]}" logs --tail 200 server worker 2>/dev/null || true; fi

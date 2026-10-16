@@ -286,29 +286,35 @@
 
           <ol class="mt-10 grid gap-8 lg:grid-cols-2 [&>li]:min-w-0">
             <li>
-              <h3 class="text-lg font-semibold">1. Get the code and the config</h3>
+              <h3 class="text-lg font-semibold">1. Download two files</h3>
+              <p class="mt-2 text-muted-foreground">No checkout needed: the images are prebuilt for amd64 and arm64.</p>
               <figure class="code-block mt-3">
                 <button type="button" class="copy-btn" data-copy hidden>Copy</button>
-                <pre><code>git clone https://github.com/eltomato89/synclet.git
-cd synclet
-cp deploy/.env.example deploy/.env</code></pre>
+                <pre><code>mkdir synclet &amp;&amp; cd synclet
+curl -fsSLO https://raw.githubusercontent.com/eltomato89/synclet/main/deploy/compose.yml
+curl -fsSL -o .env https://raw.githubusercontent.com/eltomato89/synclet/main/deploy/.env.example
+sudo mkdir -p /srv/files /srv/synclet-meta
+sudo chown "$(id -u):$(id -g)" /srv/files /srv/synclet-meta
+mkdir -p teams
+sed -i.bak -e "s/^PUID=.*/PUID=$(id -u)/" -e "s/^PGID=.*/PGID=$(id -g)/" \
+  -e "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 24)/" .env &amp;&amp; rm .env.bak</code></pre>
               </figure>
             </li>
             <li>
               <h3 class="text-lg font-semibold">2. Point it at your folders</h3>
-              <p class="mt-2 text-muted-foreground">Edit <code class="inline-code">deploy/.env</code>:</p>
+              <p class="mt-2 text-muted-foreground">The commands above create the folders and set the owner (your user) and a database password. Check the rest of <code class="inline-code">.env</code>:</p>
               <figure class="code-block mt-3">
                 <pre><code><span class="comment"># your files; each user gets a subfolder named like the username</span>
 SYNCLET_DATA=/srv/files
 <span class="comment"># trash, versions, previews: must exist, outside SYNCLET_DATA</span>
 SYNCLET_META=/srv/synclet-meta
-<span class="comment"># team folders (optional, default deploy/teams)</span>
-SYNCLET_TEAMS=/srv/teams
-<span class="comment"># owner of your files (id -u / id -g)</span>
+<span class="comment"># team folders (optional, default ./teams)</span>
+#SYNCLET_TEAMS=/srv/teams
+<span class="comment"># owner of your files: set to your user by the commands above</span>
 PUID=1000
 PGID=1000
-<span class="comment"># openssl rand -hex 24</span>
-POSTGRES_PASSWORD=…</code></pre>
+<span class="comment"># pin a release (default latest)</span>
+SYNCLET_VERSION=…</code></pre>
               </figure>
               <p class="mt-2 text-sm text-muted-foreground">The meta and team folders must exist before the first start and be writable by <code class="inline-code">PUID:PGID</code>.</p>
             </li>
@@ -316,9 +322,10 @@ POSTGRES_PASSWORD=…</code></pre>
               <h3 class="text-lg font-semibold">3. Start the stack</h3>
               <figure class="code-block mt-3">
                 <button type="button" class="copy-btn" data-copy hidden>Copy</button>
-                <pre><code>docker compose -f deploy/compose.yml --env-file deploy/.env up -d --build</code></pre>
+                <pre><code>docker compose up -d</code></pre>
               </figure>
               <p class="mt-3 text-muted-foreground">Open <code class="inline-code">http://localhost:8080</code> and complete the setup wizard. The username you choose is the folder name below <code class="inline-code">SYNCLET_DATA</code>; an existing folder with that name is adopted, and its files appear right away.</p>
+              <p class="mt-2 text-sm text-muted-foreground">Prefer to build from source? Clone the repository and add <code class="inline-code">-f deploy/compose.build.yml</code>, see the <a class="prose-link" href="https://github.com/eltomato89/synclet#building-from-source">README</a>.</p>
             </li>
             <li>
               <h3 class="text-lg font-semibold">4. Put it on the internet</h3>
@@ -327,7 +334,7 @@ POSTGRES_PASSWORD=…</code></pre>
             </li>
             <li class="lg:col-span-2">
               <h3 class="text-lg font-semibold">NAS and other disks</h3>
-              <p class="mt-2 text-muted-foreground">Every folder mounted below <code class="inline-code">/storage</code> becomes a space. Add it to the <code class="inline-code">server</code> service and, read-only, to the <code class="inline-code">worker</code> in <code class="inline-code">deploy/compose.yml</code> (commented examples, including an SMB/CIFS volume, are in the file). For network shares, switch the space to scheduled scans in the admin area. Then assign users or groups to the space.</p>
+              <p class="mt-2 text-muted-foreground">Every folder mounted below <code class="inline-code">/storage</code> becomes a space. Add it to the <code class="inline-code">server</code> service and, read-only, to the <code class="inline-code">worker</code> in <code class="inline-code">compose.yml</code> (commented examples, including an SMB/CIFS volume, are in the file). For network shares, switch the space to scheduled scans in the admin area. Then assign users or groups to the space.</p>
               <figure class="code-block mt-3">
                 <pre><code>  server:
     volumes:
@@ -388,7 +395,7 @@ POSTGRES_PASSWORD=…</code></pre>
             </details>
             <details>
               <summary>How are updates done?</summary>
-              <div><p>Pull the new version and run the same <code class="inline-code">docker compose … up -d --build</code> command. The server migrates the database on start. Downgrading after a migration is not supported, so back up the database before updating if you want a way back.</p></div>
+              <div><p>Set <code class="inline-code">SYNCLET_VERSION</code> in <code class="inline-code">.env</code> to the new release, then run <code class="inline-code">docker compose pull</code> and <code class="inline-code">docker compose up -d</code>. The server migrates the database on start. Downgrading after a migration is not supported, so back up the database before updating if you want a way back.</p></div>
             </details>
             <details>
               <summary>How secure is it?</summary>

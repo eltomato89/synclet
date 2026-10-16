@@ -38,15 +38,54 @@
 
 ## Quickstart
 
+Synclet runs from prebuilt images on GHCR (`ghcr.io/eltomato89/synclet-server` and `ghcr.io/eltomato89/synclet-web`, for `linux/amd64` and `linux/arm64`). You need two files, no checkout of the repository:
+
 ```bash
-cp deploy/.env.example deploy/.env
-# edit deploy/.env: set SYNCLET_DATA (your files folder), SYNCLET_META, PUID/PGID, POSTGRES_PASSWORD
-docker compose -f deploy/compose.yml --env-file deploy/.env up -d --build
+mkdir synclet && cd synclet
+curl -fsSLO https://raw.githubusercontent.com/eltomato89/synclet/main/deploy/compose.yml
+curl -fsSL -o .env https://raw.githubusercontent.com/eltomato89/synclet/main/deploy/.env.example
+# the folders must exist before the first start and be writable by PUID:PGID
+# (files, metadata outside the files folder, team folders = SYNCLET_TEAMS, default ./teams)
+sudo mkdir -p /srv/files /srv/synclet-meta
+sudo chown "$(id -u):$(id -g)" /srv/files /srv/synclet-meta
+mkdir -p teams
+# run Synclet as your user and set a database password
+sed -i.bak -e "s/^PUID=.*/PUID=$(id -u)/" -e "s/^PGID=.*/PGID=$(id -g)/" \
+  -e "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 24)/" .env && rm .env.bak
+# edit .env: check SYNCLET_DATA (/srv/files) and SYNCLET_META (/srv/synclet-meta),
+# and pin SYNCLET_VERSION to a release (default latest)
+docker compose up -d
 ```
 
 Open `http://localhost:8080` (or your `SYNCLET_PORT`) and complete the setup wizard. The username you choose is the folder name below `SYNCLET_DATA`; an existing folder with that name is adopted and its files appear immediately.
 
 `SYNCLET_META` is required: the folder must exist, be writable by `PUID:PGID` and live outside `SYNCLET_DATA`. `POSTGRES_PASSWORD` is required too and must contain only URL-safe characters (`[A-Za-z0-9._~-]`); generate one with `openssl rand -hex 24`.
+
+Run all later `docker compose` commands in this folder (compose reads `compose.yml` and `.env` from there).
+
+### Updating
+
+Image tags: `X.Y.Z` (a release), `X.Y` (the newest patch release of that line), `latest` (the newest release) and `edge` (the latest image build from `main`, untested). Set `SYNCLET_VERSION` in `.env` to the version you want (recommended: a pinned release instead of `latest`), then:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+The server migrates the database on start. Downgrading after a migration is not supported, so back up the database before updating if you want a way back. If the release notes say that `compose.yml` changed, download it again (for a pinned release from its tag, e.g. `https://raw.githubusercontent.com/eltomato89/synclet/v1.2.3/deploy/compose.yml`).
+
+### Building from source
+
+To build the images yourself from a checkout, add `deploy/compose.build.yml`. It builds both images and tags them locally (`synclet/server:dev`, `synclet/caddy:dev`), so they never overwrite pulled images:
+
+```bash
+git clone https://github.com/eltomato89/synclet.git && cd synclet
+cp deploy/.env.example deploy/.env
+# edit deploy/.env as above (the default SYNCLET_TEAMS=./teams is deploy/teams in the checkout)
+docker compose -f deploy/compose.yml -f deploy/compose.build.yml --env-file deploy/.env up -d --build
+```
+
+To update a source build, pull the repository (`git pull`) and run the same command again. In a checkout every `docker compose` command below needs these `-f`/`--env-file` options.
 
 ## What is written where
 
@@ -83,10 +122,11 @@ Other names are never indexed or synced either: `.DS_Store`, `.Spotlight-V100`, 
 
 ## Configuration
 
-All settings go into `deploy/.env` (read by `docker compose --env-file deploy/.env`). Leave a value empty to use the default. Changes take effect after `docker compose ... up -d` (which recreates the server and worker containers).
+All settings go into `.env` next to `compose.yml` (in a checkout: `deploy/.env`, read by `docker compose --env-file deploy/.env`). Leave a value empty to use the default. Changes take effect after `docker compose ... up -d` (which recreates the server and worker containers).
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
+| `SYNCLET_VERSION` | `latest` | Image tag of `synclet-server` and `synclet-web`: a release such as `1.2.3` (recommended), `1.2`, `latest` or `edge`; see [Updating](#updating). Not used by source builds. |
 | `SYNCLET_DATA` | (required) | Host folder with your files. Each user gets a subfolder named like the username. |
 | `SYNCLET_META` | (required) | Host folder for trash and other metadata. Must exist, be writable by `PUID:PGID` and live outside `SYNCLET_DATA`. |
 | `POSTGRES_PASSWORD` | (required) | Database password; URL-safe characters only (`openssl rand -hex 24`). |
@@ -145,21 +185,30 @@ Optional. Edit `docx`, `xlsx`, `pptx`, `odt`, `ods` and `odp` files in the brows
 
 **Setup**
 
-1. Add to `deploy/.env`:
+1. Download the office override next to `compose.yml` (in a checkout it is `deploy/compose.office.yml`):
+
+   ```bash
+   curl -fsSLO https://raw.githubusercontent.com/eltomato89/synclet/main/deploy/compose.office.yml
+   ```
+
+2. Add to `.env` (`COMPOSE_FILE` makes every `docker compose` command, including `pull`, `logs` and `down -v`, use both files, so the office container is never left behind):
 
    ```
+   COMPOSE_FILE=compose.yml:compose.office.yml
    SYNCLET_OFFICE_SITE_ADDRESS=office.example.com
    SYNCLET_OFFICE_PUBLIC_URL=https://office.example.com
    OFFICE_JWT_SECRET=<openssl rand -hex 32>
    ```
 
-2. Start the stack with the office override (**`--build` is required**: the Caddy image contains the import of the office site; run it with `--build` once after upgrading an existing installation, too):
+3. Start the stack (the office site is built into the `synclet-web` image; the override turns it on):
 
    ```bash
-   docker compose -f deploy/compose.yml -f deploy/compose.office.yml --env-file deploy/.env up -d --build
+   docker compose up -d
    ```
 
-3. Open a document in the web app with "Open in Office" (new documents can be created there as well). The admin status page shows whether the Document Server is reachable.
+   From a checkout with source builds, leave out `COMPOSE_FILE` and pass the files instead: `docker compose -f deploy/compose.yml -f deploy/compose.build.yml -f deploy/compose.office.yml --env-file deploy/.env up -d --build`. Every later `docker compose` command (`down`, `logs`, ...) needs the same `-f` options.
+
+4. Open a document in the web app with "Open in Office" (new documents can be created there as well). The admin status page shows whether the Document Server is reachable.
 
 **DNS and TLS.** Both sites share Caddy's ports and are told apart by the `Host` header.
 
@@ -270,7 +319,7 @@ The proxy authenticates the visitor and forwards identity headers; the web app t
 
 Two layers decide who may assert an identity, and **both must be configured**:
 
-1. **Caddy** removes the identity headers from every `/api/*` request whose direct peer is not in `SYNCLET_FORWARD_AUTH_PROXIES`. Set it to the **exact address of your authenticating proxy** only, e.g. `192.168.1.10/32` (or its fixed address on a Docker network shared with Caddy). **Never use `private_ranges` or a whole subnet:** every host in it (any device in your LAN, any container on the host, and with Docker's userland proxy even outside clients that appear as the gateway address) could then send `Remote-User: <admin>` and sign in as that user. Empty (the default) means nothing is trusted and the headers are always stripped. This variable is independent of `SYNCLET_TRUSTED_PROXIES`, which only governs `X-Forwarded-For`. **If you configure custom header names, add them to the `request_header @untrusted_auth_headers -<Name>` lines in `deploy/Caddyfile`** (they are not stripped otherwise) and rebuild the Caddy image (`up -d --build`).
+1. **Caddy** removes the identity headers from every `/api/*` request whose direct peer is not in `SYNCLET_FORWARD_AUTH_PROXIES`. Set it to the **exact address of your authenticating proxy** only, e.g. `192.168.1.10/32` (or its fixed address on a Docker network shared with Caddy). **Never use `private_ranges` or a whole subnet:** every host in it (any device in your LAN, any container on the host, and with Docker's userland proxy even outside clients that appear as the gateway address) could then send `Remote-User: <admin>` and sign in as that user. Empty (the default) means nothing is trusted and the headers are always stripped. This variable is independent of `SYNCLET_TRUSTED_PROXIES`, which only governs `X-Forwarded-For`. **If you configure custom header names, add them to the `request_header @untrusted_auth_headers -<Name>` lines of the Caddyfile** (they are not stripped otherwise): copy [`deploy/Caddyfile`](deploy/Caddyfile), add the lines and mount your copy over the built-in one in a `compose.override.yml` (`services: caddy: volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro"]`), or edit `deploy/Caddyfile` in a checkout and rebuild (`compose.build.yml`, `up -d --build`).
 2. **The Synclet server** accepts the headers only if its direct TCP peer is inside the *trusted proxies* of the forward-auth settings. In the shipped setup that peer is the Caddy container. Enter **only Caddy's address** there, not the whole Docker network of the stack (that network also holds the worker and the Document Server, which fetches URLs on users' behalf). Give Caddy a fixed address in a `compose.override.yml`, for example:
 
    ```yaml
@@ -316,13 +365,13 @@ nginx and Traefik work the same way with `auth_request` / the `forwardAuth` midd
 
 ### Locked out? Emergency recovery
 
-- Set `SYNCLET_SSO_EMERGENCY=1` in `deploy/.env` and run `docker compose ... up -d`. OIDC and forward-auth are ignored and **password login is allowed for everyone**. Fix the SSO settings, then remove the variable again.
+- Set `SYNCLET_SSO_EMERGENCY=1` in `.env` and run `docker compose ... up -d`. OIDC and forward-auth are ignored and **password login is allowed for everyone**. Fix the SSO settings, then remove the variable again.
 - If no admin has a working password, give one a new password (this also enables the account, makes it admin and signs out its sessions):
 
   ```bash
-  docker compose -f deploy/compose.yml --env-file deploy/.env exec server node dist/cli/reset-admin-password.js <username>
+  docker compose exec server node dist/cli/reset-admin-password.js <username>
   # or choose the password yourself:
-  echo 'a new password' | docker compose -f deploy/compose.yml --env-file deploy/.env exec -T server node dist/cli/reset-admin-password.js <username>
+  echo 'a new password' | docker compose exec -T server node dist/cli/reset-admin-password.js <username>
   ```
 
   Without a password on stdin a random one is generated and printed (10-200 characters otherwise).
@@ -381,11 +430,11 @@ Admins get an "Admin" entry in the web app with:
 
 ## Leaving Synclet
 
-`docker compose -f deploy/compose.yml --env-file deploy/.env down -v` (add `-f deploy/compose.office.yml` if you use Office) removes the containers and the Postgres/Caddy volumes. Your `SYNCLET_DATA` folder is untouched (trash in `SYNCLET_META` stays too).
+`docker compose down -v` (with Office, `COMPOSE_FILE` in `.env` includes the office container) removes the containers and the Postgres/Caddy volumes. Your `SYNCLET_DATA` folder is untouched (trash in `SYNCLET_META` stays too).
 
 ## Architecture
 
-Four containers (five with the optional `office` Document Server): `postgres` (index and journal), `server` (NestJS/Fastify API, indexer, file access), `worker` (same image; thumbnails, previews, text extraction) and `caddy` (reverse proxy for `/api/*` plus the static web app). The spec lists the web app as a separate service; it is served from the Caddy image instead, which is leaner and equivalent. For automatic Let's Encrypt certificates set `SYNCLET_SITE_ADDRESS=<your domain>`, `SYNCLET_PORT=80` and `SYNCLET_TLS_PORT=443` (all three are required, plus public DNS and reachable ports 80/443). With the defaults (`:80`, ports 8080/8443) no certificates are issued; use that behind an existing reverse proxy.
+Four containers (five with the optional `office` Document Server): `postgres` (index and journal), `server` (NestJS/Fastify API, indexer, file access), `worker` (same image; thumbnails, previews, text extraction) and `caddy` (reverse proxy for `/api/*` plus the static web app). The spec lists the web app as a separate service; it is served from the Caddy image instead, which is leaner and equivalent. `server` and `worker` run the image `ghcr.io/eltomato89/synclet-server` (`deploy/Dockerfile.server`), `caddy` runs `ghcr.io/eltomato89/synclet-web` (`deploy/Dockerfile.caddy`: Caddy, the built web app and the Caddyfiles). Both are built by the `Container images` workflow for every release tag (`X.Y.Z`, `X.Y`, `latest`) and for pushes to `main` that change the code, the Dockerfiles or the Caddyfiles (`edge`, `sha-<commit>`). For automatic Let's Encrypt certificates set `SYNCLET_SITE_ADDRESS=<your domain>`, `SYNCLET_PORT=80` and `SYNCLET_TLS_PORT=443` (all three are required, plus public DNS and reachable ports 80/443). With the defaults (`:80`, ports 8080/8443) no certificates are issued; use that behind an existing reverse proxy.
 
 ## Development
 

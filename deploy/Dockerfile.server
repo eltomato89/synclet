@@ -13,6 +13,8 @@ RUN pnpm --filter @synclet/server deploy --legacy --prod /out && cp -r apps/serv
  && cd /out && /src/apps/server/node_modules/.bin/prisma generate
 
 FROM node:24-bookworm-slim
+# Links the GHCR package to the repository (title, description, version etc. come from the workflow).
+LABEL org.opencontainers.image.source="https://github.com/eltomato89/synclet"
 RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates tini \
     ffmpeg poppler-utils libheif-examples unzip \
  && rm -rf /var/lib/apt/lists/*
