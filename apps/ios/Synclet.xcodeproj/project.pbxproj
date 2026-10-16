@@ -33,6 +33,7 @@
 		3568CF74600CC3E6925F673F /* MovePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDF294F47A774338509C4BE4 /* MovePicker.swift */; };
 		36847F4248550A4EC1A34A3F /* AccountsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9328E99B1A18AEC2600519E /* AccountsView.swift */; };
 		3997A39A915EA2F4CE003A0B /* ShareLinkView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E62497D2F4C05BE848848C3 /* ShareLinkView.swift */; };
+		3C2B81473037B695EDABB99C /* BrowserLoginTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEF5C0A6195DD7B317D5344C /* BrowserLoginTests.swift */; };
 		3E8F79FB2E157B8F10B5C62B /* UITestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62CFADAEB7FAD6E8E5D89492 /* UITestSupport.swift */; };
 		437F4429ED5B5DDE27625C5E /* UploadSignal.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9FB9B67C242578D115C9817 /* UploadSignal.swift */; };
 		448E51CE094CEC5AB88F2FBD /* SyncletKit in Frameworks */ = {isa = PBXBuildFile; productRef = 8FC63EFAA00022D3F750C6C8 /* SyncletKit */; };
@@ -217,6 +218,7 @@
 		F8B859B70D702820F5A35D89 /* ThumbnailCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailCacheTests.swift; sourceTree = "<group>"; };
 		F8C4F12E496BF1B78AA3558E /* BrowserShell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserShell.swift; sourceTree = "<group>"; };
 		FB3BF197798C7B6EBFEB0CBE /* SyncletShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = SyncletShare.entitlements; sourceTree = "<group>"; };
+		FEF5C0A6195DD7B317D5344C /* BrowserLoginTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserLoginTests.swift; sourceTree = "<group>"; };
 		FF122B92398876D574CEB963 /* SyncletShare.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = SyncletShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -470,6 +472,7 @@
 			children = (
 				9DEFD96AA4B8F7CC31E78232 /* AccountsModelTests.swift */,
 				8D2BEA97BE0D351E76354BCA /* BackgroundRefreshTests.swift */,
+				FEF5C0A6195DD7B317D5344C /* BrowserLoginTests.swift */,
 				119DF6FB0C6D8C2C88D2DD74 /* FileCacheTests.swift */,
 				D3D52AB90DB2606575B1BD44 /* FolderModelTests.swift */,
 				0AB07A3B24C7FE324251E477 /* ForegroundMonitorTests.swift */,
@@ -687,6 +690,7 @@
 			files = (
 				2BACE763045072E41D574C9D /* AccountsModelTests.swift in Sources */,
 				313689A60A7F7C24C4FF6CB6 /* BackgroundRefreshTests.swift in Sources */,
+				3C2B81473037B695EDABB99C /* BrowserLoginTests.swift in Sources */,
 				0AB5B17326FA7AA90FC754D4 /* FileCacheTests.swift in Sources */,
 				51ECF8114EAA00D253CEB97E /* FolderModelTests.swift in Sources */,
 				C8CBC154F8E4F9044E2B6C90 /* ForegroundMonitorTests.swift in Sources */,

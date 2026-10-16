@@ -35,22 +35,13 @@ final class BrowserLogin: NSObject, WebAuthenticating, ASWebAuthenticationPresen
         session?.cancel()
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
-                let session = ASWebAuthenticationSession(url: url, callback: .customScheme(callbackScheme)) { callback, error in
-                    // Delivery thread is not documented: build a Sendable result, then hop to the main actor.
-                    let result: Result<URL, BrowserLoginError>
-                    if let callback {
-                        result = .success(callback)
-                    } else if let error = error as? ASWebAuthenticationSessionError, error.code == .canceledLogin {
-                        result = .failure(.cancelled)
-                    } else {
-                        result = .failure(.failed(error?.localizedDescription
-                            ?? String(localized: "The login window could not be opened.")))
-                    }
+                let session = ASWebAuthenticationSession(url: url, callback: .customScheme(callbackScheme),
+                                                         completionHandler: Self.completionHandler { result in
                     Task { @MainActor [weak self] in
                         self?.session = nil
                         continuation.resume(with: result)
                     }
-                }
+                })
                 session.presentationContextProvider = self
                 // Share the browser's cookies: an existing web or SSO session signs in without a password.
                 session.prefersEphemeralWebBrowserSession = false
@@ -62,6 +53,24 @@ final class BrowserLogin: NSObject, WebAuthenticating, ASWebAuthenticationPresen
             }
         } onCancel: {
             Task { @MainActor [weak self] in self?.session?.cancel() }
+        }
+    }
+
+    /// The session's completion handler. It runs on an undocumented queue (an XPC queue on
+    /// macOS 26), so it must not be main-actor isolated: it only builds a Sendable result and
+    /// hands it to `deliver`, which hops to the main actor itself.
+    nonisolated static func completionHandler(
+        _ deliver: @escaping @Sendable (Result<URL, BrowserLoginError>) -> Void
+    ) -> @Sendable (URL?, Error?) -> Void {
+        { @Sendable callback, error in
+            if let callback {
+                deliver(.success(callback))
+            } else if let error = error as? ASWebAuthenticationSessionError, error.code == .canceledLogin {
+                deliver(.failure(.cancelled))
+            } else {
+                deliver(.failure(.failed(error?.localizedDescription
+                    ?? String(localized: "The login window could not be opened."))))
+            }
         }
     }
 
