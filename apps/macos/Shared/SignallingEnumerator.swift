@@ -2,13 +2,13 @@ import FileProvider
 import Foundation
 import SyncletKit
 
-/// Passes an enumeration through and reports its errors (the working set is polled
-/// regularly – a revoked device shows up there first).
+/// Passes an enumeration through and reports its errors with the start time of the failed
+/// call (the working set is polled regularly – a revoked device shows up there first).
 final class SignallingEnumerator: NSObject, NSFileProviderEnumerator {
     private let inner: NSFileProviderEnumerator
-    private let onError: (Error) -> Void
+    private let onError: (Error, Date) -> Void
 
-    init(inner: NSFileProviderEnumerator, onError: @escaping (Error) -> Void) {
+    init(inner: NSFileProviderEnumerator, onError: @escaping (Error, Date) -> Void) {
         self.inner = inner
         self.onError = onError
     }
@@ -16,7 +16,8 @@ final class SignallingEnumerator: NSObject, NSFileProviderEnumerator {
     func invalidate() { inner.invalidate() }
 
     func enumerateItems(for observer: NSFileProviderEnumerationObserver, startingAt page: NSFileProviderPage) {
-        inner.enumerateItems(for: ItemObserver(inner: observer, onError: onError), startingAt: page)
+        let started = Date()
+        inner.enumerateItems(for: ItemObserver(inner: observer, onError: { [onError] in onError($0, started) }), startingAt: page)
     }
 
     func enumerateChanges(for observer: NSFileProviderChangeObserver, from syncAnchor: NSFileProviderSyncAnchor) {
@@ -25,7 +26,8 @@ final class SignallingEnumerator: NSObject, NSFileProviderEnumerator {
             observer.finishEnumeratingWithError(NSFileProviderError(.syncAnchorExpired))
             return
         }
-        enumerateChanges(ChangeObserver(inner: observer, onError: onError), syncAnchor)
+        let started = Date()
+        enumerateChanges(ChangeObserver(inner: observer, onError: { [onError] in onError($0, started) }), syncAnchor)
     }
 
     func currentSyncAnchor(completionHandler: @escaping @Sendable (NSFileProviderSyncAnchor?) -> Void) {

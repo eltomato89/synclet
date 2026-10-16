@@ -159,6 +159,31 @@ final class AuthFailureSignalTests: XCTestCase {
         XCTAssertNil(AuthFailureSignal.pending(container: container, key16: key16))
     }
 
+    /// M3: a 401 of a request that started with the previous (revoked) token, arriving after
+    /// the new sign-in, neither writes a marker nor counts as pending.
+    func testFailureOfAnOperationOlderThanTheSignInIsIgnored() throws {
+        let signedInAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let store = AccountStore(directory: container)
+        let stored = try store.upsert(StoredAccount(key: "srv1:u1", serverURL: URL(string: "https://synclet.example.test")!,
+                                                    userId: "u1", username: "jens", displayName: "Jens", spaces: [.personal()],
+                                                    signedInAt: signedInAt))
+        let late = signedInAt.addingTimeInterval(5)
+        XCTAssertFalse(AuthFailureSignal.report(container: container, key16: stored.key16, now: late,
+                                                startedAt: signedInAt.addingTimeInterval(-2), post: false))
+        XCTAssertNil(AuthFailureSignal.pending(container: container, key16: stored.key16))
+
+        // A marker that is already there from before the sign-in is stale too (and removed).
+        let marker = AuthFailureSignal.markerURL(container: container, key16: stored.key16)
+        try Data("2027-01-15T07:59:00Z".utf8).write(to: marker)
+        XCTAssertNil(AuthFailureSignal.pending(container: container, key16: stored.key16))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
+
+        // An operation that started after the sign-in counts.
+        XCTAssertTrue(AuthFailureSignal.report(container: container, key16: stored.key16, now: late,
+                                               startedAt: signedInAt.addingTimeInterval(1), post: false))
+        XCTAssertEqual(AuthFailureSignal.pending(container: container, key16: stored.key16), signedInAt.addingTimeInterval(1))
+    }
+
     func testDarwinNotificationReachesAnObserver() {
         let received = expectation(description: "darwin notification")
         let box = Unmanaged.passRetained(received)

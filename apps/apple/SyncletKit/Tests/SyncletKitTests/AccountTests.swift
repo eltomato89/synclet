@@ -238,6 +238,11 @@ final class AccountManagerTests: XCTestCase {
         XCTAssertEqual(domains.all.count, 1)
         XCTAssertEqual(domains.addCalls, 1)
         XCTAssertEqual(second.addedAt, first.addedAt)
+        // The time the new token was stored marks older auth failures as stale; it survives
+        // the JSON round trip with sub-second precision.
+        let signedInAt = try XCTUnwrap(accounts.account(key: "srv1:u1")?.signedInAt)
+        XCTAssertEqual(signedInAt, second.signedInAt)
+        XCTAssertGreaterThan(signedInAt, try XCTUnwrap(first.signedInAt))
     }
 
     func testReLoginRevokesPreviousDeviceTokenAfterStoringTheNewOne() async throws {
