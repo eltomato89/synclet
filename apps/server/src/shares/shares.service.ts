@@ -1,6 +1,6 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { Item, ShareLink } from '@prisma/client';
-import type { CreateShareInput, PublicShareEntry, PublicShareInfo, ShareLinkWire } from '@synclet/shared';
+import type { AdminShareWire, CreateShareInput, PublicShareEntry, PublicShareInfo, ShareLinkWire } from '@synclet/shared';
 import * as argon2 from 'argon2';
 import { randomUUID } from 'node:crypto';
 import type { Readable } from 'node:stream';
@@ -17,7 +17,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { openNoFollow } from '../sync/http-content';
 import { mimeFor } from '../sync/serializer.service';
 import { toSyncId, UUID } from '../sync/sync-ids';
-import { decryptToken, encryptToken, parseItemId, ResolvedShare, ShareAuth } from './share-auth';
+import { parseItemId, ResolvedShare, ShareAuth } from './share-auth';
 import { zipEntryName, type ZipEntrySource } from './zip';
 
 export interface SharePatch {
@@ -54,10 +54,10 @@ export class SharesService {
 
   // ---------------------------------------------------------------- owner API
 
-  private async toWire(share: ShareLink, item: Pick<Item, 'id' | 'name' | 'type'>, itemTrashed = false): Promise<ShareLinkWire> {
+  private async toWire(share: ShareLink, item: Pick<Item, 'id' | 'name' | 'type'>, itemTrashed = false, withUrl = true): Promise<ShareLinkWire> {
     let url = '';
-    try {
-      url = this.auth.url(decryptToken(await this.auth.tokenKey(), share.tokenEnc, share.id));
+    if (withUrl) try {
+      url = this.auth.url(await this.auth.openToken(share.tokenEnc, share.id));
     } catch (e) {
       // Only if the server secret changed: the link still works, but the owner must rotate to copy it.
       this.log.error(`cannot decrypt token of share ${share.id}: ${(e as Error).message}`);
@@ -102,7 +102,7 @@ export class SharesService {
     const token = newToken();
     const share = await this.prisma.shareLink.create({
       data: {
-        id, ownerId: user.id, itemId: item.id, tokenHash: hashToken(token), tokenEnc: encryptToken(await this.auth.tokenKey(), token, id),
+        id, ownerId: user.id, itemId: item.id, tokenHash: hashToken(token), tokenEnc: await this.auth.sealToken(token, id),
         passwordHash: input.password ? await SharesService.hashPassword(input.password) : null,
         expiresAt: futureDate(input.expiresAt) ?? null,
         allowDownload: input.allowDownload ?? true, allowUpload: input.allowUpload ?? false,
@@ -149,19 +149,61 @@ export class SharesService {
       where: { ownerId: user.id, revokedAt: null, ...(itemId ? { itemId } : {}) },
       orderBy: { createdAt: 'desc' },
     });
-    const items = await this.prisma.item.findMany({ where: { id: { in: [...new Set(shares.map((s) => s.itemId))] }, ownerId: user.id, deletedAt: null } });
+    return this.wires(user.id, shares, true);
+  }
+
+  /** Wire form of shares of one owner; shares of items deleted for good are left out. */
+  private async wires(ownerId: string, shares: ShareLink[], withUrl: boolean): Promise<ShareLinkWire[]> {
+    const items = await this.prisma.item.findMany({ where: { id: { in: [...new Set(shares.map((s) => s.itemId))] }, ownerId, deletedAt: null } });
     const byId = new Map(items.map((i) => [i.id, i]));
-    const trashed = await this.trashedItems(user.id, [...new Set(shares.filter((s) => !byId.has(s.itemId)).map((s) => s.itemId))]);
+    const trashed = await this.trashedItems(ownerId, [...new Set(shares.filter((s) => !byId.has(s.itemId)).map((s) => s.itemId))]);
     const out: ShareLinkWire[] = [];
     for (const s of shares) {
       const item = byId.get(s.itemId);
-      if (item) out.push(await this.toWire(s, item));
+      if (item) out.push(await this.toWire(s, item, false, withUrl));
       else {
         const t = trashed.get(s.itemId);
-        if (t) out.push(await this.toWire(s, t, true));
+        if (t) out.push(await this.toWire(s, t, true, withUrl));
       }
     }
     return out;
+  }
+
+  /**
+   * Admin oversight across users, newest first. `status`: active = not revoked and not expired,
+   * expired = not revoked but past expiry, all = additionally includes revoked shares.
+   * The real link is only returned for the admin's own shares; others get `url: ''` (revoke, not reuse).
+   */
+  async listForAdmin(admin: IndexUser, filter: { userId?: string; status: 'active' | 'expired' | 'all' }): Promise<AdminShareWire[]> {
+    const now = new Date();
+    const shares = await this.prisma.shareLink.findMany({
+      where: {
+        ...(filter.userId ? { ownerId: filter.userId } : {}),
+        ...(filter.status === 'all' ? {} : { revokedAt: null }),
+        ...(filter.status === 'active' ? { OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] } : {}),
+        ...(filter.status === 'expired' ? { expiresAt: { lte: now } } : {}),
+      },
+      include: { owner: { select: { id: true, username: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    const byOwner = new Map<string, ShareLink[]>();
+    for (const s of shares) byOwner.set(s.ownerId, [...(byOwner.get(s.ownerId) ?? []), s]);
+    const wire = new Map<string, ShareLinkWire>();
+    for (const [ownerId, list] of byOwner) for (const w of await this.wires(ownerId, list, ownerId === admin.id)) wire.set(w.id, w);
+    const out: AdminShareWire[] = [];
+    for (const s of shares) {
+      const w = wire.get(s.id);
+      if (w) out.push({ ...w, owner: s.owner });
+    }
+    return out;
+  }
+
+  /** Revokes any user's share (idempotent). */
+  async revokeAny(id: string): Promise<void> {
+    if (!UUID.test(id)) throw new SyncError('not_found');
+    const share = await this.prisma.shareLink.findUnique({ where: { id } });
+    if (!share) throw new SyncError('not_found');
+    if (!share.revokedAt) await this.prisma.shareLink.update({ where: { id }, data: { revokedAt: new Date() } });
   }
 
   /** New token; the old one stops working immediately (its hash is gone). Unlock cookies die with the old path. */
@@ -170,7 +212,7 @@ export class SharesService {
     const token = newToken();
     const updated = await this.prisma.shareLink.update({
       where: { id: share.id },
-      data: { tokenHash: hashToken(token), tokenEnc: encryptToken(await this.auth.tokenKey(), token, share.id) },
+      data: { tokenHash: hashToken(token), tokenEnc: await this.auth.sealToken(token, share.id) },
     });
     return this.toWire(updated, item);
   }

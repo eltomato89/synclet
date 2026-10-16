@@ -4,10 +4,11 @@ import type { Item, ShareLink } from '@prisma/client';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
-import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { hashToken } from '../auth/crypto';
 import { RateLimiter } from '../auth/rate-limit';
 import { ServerConfigService } from '../auth/server-config.service';
+import { SecretBox } from '../common/secret-box';
 import { absPath, userRoot } from '../common/paths';
 import { SyncError } from '../common/sync-error';
 import type { IndexUser } from '../common/types';
@@ -18,33 +19,9 @@ import { parseSyncId, UUID } from '../sync/sync-ids';
 /** 32 random bytes, base64url (see `randomToken`). Anything else is rejected before a DB lookup. */
 export const SHARE_TOKEN = /^[A-Za-z0-9_-]{43}$/;
 export const UNLOCK_TTL_SEC = 12 * 3600;
-const HKDF_INFO = 'synclet-share-v1';
 
-/** AES-256-GCM key for stored share tokens: HKDF-SHA256(jwtSecret, info "synclet-share-v1"). */
-export function shareTokenKey(jwtSecret: string): Buffer {
-  return Buffer.from(hkdfSync('sha256', Buffer.from(jwtSecret, 'utf8'), Buffer.alloc(0), HKDF_INFO, 32));
-}
-
-/**
- * Encrypts a share token as base64url `iv.ciphertext.tag`. The share id is bound as additional
- * authenticated data, so an encrypted token cannot be moved to another share row.
- */
-export function encryptToken(key: Buffer, token: string, shareId: string): string {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  cipher.setAAD(Buffer.from(shareId, 'utf8'));
-  const ct = Buffer.concat([cipher.update(token, 'utf8'), cipher.final()]);
-  return [iv, ct, cipher.getAuthTag()].map((b) => b.toString('base64url')).join('.');
-}
-
-export function decryptToken(key: Buffer, enc: string, shareId: string): string {
-  const [iv, ct, tag] = enc.split('.').map((p) => Buffer.from(p, 'base64url'));
-  if (!iv || !ct || !tag || iv.length !== 12 || tag.length !== 16) throw new Error('malformed encrypted token');
-  const decipher = createDecipheriv('aes-256-gcm', key, iv);
-  decipher.setAAD(Buffer.from(shareId, 'utf8'));
-  decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(ct), decipher.final()]).toString('utf8');
-}
+/** SecretBox purpose of stored share tokens (HKDF info); the share id is the AAD. */
+export const SHARE_TOKEN_PURPOSE = 'synclet-share-v1';
 
 /** Item id as sent by clients: a sync id (`d_…`/`f_…`) or a bare uuid. */
 export function parseItemId(raw: string | undefined): string | null {
@@ -99,7 +76,7 @@ export interface ResolvedShare {
  */
 @Injectable()
 export class ShareAuth {
-  private key?: Buffer;
+  private box?: SecretBox;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -108,9 +85,18 @@ export class ShareAuth {
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
-  async tokenKey(): Promise<Buffer> {
-    this.key ??= shareTokenKey((await this.serverConfig.get()).jwtSecret);
-    return this.key;
+  private async secretBox(): Promise<SecretBox> {
+    this.box ??= new SecretBox((await this.serverConfig.get()).jwtSecret);
+    return this.box;
+  }
+
+  /** Encrypts a share token for storage; the share id is bound as AAD (not movable to another row). */
+  async sealToken(token: string, shareId: string): Promise<string> {
+    return (await this.secretBox()).seal(token, SHARE_TOKEN_PURPOSE, shareId);
+  }
+
+  async openToken(enc: string, shareId: string): Promise<string> {
+    return (await this.secretBox()).open(enc, SHARE_TOKEN_PURPOSE, shareId);
   }
 
   /** Link for the owner: absolute with SYNCLET_PUBLIC_URL, else `/s/<token>`. */

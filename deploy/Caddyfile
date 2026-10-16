@@ -1,10 +1,10 @@
 {
 	admin off
 	servers {
-		# Proxies in front of Caddy whose X-Forwarded-For is trusted (client IP for rate limits).
+		# Proxies in front of Caddy whose X-Forwarded-For is trusted (client IP for rate limits only).
 		# Empty (default) = trust none: Caddy replaces X-Forwarded-For with the peer address.
-		# Behind an outer reverse proxy set SYNCLET_TRUSTED_PROXIES, e.g. "private_ranges" or
-		# "192.168.1.10/32 10.0.0.0/8".
+		# Behind an outer reverse proxy set SYNCLET_TRUSTED_PROXIES to that proxy's address, e.g.
+		# "192.168.1.10/32". This never makes Caddy pass forward-auth headers (see below).
 		trusted_proxies static {$SYNCLET_TRUSTED_PROXIES:}
 		# Pick the client IP right-to-left (first untrusted hop), so a client cannot spoof it by
 		# sending its own X-Forwarded-For through a proxy that appends to the header.
@@ -18,6 +18,38 @@
 	}
 
 	handle /api/* {
+		# A request that declares a body above the server's upload limit (SYNCLET_MAX_UPLOAD_BYTES;
+		# compose passes it to both, default 50 GiB like the server's) is answered 413 right here.
+		# It must be a plain byte count (digits only): anything else fails this expression at
+		# startup, and the server refuses it too.
+		# The server rejects it before reading the body too, but the proxy would only relay that
+		# early answer after forwarding the whole body. No API request body is legitimately larger
+		# (a tus PATCH carries at most one upload). Chunked bodies are limited by the server.
+		@too_large expression `{http.request.header.Content-Length} != "" && int({http.request.header.Content-Length}) > {$SYNCLET_MAX_UPLOAD_BYTES:53687091200}`
+		handle @too_large {
+			header Content-Type "application/json; charset=utf-8"
+			respond `{"statusCode":413,"message":"too_large","code":"too_large"}` 413 {
+				close
+			}
+		}
+		# Forward-auth identity headers are only passed on from the direct peers in
+		# SYNCLET_FORWARD_AUTH_PROXIES: the exact address(es) of the authenticating outer proxy
+		# (e.g. "192.168.1.10/32"), never a whole range such as private_ranges, because any host
+		# in it could then sign in as anyone. From everyone else they are removed before reaching
+		# the server, which trusts Caddy as its forward-auth proxy. This is independent of
+		# SYNCLET_TRUSTED_PROXIES (X-Forwarded-For only).
+		# remote_ip = the direct connection, never X-Forwarded-For. Unset, the variable falls back
+		# to the default after the colon (192.0.2.255, a documentation address that never
+		# connects); set but empty (compose passes it empty by default) it gives a remote_ip matcher
+		# without ranges, which matches nobody. Either way nothing is trusted and the headers are
+		# always removed.
+		# Custom header names configured in the admin UI (SSO > forward-auth) must be added here too.
+		@untrusted_auth_headers not remote_ip {$SYNCLET_FORWARD_AUTH_PROXIES:192.0.2.255/32}
+		request_header @untrusted_auth_headers -Remote-User
+		request_header @untrusted_auth_headers -Remote-Email
+		request_header @untrusted_auth_headers -Remote-Name
+		request_header @untrusted_auth_headers -Remote-Groups
+
 		reverse_proxy server:3000 {
 			# Exactly one address: the client IP as determined above (the server trusts XFF from Caddy).
 			header_up X-Forwarded-For {client_ip}
@@ -30,22 +62,36 @@
 	}
 
 	handle {
+		# Euro-Office origin for the CSP below. Empty without compose.office.yml (strict CSP); with it
+		# SYNCLET_OFFICE_PUBLIC_URL (https://office.example.com) allows the editor script, frame and
+		# its websocket (wss://...) from exactly that origin. `map` derives the ws(s) origin (the "#"
+		# keeps the source non-empty, `map` rejects an empty argument).
+		map "{$SYNCLET_OFFICE_PUBLIC_URL:}#" {office_ws} {
+			~^http(s?)://([^/#]+)/?#$ ws${1}://${2}
+			default ""
+		}
 		encode zstd gzip
 		root * /srv/web
 		try_files {path} /index.html
 		file_server
 		# CSP for the SPA only; /api/* content responses carry their own (sandbox) CSP.
-		header Content-Security-Policy "default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; frame-src 'self' blob:; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'"
+		header Content-Security-Policy "default-src 'self'; script-src 'self' {$SYNCLET_OFFICE_PUBLIC_URL:}; connect-src 'self' {$SYNCLET_OFFICE_PUBLIC_URL:} {office_ws}; img-src 'self' blob: data:; media-src 'self' blob:; frame-src 'self' blob: {$SYNCLET_OFFICE_PUBLIC_URL:}; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'"
 		header /assets/* Cache-Control "public, max-age=31536000, immutable"
 	}
 
 	# HSTS only when served over HTTPS (a domain as SYNCLET_SITE_ADDRESS gets automatic HTTPS).
 	@https expression `{scheme} == "https"`
 
-	header {
-		X-Content-Type-Options nosniff
-		Referrer-Policy strict-origin-when-cross-origin
-		X-Frame-Options SAMEORIGIN
-	}
+	# Defaults only ("?": set when the response has none), so the server's own stricter values on
+	# content responses (Referrer-Policy: no-referrer) are kept and no header is sent twice. One
+	# directive each: a "?" condition applies to all fields of its header block.
+	header ?X-Content-Type-Options nosniff
+	header ?Referrer-Policy strict-origin-when-cross-origin
+	header ?X-Frame-Options SAMEORIGIN
 	header @https Strict-Transport-Security "max-age=31536000"
 }
+
+# Optional extra sites (the Euro-Office Document Server site comes from compose.office.yml, which
+# mounts Caddyfile.office here). A glob that matches nothing is not an error, so the base stack
+# runs unchanged without it.
+import /etc/caddy/conf.d/*.caddy

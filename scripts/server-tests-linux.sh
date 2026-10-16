@@ -23,8 +23,13 @@ docker run --rm ${NET[@]+"${NET[@]}"} -e TEST_DATABASE_URL="$URL" -e CI=true -v 
   V4=$(getent ahostsv4 host.docker.internal | awk "NR==1{print \$1}" || true)
   if [ -n "$V4" ]; then export TEST_DATABASE_URL=${TEST_DATABASE_URL//host.docker.internal/$V4}; fi
   mkdir /src && cd /repo && tar --exclude=node_modules --exclude=dist --exclude=.git -cf - . | tar -xf - -C /src
-  cd /src && corepack enable && pnpm install --frozen-lockfile >/dev/null
-  cd apps/server && pnpm prisma generate >/dev/null && pnpm test
+  corepack enable
+  # As the unprivileged "node" user like the server image (PUID): root ignores file permissions,
+  # so the permission tests (e.g. a read-only versions dir) would have to skip.
+  chown -R node:node /src
+  su node -s /bin/bash -c "set -euo pipefail; export TEST_DATABASE_URL=\"$TEST_DATABASE_URL\" CI=true
+    cd /src && pnpm install --frozen-lockfile >/dev/null
+    cd apps/server && pnpm prisma generate >/dev/null && pnpm test"
 ' 2>&1 | tee "$LOG"
 if grep -q 'skipped on case-insensitive FS' "$LOG"; then
   echo "FAIL: case-sensitive tests were skipped" >&2; exit 1
@@ -32,4 +37,7 @@ fi
 if grep -q 'skipped (missing' "$LOG"; then
   echo "FAIL: tool-dependent tests were skipped:" >&2; grep 'skipped (missing' "$LOG" >&2; exit 1
 fi
-echo "PASS: server suite on Linux, case-sensitive and tool-dependent tests included"
+if grep -Eq '^(Tests|Test Suites):.* skipped' "$LOG"; then
+  echo "FAIL: tests were skipped:" >&2; grep -E '^(Tests|Test Suites):' "$LOG" >&2; exit 1
+fi
+echo "PASS: server suite on Linux (as a non-root user), no skipped tests"

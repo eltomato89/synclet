@@ -107,6 +107,35 @@ async function refresh(): Promise<boolean> {
   return refreshing;
 }
 
+/**
+ * Forward-auth bootstrap: asks the server to sign in with the identity headers of the trusted reverse
+ * proxy (`POST /auth/forward`). Every success creates a new server session, so callers use it only
+ * when no session exists. Runs under the refresh lock, so tabs loading at the same time create one
+ * session: a tab that waited adopts the session another tab has just obtained.
+ * Resolves `true` when signed in, `false` otherwise (proxy headers missing/untrusted, network error).
+ */
+export async function forwardLogin(): Promise<boolean> {
+  const requestedAt = Date.now();
+  return withRefreshLock(async () => {
+    if (lastShared && lastShared.at >= requestedAt - ADOPT_WINDOW_MS) {
+      emit(lastShared.auth);
+      return true;
+    }
+    let res: Response;
+    try {
+      res = await fetch('/api/auth/forward', { method: 'POST', credentials: 'include' });
+    } catch {
+      return false;
+    }
+    if (!res.ok) return false;
+    const body = (await res.json().catch(() => null)) as AuthResponse | null;
+    if (!body?.accessToken) return false;
+    emit(body);
+    broadcastSession(body);
+    return true;
+  });
+}
+
 export async function api<T>(path: string, init: RequestInit & { json?: unknown } = {}, retried = false): Promise<T> {
   const { json, headers, ...rest } = init;
   let res: Response;

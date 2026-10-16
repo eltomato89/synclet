@@ -1,0 +1,8 @@
+# This file instructs Redocly's linter to ignore the rules contained for specific parts of your API.
+# See https://redocly.com/docs/cli/ for more information.
+openapi.yaml:
+  # Both operations have no client-error responses: GET /setup/status takes no input and needs no
+  # authentication; tus OPTIONS (capability discovery) is answered before authentication and never fails.
+  operation-4xx-response:
+    - '#/paths/~1setup~1status/get/responses'
+    - '#/paths/~1sync~1v1~1uploads/options/responses'

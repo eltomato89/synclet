@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Headers, HttpCode, Inject, Param, Patch, Post, Put, Query, Req, Res, UseGuards } from '@nestjs/common';
 import type { Item } from '@prisma/client';
-import type { SyncAccount, SyncChange, SyncChangesPage, SyncChildrenPage, SyncItem } from '@synclet/shared';
+import type { ServerCapabilities, SyncAccount, SyncChange, SyncChangesPage, SyncChildrenPage, SyncItem } from '@synclet/shared';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { constants } from 'node:fs';
 import { open } from 'node:fs/promises';
@@ -19,6 +19,7 @@ import { previewKind } from '../derivatives/preview-kind';
 import { decodeText, readPrefix, TextEncodingName } from '../derivatives/text-extract';
 import { FilesService, itemEtag, OnConflict } from '../files/files.service';
 import { JournalService } from '../journal/journal.service';
+import { OfficeService } from '../office/office.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { etagList, first, HeaderMap, rawBody, SANDBOX_CSP, sendFile, unquote } from './http-content';
 import { mimeFor, SerializerService } from './serializer.service';
@@ -95,6 +96,14 @@ export class SyncController {
       quotaBytes: 0, usedBytes: Number(used._sum.size ?? 0n), maxUploadBytes: this.config.maxUploadBytes,
       cursor: await this.journal.currentCursor(user.id),
     };
+  }
+
+  /** Optional server features, for clients to show or hide UI (versions, office editing). */
+  @Get('capabilities')
+  capabilities(): ServerCapabilities {
+    // Same rule as the office routes (URL and shared secret), so clients never offer an editor that answers 503.
+    const office = OfficeService.enabled(this.config);
+    return { versions: this.config.versions, office: { enabled: office, url: office ? this.config.officeUrl : null } };
   }
 
   @Get('cursor')

@@ -18,6 +18,10 @@ services:
       SYNCLET_ROLE: server
       SYNCLET_TRASH_RETENTION_DAYS: ${SYNCLET_TRASH_RETENTION_DAYS:-}
       SYNCLET_SEARCH_LANGUAGE: ${SYNCLET_SEARCH_LANGUAGE:-}
+      SYNCLET_VERSIONS: ${SYNCLET_VERSIONS:-}
+      SYNCLET_VERSIONS_MAX_BYTES: ${SYNCLET_VERSIONS_MAX_BYTES:-}
+      SYNCLET_SSO_EMERGENCY: ${SYNCLET_SSO_EMERGENCY:-}
+      SYNCLET_SSO_ALLOW_HTTP_ISSUER: ${SYNCLET_SSO_ALLOW_HTTP_ISSUER:-}
     volumes:
       - ${SYNCLET_DATA:?set SYNCLET_DATA to your files folder}:/data
       - ${SYNCLET_META:?set SYNCLET_META to a folder outside SYNCLET_DATA}:/meta
@@ -48,6 +52,11 @@ services:
     environment:
       SYNCLET_SITE_ADDRESS: ${SYNCLET_SITE_ADDRESS:-:80}
       SYNCLET_TRUSTED_PROXIES: ${SYNCLET_TRUSTED_PROXIES:-}
+      # Only these direct peers may pass forward-auth headers (Remote-*); empty = stripped always.
+      SYNCLET_FORWARD_AUTH_PROXIES: ${SYNCLET_FORWARD_AUTH_PROXIES:-}
+      # Declared request body limit for /api/* (same variable and default as the server's upload
+      # limit; Caddy would take an empty value literally, so the default is spelled out here).
+      SYNCLET_MAX_UPLOAD_BYTES: ${SYNCLET_MAX_UPLOAD_BYTES:-53687091200}
     ports:
       - "${SYNCLET_PORT:-8080}:80"
       - "${SYNCLET_TLS_PORT:-8443}:443"

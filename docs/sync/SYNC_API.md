@@ -1,0 +1,667 @@
+# Synclet Sync API v1
+
+Binding contract between the Synclet server (`apps/server/src/sync/`, `uploads/`, `auth/`) and its
+native clients (macOS File Provider, Windows Cloud Files, iOS File Provider, Android
+DocumentsProvider, Linux). All clients build on this document; change it only by agreement.
+
+- **Origin:** a port of Buro's `docs/sync/SYNC_API.md` (Sync API v1). Request and response shapes
+  are kept compatible so Buro's clients (`BuroFileProviderKit`, `Buro.Sync.*`) can be ported with
+  the changes listed in [§13](#13-differences-from-buro-sync_api-v1-porting-checklist).
+- **Machine-readable form:** [`packages/sync-contract/openapi.yaml`](../../packages/sync-contract/openapi.yaml)
+  (OpenAPI 3.1). This prose document is normative; where the two disagree, the OpenAPI file is wrong.
+- **Executable form:** the conformance suite in [`packages/sync-contract`](../../packages/sync-contract)
+  runs against a live server and validates every response against the OpenAPI schemas ([§14](#14-conformance-suite)).
+- **Keywords:** *must*, *must not*, *should*, *may* as in RFC 2119.
+
+---
+
+## 1. Basics
+
+- **Base URL:** `<origin>/api/sync/v1`, e.g. `https://files.example.com/api/sync/v1`
+  (local: `http://localhost:8080/api/sync/v1`). There is no tenant and no subdomain: one server, one
+  set of users; the account is determined by the token alone. Other routes in this document live
+  under `<origin>/api` (`/api/auth/…`, `/api/setup…`, `/api/trash…`).
+- **Every user owns exactly one tree:** the folder `/data/<username>/` on the server. There is no
+  sharing between users yet; a user never sees another user's items (404).
+- **JSON** in UTF-8. Timestamps are ISO 8601 in UTC with milliseconds (`2026-10-15T07:08:09.123Z`).
+  Large or opaque numbers (cursors) are **strings**. Sizes are JSON numbers (exact up to 2^53).
+- **Unknown fields:** clients **must** ignore response fields they do not know. Within v1 the server
+  may add optional fields, new error codes are only added together with a new feature. (The
+  conformance suite is strict by default and fails on fields `openapi.yaml` does not document, to
+  catch drift in this repository; `SYNCLET_CONTRACT_LENIENT=1` allows additional fields, §14.)
+- **Error format** (every Sync API error):
+  `{ "statusCode": 412, "message": "…", "code": "conflict", "item"?: SyncItem }`.
+  `code` is the stable machine-readable value; `message` is English diagnostics and may change.
+  Clients **must** branch on `code` (and the HTTP status), never on `message`.
+  Exceptions: an unknown route answers the framework's `404 {statusCode, message, error}` without
+  `code`, and so does `415` for a wrong `Content-Type` on routes that are not raw-upload routes.
+  tus protocol errors (§7) have plain-text bodies.
+
+| code | Status | Meaning |
+|---|---|---|
+| `unauthorized` | 401 | Token missing, invalid or expired; user disabled; download token bound to another item |
+| `device_revoked` | 401 | The device token was revoked → the client signs out (drops its token and local state) |
+| `forbidden` | 403 | Action not allowed on this item (root) or with this kind of token |
+| `not_found` | 404 | Item does not exist (any more), is in the trash, or belongs to another user; versions disabled (§10) |
+| `name_conflict` | 409 | Name taken in the target folder (`item` = the existing sibling, when indexed) |
+| `invalid_move` | 400 | Move not possible (folder into itself or into its own subtree) |
+| `invalid_name` | 400 | Name violates the naming rules (§4.3) |
+| `invalid_request` | 400 | Anything else malformed: parameters, body, ids, content type. `415` for `preview-text` of an unsupported type (§9.2) |
+| `cursor_expired` | 410 | Cursor older than the journal retention or ahead of the server → full re-enumeration |
+| `conflict` | 412 | `If-Match` does not match (`item` = current server state). Status 409 on trash routes (§8.4) |
+| `precondition_required` | 428 | `If-Match` missing on `PUT /items/:id/content` |
+| `too_large` | 413 | Body above `maxUploadBytes` (a 413 from a reverse proxy with the same limit may have no JSON body; treat any 413 as too large) |
+| `range_not_satisfiable` | 416 | `Range` outside the file (`Content-Range: bytes */<size>`) |
+| `rate_limited` | 429 | Too many attempts on a public auth route; wait `Retry-After` seconds |
+| `password_login_disabled` | 403 | Password login is disabled for non-admin users (SSO only) → use the browser login (§2.1) |
+| `setup_done` | 409 | `POST /api/setup` after the first user exists |
+| `sso_not_allowed`, `office_disabled`, `share_*`, `upload_not_allowed` | – | Web-only routes (SSO, Office, public shares); never returned by the routes in this document |
+
+Codes Buro had and Synclet never returns: `feature_disabled` (no modules).
+
+---
+
+## 2. Authentication
+
+Token kinds:
+
+| Token | Format | Lifetime | Use |
+|---|---|---|---|
+| Device token | `syd_` + 43 base64url chars | No expiry; revocable | All Sync API calls of a native client |
+| Access token | JWT | 15 minutes | Web app; native apps only to register their device |
+| Refresh token | `syr_` + 43 base64url chars | 30 days, rotating, single use | Native: `POST /api/auth/app/refresh`; web: httpOnly cookie |
+| Download token | JWT in `?dt=` | 60 s (`download`) / 6 h (`preview`) | One item's content/thumbnail URL without `Authorization` (§6.2) |
+
+All authenticated requests send `Authorization: Bearer <token>`. The server stores only SHA-256
+hashes of device and refresh tokens; the plaintext is returned exactly once. User status is checked
+on every request: a disabled user gets `401 unauthorized` for every token kind.
+
+### 2.1 Browser login for native apps (OAuth 2.0 authorization code + PKCE, RFC 8252)
+
+The app never asks for the password; this also works when the server uses single sign-on (OIDC or
+forward-auth), because the web page handles the login.
+
+1. Create a `code_verifier` (43–128 characters of `[A-Za-z0-9._~-]`),
+   `code_challenge = BASE64URL(SHA256(code_verifier))` without padding (exactly 43 characters),
+   and a random `state`.
+2. Open the system browser (`ASWebAuthenticationSession`, Custom Tabs, default browser):
+   `<origin>/app-login?client_id=<id>&redirect_uri=<uri>&code_challenge=<c>&code_challenge_method=S256&state=<s>`
+   (optional `&login_hint=<username or email>`). The page validates the client
+   (`GET /api/auth/app/client?clientId=&redirectUri=` → `{ id, name }` or `400`), signs the user in
+   (password → `POST /api/auth/app/authorize`; existing web session or SSO →
+   `POST /api/auth/app/authorize/session`) and never redirects to an unvalidated URI.
+3. The browser returns to `<redirect_uri>?code=<code>&state=<s>`. The app **must** check `state`.
+4. `POST <origin>/api/auth/app/token` with JSON `{ code, codeVerifier, clientId, redirectUri }`
+   → `200 { accessToken, refreshToken, user: PublicUser }`. The code is valid for **60 s** and only
+   **once**; a wrong verifier, client or redirect URI, an expired or used code → `400 invalid_request`
+   (a wrong verifier does not consume the code). A disabled user → `401`.
+5. Continue with the device registration (§2.2) using `accessToken`. The device token is the
+   long-lived credential; the access token expires after 15 minutes. An app that does not need the
+   refresh token afterwards should end that session with `POST /api/auth/logout` and the header
+   `Cookie: synclet_refresh=<refreshToken>` (`204`), so no unused session stays active for 30 days.
+
+| `client_id` | `redirect_uri` (exact match) |
+|---|---|
+| `ios`, `android`, `macos` | `synclet://oauth` |
+| `windows`, `linux` | `http://127.0.0.1:<port>/callback` (loopback, any port 1–65535) |
+
+Other routes of the flow (used by the web page, listed for completeness):
+- `POST /api/auth/app/authorize` `{ login, password, clientId, redirectUri, codeChallenge, codeChallengeMethod: "S256" }`
+  → `{ code }`. `401 unauthorized` for wrong credentials, `403 password_login_disabled` for a
+  non-admin when the admin disabled password login.
+- `POST /api/auth/app/authorize/session` (Bearer **web access token**) `{ clientId, redirectUri, codeChallenge, codeChallengeMethod }`
+  → `{ code }`. A device token is refused with `403 forbidden` (a device token can never be turned
+  into a session).
+- `POST /api/auth/app/refresh` `{ refreshToken }` → same body as `/token`, with a **new** refresh
+  token. Refresh tokens rotate: re-using a spent one is treated as theft and revokes **all**
+  sessions of the user (`401`).
+
+All `/api/auth/app/*` routes are rate-limited per client IP (`429 rate_limited` with `Retry-After`);
+password attempts additionally per IP + login name.
+
+Password login (`POST /api/auth/login` `{ login, password }` → `{ accessToken, user }`, refresh token
+as httpOnly cookie) is meant for the web app. A client may offer it as a fallback; it must then
+handle `403 password_login_disabled` by switching to the browser login.
+
+### 2.2 Device registration
+
+`POST /sync/v1/devices` (any valid token)
+Body `{ "name": "Jens's MacBook", "platform": "ios"|"android"|"macos"|"windows"|"linux"|"web", "appVersion": "1.0.0", "installationId"?: "<string ≤ 128>" }`
+(`name` 1–100, `appVersion` 1–40 characters) → `201 { device: SyncDevice, token: "syd_…", account: SyncAccount }`.
+
+- The token is shown **only once**. Store it in the keychain / credential store.
+- `installationId`: a stable, hashed identifier of the installation (iOS: identifierForVendor,
+  macOS: hardware UUID, Windows: MachineGuid, Android: ANDROID_ID, Linux: `/etc/machine-id` – each
+  SHA-256). Registering again for the same user and platform **revokes** the older, non-revoked
+  devices with the same `installationId` (without one: with the same `name` and no
+  `installationId`) instead of piling up entries.
+- `lastSeenAt` is updated at most once per minute.
+
+```ts
+SyncDevice = { id: string /* uuid */, name, platform, appVersion, createdAt: string,
+               lastSeenAt: string | null,
+               current?: boolean }  // in GET /devices on every entry: true for the calling device token
+```
+
+- `GET /sync/v1/devices` → `SyncDevice[]` (own, not revoked, oldest first).
+- `DELETE /sync/v1/devices/current` (device token only, else `400 invalid_request`) → `204`. Sign-out.
+- `DELETE /sync/v1/devices/:id` → `204`; `404 not_found` for unknown, revoked, foreign or
+  malformed ids.
+- `PUT /sync/v1/devices/current/push` `{ "token": "<hex>", "environment": "sandbox"|"production" }`
+  → `204`. Accepted and ignored until APNs support arrives (Phase 3); clients may already send it.
+
+A revoked device token answers `401 device_revoked` on every route: the client drops the token,
+removes its sync root / domain and asks the user to sign in again.
+
+### 2.3 First-run setup
+
+`GET /api/setup/status` → `{ needsSetup: boolean }`. On a fresh instance the web wizard calls
+`POST /api/setup` `{ username, displayName, email?, password (10–200) }` → `201 { accessToken, user }`
+(first administrator). Clients do not use these; the conformance suite can (`SYNCLET_SETUP=1`).
+
+---
+
+## 3. Account and capabilities
+
+`GET /sync/v1/account` →
+
+```ts
+SyncAccount = {
+  userId: string, email: string | null, displayName: string,
+  organizationId: string,      // "<serverId>:<userId>" – stable sync-root / domain identifier
+  organizationName: "Synclet",
+  slug: string,                // the username (= the user's folder name on the server)
+  canWrite: true,
+  areas: { personal: true, shared: false, customers: false, projects: false },
+  quotaBytes: number,          // 0 = no quota
+  usedBytes: number,           // sum of the sizes of the user's live files
+  maxUploadBytes: number,      // per file (upload, replace, tus)
+  cursor: string               // current change cursor
+}
+```
+
+- The client's domain / sync-root identifier is `organizationId`. `serverId` is generated once per
+  installation, so two Synclet servers (or a reinstalled one) never share a domain.
+- Display the account as `displayName` (`slug`) at `<origin>`.
+
+`GET /sync/v1/capabilities` (Phase 1c) →
+`{ versions: boolean, office: { enabled: boolean, url: string | null } }`.
+A server that answers `404` on this route (no `code`) predates Phase 1c: treat it as
+`{ versions: false, office: { enabled: false, url: null } }`. Clients hide version UI when
+`versions` is false. `office` concerns the web editor only; `enabled` is true only when the
+Document Server URL and its shared secret are both configured (`url` is `null` otherwise).
+
+---
+
+## 4. Items
+
+```ts
+SyncItem = {
+  id: string,                // "root" | "d_<uuid>" (folder) | "f_<uuid>" (file)
+  parentId: string | null,   // null only for root; top-level items: "root"
+  type: "folder" | "file",
+  kind: "root" | "folder" | "file",
+  name: string,              // display name (§4.3), unique per parent
+  size: number,              // bytes; folders 0
+  mime: string | null,       // from the file extension; null for folders
+  version: number | null,    // content version (files, starts at 1); null for folders
+  sha256: string | null,     // hex; null for folders and for files not hashed yet
+  etag: string,              // for If-Match on PATCH (opaque, §4.4)
+  contentEtag: string | null,// "v<version>" for files; null for folders
+  createdAt: string,         // when Synclet first indexed the item
+  modifiedAt: string,        // content mtime on disk (files); folders: mtime when indexed/moved
+  documentId: string | null, // files: equal to id (Buro compatibility); null for folders
+  capabilities: { read: true, write: boolean, rename: boolean, move: boolean,
+                  delete: boolean, addChildren: boolean },
+  preview?: { kind: "image"|"pdf"|"text"|"markdown"|"code"|"video"|"audio"|"none",
+              thumbnail: boolean, language?: string }   // files only (§9)
+}
+```
+
+### 4.1 Identifiers
+
+| id | kind | Meaning | parentId |
+|---|---|---|---|
+| `root` | root | The user's folder; `name` = username; `etag` = `t0`, `createdAt`/`modifiedAt` = epoch | `null` |
+| `d_<uuid>` | folder | A directory below the user's folder | `root` or `d_…` |
+| `f_<uuid>` | file | A regular file | `root` or `d_…` |
+
+- `<uuid>` is lowercase, canonical form. Ids are **stable**: renames and moves through the API keep
+  them; so do renames/moves made directly on the server's disk when the server can pair them
+  (same path, or same inode within a short window). Otherwise a host-side move appears as delete
+  + create (new id). Restoring from the trash brings the original ids back.
+- A malformed id (anything but `root`, `d_<uuid>`, `f_<uuid>`) → `400 invalid_request`.
+  A well-formed id of the wrong type (`d_` of a file, `f_` of a folder) → `404`.
+- Symlinks, sockets and other special entries on disk are never items.
+
+### 4.2 Paths
+
+Items carry **no path**. Clients derive an item's path from the chain of `parentId`s (child path =
+parent path + `/` + `name`). A folder rename or move therefore changes the paths of its whole
+subtree while only the folder itself is reported (§5).
+
+### 4.3 Names
+
+**Validation** (folder creation, uploads, renames; else `400 invalid_name`): not empty, not `.` or
+`..`; none of `< > : " / \ | ? *` or control characters U+0000–U+001F; no trailing space or dot;
+not a Windows reserved name (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`, also with an
+extension, case-insensitive); at most 255 bytes UTF-8 after NFC normalization; not an ignored name
+(`.DS_Store`, `.Spotlight-V100`, `.Trashes`, `.fseventsd`, `.TemporaryItems`, `.localized`,
+`Thumbs.db`, `desktop.ini`, `$RECYCLE.BIN`, `@eaDir`, `#recycle`, `lost+found`, `._*`, `~$*`,
+`~WRL*.tmp`, `.~lock.*#`, `.synclet-tmp-*`, `.synclet-trash-*`). New names are stored in **NFC**.
+
+Clients **must not** upload ignored names and should skip them locally (they are never synced).
+Files created on the server's disk may have names that are invalid for Windows clients; the
+Windows client maps such names reversibly on its side (the server never renames anything on disk).
+
+**Name key:** `NFC(name).toLowerCase()`. Two siblings collide when their name keys are equal.
+Files and folders share one namespace.
+
+**Display names.** Through the API no two siblings can get the same name key, but the disk can
+contain them (a case-sensitive file system with `a.txt` and `A.txt`, or NFC and NFD variants).
+`name` is therefore a **display name**, unique per parent:
+
+1. Rank the live siblings: folders before files; within a group older `createdAt` first, then id.
+2. In that order every item keeps its stored name while its name key is still free in the parent.
+3. The remaining items get, in rank order, the first free suffixed name:
+   files `"<base> (n).<ext>"`, folders `"<name> (n)"`, n = 2, 3, … (`<base>`/`<ext>` = split at the
+   last dot that is not at position 0, so `.env` → `.env (2)`, `a.tar.gz` → `a.tar (2).gz`).
+
+- Deterministic: depends only on the set of siblings, not on paging or request order; identical in
+  `GET /items/:id`, `children`, `changes`, `search` and `recent`.
+- The display name is not stored. When a create, rename, move or delete changes the display name of
+  a sibling with the same name key, that sibling is reported as an `upsert` in `/changes`.
+  *Known limitation:* a sibling whose display name changes only because a newly created name equals
+  its **suffixed** display name (e.g. creating `A (2).txt` next to the disk pair `a.txt`/`A.txt`) is
+  not reported until it changes otherwise. Clients must accept a different `name` for a known id in
+  any later upsert.
+- `PATCH` with `name` equal to the current display name keeps the stored name (§8.2).
+- Collision checks of the API (§6.4, §8) compare against the stored names' keys.
+
+### 4.4 ETags
+
+- **Files:** `etag = contentEtag = "v<version>"`. `version` increases by one with every content
+  change: replace via the API, a version restore, an Office save, and edits made directly on the
+  server's disk (detected by a size or modification-time change). Renames and moves do not change it.
+- **Folders:** `etag` is opaque (`t` + 16 hex characters, root: `t0`). It changes when the folder
+  itself is renamed or moved or its display name changes – each such change is also reported in
+  `/changes` – and not when descendants or ancestors change. Clients compare etags only for
+  equality.
+- **HTTP ETags** of content responses are the quoted `contentEtag` (`"v3"`).
+
+### 4.5 Capabilities
+
+Every user can write their whole tree: `root` → `write: true, addChildren: true, rename/move/delete: false`;
+folders → all `true`; files → all `true` except `addChildren: false`. Clients **should** still
+honor the flags (future shared folders will use them).
+
+### 4.6 Endpoints
+
+- `GET /sync/v1/items/:id` → `SyncItem`. `404` when unknown, trashed or foreign.
+- `GET /sync/v1/items/:id/children?pageToken=&limit=` → `{ items: SyncItem[], nextPageToken: string | null, cursor: string }`
+  - `limit`: `floor(limit)`; missing, non-numeric or `0` (also `0.x`) → the default 500; then
+    clamped to 1..1000 (negative → 1, above 1000 → 1000).
+  - Order: all folders, then all files; within each group by id. `pageToken` is an opaque keyset
+    marker (not an offset): items created or deleted between pages never cause duplicates or
+    skipped survivors. `nextPageToken` is `null` on the last page.
+  - `cursor` is the change cursor **before** the first page was read: start `/changes` from it
+    after the enumeration and nothing is missed (use the cursor of the first page).
+  - Children of a file, a malformed `pageToken` → `400 invalid_request`; unknown folder → `404`.
+
+---
+
+## 5. Changes
+
+- `GET /sync/v1/cursor` → `{ cursor: string }` (current head).
+- `GET /sync/v1/changes?cursor=<c>&limit=<n>` →
+  ```ts
+  { changes: ({ op: "upsert", item: SyncItem } | { op: "delete", id: string })[],
+    cursor: string, hasMore: boolean }
+  ```
+  `limit`: same rule as for `children` (missing, non-numeric or `0` → 500; then clamped to 1..1000).
+
+**Cursor.** Opaque string. Clients store it and send it back; they must not parse it, compare it
+by order or compute with it. A cursor is per user, not per device.
+
+**Semantics.**
+- The page contains every item of the user that changed after `<c>`, **coalesced**: each id at most
+  once, ordered by the time of its latest change. Every `upsert` carries the item's state at the
+  time of the request (not the state of the change); an item that no longer exists is a `delete`.
+  An item created and deleted after `<c>` is reported as `delete` – clients must ignore deletes of
+  unknown ids.
+- While `hasMore` is `true`, call again with the returned `cursor` immediately. When `hasMore` is
+  `false`, the returned `cursor` is the head; store it after the page has been applied.
+- **Ordering across items is not causal.** An upsert may reference a `parentId` that appears later
+  in the same page or a later page (e.g. a folder renamed after a file was created inside it).
+  Apply all pages of one drain as a whole; if a parent is still unknown afterwards, fetch it with
+  `GET /items/:id`.
+- What is reported:
+  - create, rename, move, content replace, version restore → `upsert` of the item;
+  - folder rename/move → only the folder (children keep their ids and are not listed; their paths
+    change implicitly, §4.2);
+  - delete (to the trash, §8.3) → `delete` for the item **and every descendant**;
+  - restore from the trash → `upsert` for every restored item, with the original ids;
+  - siblings whose display name changes (§4.3) → `upsert`;
+  - changes made directly on the server's disk, once the server noticed them (file watcher, best
+    effort, plus a periodic rescan, by default every 15 minutes): create/delete/rename/move as above,
+    content edits as `upsert` with `version + 1` (and `sha256: null` until re-hashed).
+- What is **not** reported (clients see it on the next read of the item): `sha256` becoming known
+  after hashing, `preview.thumbnail` becoming `true`.
+- `410 cursor_expired` when `<c>` is older than the journal retention (`SYNCLET_JOURNAL_RETENTION_DAYS`,
+  default 30) or ahead of the server's head (e.g. after a server restore). The client then
+  re-enumerates from `root` (keeping ids it already knows: ids are stable) and continues with the
+  enumeration's cursor.
+- Missing or malformed `cursor` (anything but 1–19 decimal digits) → `400 invalid_request`.
+
+**Recommended client loop:** on first sync take `account.cursor` (or the first `children` page's
+cursor), enumerate, then poll `/changes` (File Provider: on `enumerateChanges`; Windows: on a timer,
+e.g. every 30 s, and after local writes). A push channel (`GET /events`, SSE) and APNs follow in
+Phase 2/3; until then clients poll.
+
+---
+
+## 6. Content
+
+### 6.1 Download
+
+`GET /sync/v1/items/:id/content` (files only; a folder → `400 invalid_request`)
+
+- Response headers: `ETag: "v<version>"`, `Content-Length`, `Content-Type` (from the extension,
+  `application/octet-stream` if unknown), `Accept-Ranges: bytes`, `Last-Modified` (content mtime,
+  HTTP date with second precision), `Cache-Control: private, no-store`,
+  `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and, except for PDFs, a
+  sandboxing `Content-Security-Policy`.
+- `?download=1` adds `Content-Disposition: attachment; filename="<ASCII fallback>"; filename*=UTF-8''<name>`.
+- `Range`: exactly one range `bytes=a-b`, `bytes=a-` or `bytes=-n` → `206` with
+  `Content-Range: bytes a-b/<size>`. `b` beyond the end is clamped. Other forms (several ranges,
+  other units) are ignored → `200` with the whole file. A range starting at or after the end, `-0`,
+  or `a > b` → `416 range_not_satisfiable` with `Content-Range: bytes */<size>` (and a JSON error body).
+  Every range on an empty file is unsatisfiable.
+- `If-None-Match` containing the current tag (`"v3"`, `W/"v3"`, in a list) or `*` → `304`.
+- `If-Range`: the range is honored only if the validator is the current **strong** tag (`"v3"`) and
+  the file on disk is still exactly the indexed one, or an HTTP date equal to the current
+  `Last-Modified`; otherwise the full file comes back with `200` (never spliced bytes). Resuming
+  downloads **should** send `If-Range: "v<version>"`.
+- The bytes always come from disk: if the file was edited on the server's disk and not indexed yet,
+  `Content-Length` and content describe the new bytes while `ETag` still names the old version.
+  Clients verifying `sha256` must therefore treat a mismatch as "changed, refetch metadata".
+
+### 6.2 Download tokens (URLs without `Authorization`)
+
+`POST /sync/v1/items/:id/download-token?purpose=download|preview` (files only) →
+`201 { url, token, expiresAt }`.
+
+- `download` (default): valid 60 s; `url = /api/sync/v1/items/<id>/content?download=1&dt=<token>`
+  (attachment). For handing a download to a system downloader or browser.
+- `preview`: valid 6 h; `url = /api/sync/v1/items/<id>/content?dt=<token>` (inline).
+- Either kind of token is accepted by `GET /items/<id>/content`, `GET /items/<id>/thumbnail` and
+  the version content route (§10) of the **same** item; the purpose only sets the lifetime and the
+  `url` form (the server does not check the purpose on these routes).
+- The token is bound to the item id; for any other item it answers `401 unauthorized`. It is only
+  accepted on those content/thumbnail/version-content routes. `url` is path-only: prefix it with the origin.
+- A folder → `400 invalid_request`; an unknown `purpose` → `400`.
+
+### 6.3 Replace
+
+`PUT /sync/v1/items/:id/content` (files only) – **raw bytes in the body** (no multipart)
+
+- Headers: `If-Match: "v<version>"` (**required**; quoted or bare; `W/` is stripped) or `If-Match: *`,
+  `Content-Type: application/octet-stream` (**always**; anything else → `400 invalid_request`),
+  `Content-Length` (above `maxUploadBytes` → `413 too_large` before any byte is read), optional
+  `X-Synclet-Modified-At: <ISO 8601>` (alias `X-Buro-Modified-At`; `X-Synclet-…` wins; invalid
+  values are ignored). Empty bodies (0 bytes) are allowed.
+- Missing `If-Match` → `428 precondition_required`.
+- Success → `200 SyncItem` with `version + 1`, new `contentEtag`, `size`, `sha256`, and
+  `modifiedAt` = the given modification time (else the server's write time). With versions enabled
+  (§10) the previous content becomes a version.
+- `If-Match` not matching the current version (also an unknown etag format) →
+  `412 { code: "conflict", item }` with the current server state. Nothing is written.
+- `If-Match: *` replaces whatever version is current – **except** a change on the server's disk that
+  was not indexed yet: the server records that edit as a new version first and answers `412` with it.
+  Host edits are never silently overwritten.
+- The write is atomic (temp file on the same file system, then rename over the target); readers
+  see either the old or the new content.
+
+**Conflict handling (client):** on `412` the client keeps its local content as a **conflict copy**
+uploaded with `POST /items/upload?onConflict=rename` into the same folder, named
+`"<base> (Conflict <device name> <YYYY-MM-DD HH-mm>).<ext>"` (localized clients may translate
+"Conflict"; Buro used "Konflikt"), and then downloads the server state for the original item.
+
+### 6.4 Upload (new file)
+
+`POST /sync/v1/items/upload?parentId=<id>&name=<urlencoded>&onConflict=fail|rename`
+
+- Raw body; headers as for `PUT` without `If-Match`. `parentId` defaults to `root`.
+- → `201 SyncItem` (version 1).
+- Collision (same name key as an existing sibling, file or folder): `onConflict=fail` (default) →
+  `409 name_conflict` with `item` = the existing sibling; `rename` → the first free
+  `"<base> (2).<ext>"`, `(3)`, … (folders: `"<name> (2)"`, §4.3).
+- Unknown parent → `404`; a file as parent → `400 invalid_request`; invalid name → `400 invalid_name`;
+  invalid `onConflict` → `400 invalid_request`.
+- Large files should use tus (§7); this route is fine for small files and is not resumable.
+
+---
+
+## 7. Resumable uploads (tus 1.0)
+
+Endpoint: `<origin>/api/sync/v1/uploads` – tus 1.0.0 core protocol with the `creation`,
+`creation-with-upload`, `termination` and `expiration` extensions (`OPTIONS` also advertises
+`creation-defer-length`; clients should always send `Upload-Length`, deferred lengths are not
+covered by this contract). Authentication: `Authorization: Bearer`
+(device or access token) on every request except `OPTIONS`.
+
+1. `POST /sync/v1/uploads` with `Tus-Resumable: 1.0.0`, `Upload-Length: <bytes>` and
+   `Upload-Metadata` (tus encoding: `key base64(value)` pairs separated by commas):
+   - `name` (required, validated as §4.3 → `400 invalid_name`),
+   - `parentId` (default `root`; unknown → `404 not_found`, malformed or a file → `400`),
+   - `onConflict`: `rename` (**default for tus**) or `fail`,
+   - `modifiedAt`: ISO 8601 (invalid → `400`).
+   → `201` with a path-only `Location: /api/sync/v1/uploads/<uploadId>`. `Upload-Length` above
+   `Tus-Max-Size` (= `maxUploadBytes`) → `413`.
+2. `PATCH <Location>` with `Upload-Offset: <current offset>` and
+   `Content-Type: application/offset+octet-stream` → `204` with the new `Upload-Offset`.
+   A wrong offset → `409` (plain-text tus error, nothing appended).
+3. After an interruption: `HEAD <Location>` → `200` with `Upload-Offset` and `Upload-Length`
+   (`Cache-Control: no-store`); continue with `PATCH` from that offset. Bytes received before a
+   connection drop are kept.
+4. The request that completes the upload (the final `PATCH`, or the `POST` itself for empty files and
+   creation-with-upload of all bytes) publishes the file atomically and answers with the new
+   `SyncItem` as JSON body and `X-Synclet-Item: <id>`: `200` for a `PATCH`, `201` (with `Location`)
+   for a `POST`. Nothing appears in the user's folder before that moment.
+5. A conflict at completion with `onConflict=fail` → `409` JSON `name_conflict` (with `item`); other
+   publish errors also answer in the Sync error format. Client errors (conflict, parent gone) drop
+   the upload (`HEAD` → `404`); a server-side failure keeps it, and an empty `PATCH` at the final
+   offset retries the publish.
+
+- `DELETE <Location>` → `204` terminates an unfinished upload.
+- `PATCH` and `DELETE` answer `423` while the upload is being published (by a concurrent
+  completing request): wait and check with `HEAD` (which is not blocked).
+- Unfinished uploads expire after 24 h (`410`). Uploads of other users are indistinguishable from
+  unknown ones (`404`). Upload ids are opaque.
+
+---
+
+## 8. Structure changes
+
+### 8.1 Create a folder
+
+`POST /sync/v1/items` `{ "parentId": "<id>", "type": "folder", "name": "…", "onConflict"?: "fail"|"rename" }`
+→ `201 SyncItem`. Collisions as in §6.4 (`rename` → `"<name> (2)"`, …). `type` other than `folder`
+→ `400 invalid_request`.
+
+### 8.2 Rename / move
+
+`PATCH /sync/v1/items/:id` `{ "name"?: "…", "parentId"?: "<folder id or root>" }`, optional
+`If-Match: "<etag>"` (or `*`) → `200 SyncItem`.
+
+- Files and folders can be renamed and moved anywhere in the user's tree. Moving a folder into
+  itself or its own subtree → `400 invalid_move`. A file as target → `400 invalid_request`; unknown
+  target → `404`.
+- `If-Match` is compared with the item's `etag` as served (§4.4); mismatch → `412 conflict` with
+  `item`.
+- Name collision at the target (name key equal to a sibling other than the item itself) →
+  `409 name_conflict` with `item`; there is no `rename` mode. Case-only renames are allowed.
+- `name` equal to the current **display** name (§4.3), or absent: the stored name stays; without a
+  move this is a no-op (`200` with the unchanged item). On a move the stored name is replaced by
+  the display name only if the stored name is taken at the target and the display name is free.
+  Any other `name` is set as given.
+- `root` → `403 forbidden`.
+
+### 8.3 Delete
+
+`DELETE /sync/v1/items/:id` → `204`. Files and folders (with their subtree) move to the user's
+**trash**; `/changes` reports a `delete` for each of them. `root` → `403 forbidden`; unknown or
+already deleted → `404`. Deletions made directly on the server's disk do not go to the trash.
+
+### 8.4 Trash (`/api/trash`)
+
+Not needed for syncing; offered for clients with a trash UI. Same tokens as the Sync API.
+
+- `GET /api/trash` → `TrashEntry[]`, most recently deleted first:
+  `{ id (uuid), itemId (sync id of the deleted item), type, name, originalPath, size, deletedAt,
+  expiresAt | null, itemCount }`. Entries expire after `SYNCLET_TRASH_RETENTION_DAYS` (default 30).
+- `POST /api/trash/:id/restore` → `200 { item: SyncItem, restoredTo: string, renamed: boolean }` –
+  back to the original folder (or `root` if it is gone), under a free name if the original is
+  taken, with the original ids.
+- `DELETE /api/trash/:id` → `204` (delete forever, including versions). `DELETE /api/trash` →
+  `200 { removed: number }`.
+- `409 conflict` while an entry is being processed (e.g. right after the delete, while its content
+  is still being moved into the trash store): retry after a moment.
+
+---
+
+## 9. Previews
+
+### 9.1 Thumbnails
+
+`GET /sync/v1/items/:id/thumbnail?size=256|1024` (default 256; other values → `400 invalid_request`;
+folders → `400`) – accepts a download token of the same item (`?dt=`, either purpose, §6.2).
+
+- `200 image/webp` (always re-encoded, never the original bytes), `ETag: "<sha256>-<size>"`,
+  `Cache-Control: private, max-age=31536000, immutable`; `If-None-Match` → `304`. A given URL's
+  bytes never change; a new content version has a new `sha256`.
+- `404 not_found` until the background worker produced the thumbnail – and forever for types
+  without thumbnails. Thumbnails exist for images (jpg, jpeg, png, gif, webp, avif, heic, heif, tif,
+  tiff, bmp, svg), PDFs and videos (mp4, m4v, mov, webm, mkv), when the server has the needed tools.
+- `preview.thumbnail` in a `SyncItem` tells whether a thumbnail existed when the item was
+  serialized. It turning `true` is not journaled: clients that want a thumbnail poll this route
+  with backoff (e.g. after 2 s, 5 s, 15 s, then on the next metadata read).
+
+### 9.2 Text preview
+
+`GET /sync/v1/items/:id/preview-text` (files of preview kind `text`, `markdown` or `code`) →
+`{ text: string, truncated: boolean, encoding: "utf-8" | "latin1" }`: the first 256 KiB, decoded
+as UTF-8 or, if that fails, Latin-1; NUL characters removed; `Cache-Control: no-store`. Other kinds
+→ **`415`** with `code: "invalid_request"`.
+
+`preview.kind` is derived from the extension (fallback: MIME type); `preview.language` is the
+highlight.js language for `kind = "code"`.
+
+---
+
+## 10. Versions (Phase 1c, optional)
+
+Only when `GET /capabilities` reports `versions: true` (server setting `SYNCLET_VERSIONS=on`, off by
+default). When off, every route below answers `404 { code: "not_found", message: "versions disabled" }`
+for a well-formed file id, and no versions are created. Id validation comes first: a malformed id or
+a folder id is `400 invalid_request` whether versions are on or off.
+
+- A version is created when the server replaces content: `PUT /content`, Office saves and version
+  restores. Edits made directly on the server's disk create no versions. The server thins out old
+  versions (newest kept densely, older ones per hour/day/week) and may cap the bytes per user.
+- `GET /sync/v1/items/:id/versions` → `Version[]`, newest first:
+  ```ts
+  Version = { id: string /* uuid */, version: number /* item version while it was current */,
+              size: number, sha256: string,
+              modifiedAt: string /* content mtime while current */,
+              createdAt: string  /* when it was superseded */,
+              source: "api" | "office" | "restore",
+              createdBy: { id: string, displayName: string } | null }
+  ```
+- `GET /sync/v1/items/:id/versions/:versionId/content` – always an attachment named
+  `"<base> (v<n>).<ext>"`, `ETag: "v<n>"`, same Range/If-None-Match/If-Range rules as §6.1; accepts
+  the item's download token (`?dt=`).
+- `POST /sync/v1/items/:id/versions/:versionId/restore` → `200 SyncItem`: the current content
+  becomes a version (`source: "restore"`), the version's bytes become current with `version + 1`
+  and the same id; reported as `upsert` in `/changes`. The restored version stays in the list.
+- Versions follow the item id through renames, moves and the trash; deleting forever (or trash
+  expiry) removes them.
+- Folder ids → `400 invalid_request`; unknown file or version → `404`.
+
+---
+
+## 11. Search and recent files
+
+- `GET /sync/v1/search?q=<1..200 chars>&limit=<1..50, default 20>&offset=<0..10000>&folder=<folder id>`
+  → `{ hits: { item: SyncItem, path: string, snippet: string | null, matched: "name"|"content"|"both" }[], total: number }`.
+  Names (case- and accent-insensitive, typo-tolerant) and extracted text (full text) of the user's
+  live items. `path` is the parent folder path relative to the user's folder (`""` = top level).
+  `snippet` highlights matches with `«…»`. `folder` restricts to a subtree. Empty `q` → `400`.
+- `GET /sync/v1/recent?limit=<1..200, default 50>` → `SyncItem[]`: live files, newest `modifiedAt`
+  first.
+
+---
+
+## 12. Not part of this contract (yet)
+
+- `GET /sync/v1/events` (Server-Sent Events change signal) – Phase 2; until then poll `/changes`.
+- APNs pushes – Phase 3 (`PUT /devices/current/push` is already accepted).
+- Office editing (`GET /sync/v1/items/:id/office`, `POST /sync/v1/items/new-office`), share links
+  (`/api/shares`, `/api/public/shares`), admin routes (`/api/admin/*`) and SSO (`/api/auth/oidc/*`,
+  `/api/auth/forward`) are web-app routes and may change without notice to native clients.
+- Pinning ("always keep offline") is purely client-side.
+- Shared folders between users (Phase 5) will introduce capabilities other than all-`true`.
+
+---
+
+## 13. Differences from Buro SYNC_API v1 (porting checklist)
+
+| Topic | Buro | Synclet |
+|---|---|---|
+| Base URL | `https://<slug>.<BASE_DOMAIN>/api/sync/v1`, tenant from subdomain/token | `<origin>/api/sync/v1`, no tenant |
+| Module/permission checks | `files.storage`, `documents:read/write`, `403 feature_disabled` | none; `canWrite` always true |
+| Login | `POST /api/auth/login {email, password, subdomain?}`; app token response has `slug`, `organizationName` | `{login, password}`; app token response `{accessToken, refreshToken, user}`, then register the device against the same origin |
+| App login redirect | `buroapp://oauth`; windows loopback | `synclet://oauth` (`ios`, `android`, `macos`); loopback for `windows` **and** `linux`; `code_challenge_method=S256` must be sent |
+| Device token prefix | `bsd_` | `syd_` |
+| Device platforms | ios, android, macos, windows | + `linux`, `web` |
+| Account | real organization, areas by module | `organizationId = "<serverId>:<userId>"`, `organizationName = "Synclet"`, `slug` = username, only `personal` area, `quotaBytes = 0` |
+| Ids / kinds | `root`, areas (`personal`, `shared`, …), `c_`, `p_`, `o_`, `d_`, `f_`, `l_` | only `root`, `d_<uuid>`, `f_<uuid>`; `kind` ∈ root, folder, file; top-level items have `parentId: "root"` |
+| Links | `l_…` items | none |
+| Folder etag | `t<updatedAtMs>` | opaque `t…`, stable across ancestor moves |
+| Version counting | API writes only | also counts edits made on the server's disk |
+| Modified-at header | `X-Buro-Modified-At` accepted, not evaluated | `X-Synclet-Modified-At` (alias `X-Buro-Modified-At`) **sets** the file's mtime / `modifiedAt` |
+| `If-Match: *` on PUT | – | allowed (never overwrites an unindexed host edit) |
+| Resumable upload | – | tus 1.0 at `/api/sync/v1/uploads` |
+| Thumbnails, text previews, download tokens | – | §6.2, §9; `SyncItem.preview` |
+| Versions, capabilities | – | §10, §3 |
+| Search, recent | – | §11 |
+| Changes | trigger-based journal, BIGSERIAL cursor | journal written in the same transaction as the change; per-user sequence; same `410` semantics |
+| Subtree delete in `/changes` | folder only | folder **and** every descendant |
+| Name validation | Buro rules | Windows-safe rules of §4.3 (reserved names, trailing dot/space, 255 bytes), ignored names |
+| Error codes | – | adds `rate_limited`, `password_login_disabled`, `setup_done` and web-only codes; drops `feature_disabled` |
+| Conflict copy name | `(Konflikt <device> …)` | `(Conflict <device> …)` (translatable) |
+
+---
+
+## 14. Conformance suite
+
+`packages/sync-contract` contains `openapi.yaml`, a minimal client and a vitest suite that runs
+against a **live** server. Every test creates its data below one top-level folder
+`contract-<random>`, which the suite deletes at the end (and removes from the trash); the suite
+also revokes the device it registered and logs out the sessions it opened. It never touches
+anything else of the account.
+
+```bash
+# against a running server, with an existing account
+SYNCLET_URL=http://localhost:8080 SYNCLET_USER=admin SYNCLET_PASSWORD=… pnpm test:contract
+# or with a token (device token or web access token)
+SYNCLET_URL=… SYNCLET_TOKEN=syd_… pnpm test:contract
+# against a fresh instance: creates the first administrator
+SYNCLET_URL=… SYNCLET_SETUP=1 [SYNCLET_USER=… SYNCLET_PASSWORD=…] pnpm test:contract
+# against a newer server that adds response fields: allow undocumented fields
+SYNCLET_CONTRACT_LENIENT=1 SYNCLET_URL=… SYNCLET_TOKEN=… pnpm test:contract
+# lint the OpenAPI description
+pnpm --filter @synclet/sync-contract lint:openapi
+```
+
+Details (skips, thumbnail worker, rate limits): `packages/sync-contract/README.md`.

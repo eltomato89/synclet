@@ -8,7 +8,7 @@ COPY apps/server/package.json apps/server/
 RUN pnpm install --frozen-lockfile --filter @synclet/server...
 COPY apps/server apps/server
 RUN pnpm --filter @synclet/shared build && pnpm --filter @synclet/server build
-RUN pnpm --filter @synclet/server deploy --legacy --prod /out && cp -r apps/server/dist apps/server/prisma /out/ \
+RUN pnpm --filter @synclet/server deploy --legacy --prod /out && cp -r apps/server/dist apps/server/prisma apps/server/assets /out/ \
  && node -p "require('/src/apps/server/node_modules/prisma/package.json').version" > /out/.prisma-version \
  && cd /out && /src/apps/server/node_modules/.bin/prisma generate
 

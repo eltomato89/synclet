@@ -1,0 +1,13 @@
+{
+	admin off
+	auto_https off
+}
+
+:80 {
+	reverse_proxy caddy:80 {
+		header_up Remote-User fa-user
+		header_up Remote-Email fa-user@example.test
+		header_up Remote-Name "Forward User"
+		header_up Remote-Groups synclet-users
+	}
+}

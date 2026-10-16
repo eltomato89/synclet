@@ -6,13 +6,11 @@ import { TrashModule } from '../trash/trash.module';
 import { UploadsModule } from '../uploads/uploads.module';
 import { IndexerService } from './indexer.service';
 import { SchedulerService } from './scheduler.service';
-import { StatusController } from './status.controller';
 import { WatcherService } from './watcher.service';
 
 @Module({
   imports: [AuthModule, FilesModule, TrashModule, UploadsModule, DerivativesModule],
-  controllers: [StatusController],
   providers: [IndexerService, WatcherService, SchedulerService],
-  exports: [IndexerService],
+  exports: [IndexerService, WatcherService, SchedulerService],
 })
 export class IndexerModule {}

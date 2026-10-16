@@ -27,4 +27,39 @@ describe('loadConfig', () => {
     expect(loadConfig({ SYNCLET_TRUST_PROXY: '' }).trustProxy).toBe(false);
     expect(loadConfig({ SYNCLET_TRUST_PROXY: 'true' }).trustProxy).toBe(true);
   });
+
+  it('phase 1c defaults', () => {
+    const c = loadConfig({});
+    expect(c).toMatchObject({
+      versions: false, versionsMaxBytes: 0, officeUrl: null, officeJwtSecret: null,
+      officeApiUrl: 'http://server:3000/api', officeInternalUrl: 'http://office', ssoEmergency: false, ssoAllowHttpIssuer: false,
+    });
+    expect(loadConfig({ SYNCLET_SSO_ALLOW_HTTP_ISSUER: '1' }).ssoAllowHttpIssuer).toBe(true);
+  });
+
+  it('reads phase 1c variables; empty means default', () => {
+    const c = loadConfig({
+      SYNCLET_VERSIONS: 'on', SYNCLET_VERSIONS_MAX_BYTES: '1000', OFFICE_URL: 'https://office.example.com',
+      OFFICE_JWT_SECRET: 's', OFFICE_API_URL: 'http://srv/api', OFFICE_INTERNAL_URL: 'http://ds', SYNCLET_SSO_EMERGENCY: '1',
+    });
+    expect(c).toMatchObject({
+      versions: true, versionsMaxBytes: 1000, officeUrl: 'https://office.example.com', officeJwtSecret: 's',
+      officeApiUrl: 'http://srv/api', officeInternalUrl: 'http://ds', ssoEmergency: true,
+    });
+    const e = loadConfig({ SYNCLET_VERSIONS: '', OFFICE_URL: '', OFFICE_API_URL: '', SYNCLET_SSO_EMERGENCY: '' });
+    expect(e).toMatchObject({ versions: false, officeUrl: null, officeApiUrl: 'http://server:3000/api', ssoEmergency: false });
+  });
+
+  it('SYNCLET_SSO_EMERGENCY accepts the usual boolean spellings', () => {
+    for (const v of ['1', 'true', 'TRUE', 'on', 'yes']) expect(loadConfig({ SYNCLET_SSO_EMERGENCY: v }).ssoEmergency).toBe(true);
+    for (const v of ['0', 'false', 'off', 'no', '']) expect(loadConfig({ SYNCLET_SSO_EMERGENCY: v }).ssoEmergency).toBe(false);
+  });
+
+  it('SYNCLET_MAX_UPLOAD_BYTES must be a plain byte count (like the bundled Caddy needs it)', () => {
+    expect(loadConfig({ SYNCLET_MAX_UPLOAD_BYTES: '1048576' }).maxUploadBytes).toBe(1048576);
+    expect(loadConfig({ SYNCLET_MAX_UPLOAD_BYTES: '' }).maxUploadBytes).toBe(50 * 1024 ** 3);
+    for (const v of ['50G', '1e9', '10 MB', '-1', ' 5', 'abc']) {
+      expect(() => loadConfig({ SYNCLET_MAX_UPLOAD_BYTES: v })).toThrow(/SYNCLET_MAX_UPLOAD_BYTES must be a plain number of bytes/);
+    }
+  });
 });

@@ -58,7 +58,8 @@
     "notFoundTitle": "Seite nicht gefunden",
     "notFoundBody": "Unter dieser Adresse gibt es nichts. Vielleicht wurde der Link gekürzt oder der Ordner verschoben.",
     "notFoundBack": "Zu meinen Dateien",
-    "skipToContent": "Zum Inhalt springen"
+    "skipToContent": "Zum Inhalt springen",
+    "administration": "Administration"
   },
   "files": {
     "newMenu": "Neu",
@@ -182,7 +183,9 @@
       "dismiss": "Aus der Liste entfernen"
     },
     "preview": "Vorschau",
-    "shortcutPreview": "Leertaste"
+    "shortcutPreview": "Leertaste",
+    "versionsShort": "Versionen",
+    "versions": "Versionen …"
   },
   "preview": {
     "close": "Vorschau schließen",
@@ -512,5 +515,501 @@
     "emptyBody": "Was du hochlädst oder änderst, erscheint hier – über alle Ordner hinweg, das Neueste zuerst.",
     "emptyAction": "Zu meinen Dateien",
     "limitNote": "Die {{count}} zuletzt geänderten Dateien"
+  },
+  "office": {
+    "open": "In Office öffnen",
+    "new": {
+      "more": "Weitere …",
+      "label": "Name",
+      "description": "Die Datei wird in „{{folder}}“ angelegt.",
+      "descriptionOpens": "Die Datei wird in „{{folder}}“ angelegt und in einem neuen Tab geöffnet.",
+      "submit": "Erstellen",
+      "submitOpen": "Erstellen und öffnen",
+      "submitting": "Wird erstellt …",
+      "docx": {
+        "menu": "Dokument",
+        "title": "Neues Dokument",
+        "defaultName": "Unbenanntes Dokument"
+      },
+      "xlsx": {
+        "menu": "Tabelle",
+        "title": "Neue Tabelle",
+        "defaultName": "Unbenannte Tabelle"
+      },
+      "pptx": {
+        "menu": "Präsentation",
+        "title": "Neue Präsentation",
+        "defaultName": "Unbenannte Präsentation"
+      },
+      "odt": {
+        "menu": "OpenDocument-Text",
+        "title": "Neues OpenDocument",
+        "defaultName": "Unbenanntes Dokument"
+      },
+      "ods": {
+        "menu": "OpenDocument-Tabelle",
+        "title": "Neue OpenDocument-Tabelle",
+        "defaultName": "Unbenannte Tabelle"
+      },
+      "odp": {
+        "menu": "OpenDocument-Präsentation",
+        "title": "Neue OpenDocument-Präsentation",
+        "defaultName": "Unbenannte Präsentation"
+      },
+      "txt": {
+        "menu": "Textdatei",
+        "title": "Neue Textdatei",
+        "defaultName": "Unbenannt"
+      },
+      "csv": {
+        "menu": "CSV-Tabelle",
+        "title": "Neue CSV-Tabelle",
+        "defaultName": "Unbenannt"
+      }
+    },
+    "editor": {
+      "opening": "Wird in Office geöffnet …",
+      "closeTab": "Tab schließen",
+      "backToFiles": "Zu meinen Dateien"
+    },
+    "errors": {
+      "disabled": {
+        "title": "Office ist nicht eingerichtet",
+        "body": "Auf diesem Server ist keine Bearbeitung im Browser eingerichtet. Wer Synclet verwaltet, kann einen Euro-Office-Server verbinden."
+      },
+      "unsupported": {
+        "title": "Dieser Dateityp lässt sich nicht in Office öffnen",
+        "body": "Office öffnet Text-, Tabellen- und Präsentationsdateien. Lade die Datei herunter, um sie in einer passenden App zu öffnen."
+      },
+      "notFound": {
+        "title": "Diese Datei gibt es nicht mehr",
+        "body": "Sie wurde vielleicht gelöscht, verschoben oder ist ein Ordner."
+      },
+      "editorUnreachable": {
+        "title": "Der Office-Server antwortet nicht",
+        "body": "Synclet ist erreichbar, der Editor aber nicht. Prüfe die Verbindung und versuche es erneut."
+      },
+      "serverUnreachable": {
+        "title": "Synclet ist nicht erreichbar",
+        "body": "Die Datei konnte nicht geöffnet werden, weil der Server nicht antwortet. Versuche es gleich noch einmal."
+      }
+    }
+  },
+  "sso": {
+    "orPassword": "oder mit Passwort",
+    "redirectHint": "Die Anmeldung geht auf der Seite deiner Organisation weiter, danach kommst du hierher zurück.",
+    "passwordDisabled": "Die Anmeldung mit Passwort ist für dein Konto abgeschaltet. Melde dich per Single Sign-on an.",
+    "usePassword": "Mit Passwort anmelden",
+    "backToAppLogin": "Zurück zur App-Anmeldung",
+    "error": {
+      "oidc_disabled": "Single Sign-on ist auf diesem Server abgeschaltet. Melde dich mit deinem Passwort an oder frag deine Administration.",
+      "idp_unavailable": "Der Anmeldedienst ist gerade nicht erreichbar. Versuch es gleich noch einmal.",
+      "invalid_state": "Die Anmeldung hat zu lange gedauert oder wurde in einem anderen Fenster gestartet. Starte sie erneut.",
+      "idp_error": "Der Anmeldedienst hat die Anmeldung abgebrochen oder abgelehnt. Versuch es noch einmal.",
+      "oidc_failed": "Die Antwort des Anmeldedienstes ließ sich nicht prüfen. Versuch es noch einmal. Wenn es weiter scheitert, lass die Single-Sign-on-Einstellungen von deiner Administration prüfen.",
+      "sso_not_allowed": "Dein Konto darf Synclet nicht nutzen. Bitte deine Administration um Zugang.",
+      "unauthorized": "Dein Konto ist deaktiviert oder ließ sich keinem Synclet-Konto zuordnen. Wende dich an deine Administration.",
+      "rate_limited": "Zu viele Anmeldeversuche. Warte eine Minute und versuch es dann erneut.",
+      "server_error": "Die Anmeldung ist an einem Serverfehler gescheitert. Versuch es noch einmal oder wende dich an deine Administration."
+    }
+  },
+  "appLogin": {
+    "title": "Bei {{name}} anmelden",
+    "explain": "{{app}} erhält Zugriff auf deine Dateien auf {{host}}. Danach geht es automatisch zurück zur App.",
+    "continueAs": "Als {{name}} fortfahren",
+    "otherAccount": "Anderes Konto verwenden",
+    "backToCurrent": "Doch als {{name}} fortfahren",
+    "connecting": "Wird verbunden …",
+    "sessionExpired": "Deine Sitzung ist abgelaufen. Melde dich erneut an.",
+    "doneTitle": "Angemeldet",
+    "doneBody": "Es geht zurück zu {{app}}. Falls nichts passiert, öffne die App hier.",
+    "openApp": "App öffnen",
+    "problemTitle": "Anmeldung für die App nicht möglich",
+    "invalidLink": "Dieser Anmeldelink ist unvollständig oder beschädigt. Starte die Anmeldung erneut in der App.",
+    "invalidClient": "Diese App darf sich bei diesem Server nicht anmelden. Starte die Anmeldung erneut in der App oder aktualisiere sie.",
+    "unreachable": "Der Server antwortet nicht. Prüf die Verbindung und versuch es erneut.",
+    "rateLimited": "Gerade zu viele Anmeldeversuche. Warte einen Moment und versuch es erneut."
+  },
+  "versions": {
+    "title": "Versionen",
+    "description": "Frühere Versionen von „{{name}}“",
+    "number": "Version {{n}}",
+    "source": {
+      "office": "Office",
+      "restore": "Wiederhergestellt",
+      "api": "Synchronisiert"
+    },
+    "preview": "Version {{n}} ansehen",
+    "download": "Version {{n}} herunterladen",
+    "restore": "Version {{n}} wiederherstellen",
+    "emptyTitle": "Keine früheren Versionen",
+    "emptyBody": "Wird diese Datei ersetzt, bleibt der bisherige Inhalt hier erhalten.",
+    "loadFailed": "Die Versionen konnten nicht geladen werden.",
+    "confirmTitle": "Version {{n}} wiederherstellen?",
+    "confirmBody": "Die aktuelle Fassung wird dabei als Version gesichert.",
+    "restoreAction": "Wiederherstellen",
+    "restoring": "Wird wiederhergestellt …",
+    "restored": "Version {{n}} wiederhergestellt"
+  },
+  "admin": {
+    "title": "Administration",
+    "nav": {
+      "users": "Benutzer",
+      "status": "Status",
+      "shares": "Freigabelinks",
+      "sso": "Anmeldung"
+    },
+    "tags": {
+      "remove": "{{value}} entfernen"
+    },
+    "errors": {
+      "lastAdmin": "Das ist der letzte Administrator, der sich mit Passwort anmelden kann. Gib zuerst einem anderen aktiven Administrator ein Passwort.",
+      "selfDisable": "Du kannst dein eigenes Konto nicht deaktivieren.",
+      "selfDelete": "Du kannst dein eigenes Konto nicht löschen.",
+      "emailTaken": "Ein anderer Benutzer hat diese E-Mail-Adresse bereits.",
+      "userTaken": "Dieser Benutzername oder diese E-Mail-Adresse wird schon verwendet.",
+      "folderTaken": "Dieser Ordner gehört bereits einem Benutzer.",
+      "folderMissing": "Diesen Ordner gibt es im Datenverzeichnis nicht mehr. Lade die Liste neu und wähle einen anderen.",
+      "usernameInvalid": "Dieser Name ist als Ordnername nicht erlaubt. Er darf nicht mit einem Punkt beginnen und keine Zeichen wie / \\ : * ? @ enthalten.",
+      "dataNotWritable": "Der Server kann nicht ins Datenverzeichnis schreiben. Prüfe die Berechtigungen des /data-Volumes.",
+      "invalid": "Der Server hat diese Angaben nicht akzeptiert. Prüfe die Felder und versuche es erneut."
+    },
+    "users": {
+      "title": "Benutzer",
+      "create": "Neuer Benutzer",
+      "loadError": "Die Benutzer konnten nicht geladen werden",
+      "columns": {
+        "name": "Name",
+        "email": "E-Mail",
+        "roleStatus": "Rolle",
+        "storage": "Speicher",
+        "devices": "Geräte",
+        "lastLogin": "Letzte Anmeldung",
+        "identities": "Anmeldearten"
+      },
+      "role": {
+        "user": "Benutzer",
+        "admin": "Administrator"
+      },
+      "identity": {
+        "local": "Passwort",
+        "oidc": "OIDC",
+        "forward": "Auth-Proxy"
+      },
+      "you": "(du)",
+      "disabled": "Deaktiviert",
+      "never": "Noch nie",
+      "actionsFor": "Aktionen für {{name}}",
+      "edit": "Bearbeiten",
+      "access": "Sitzungen und Geräte",
+      "count_one": "{{count}} Benutzer, {{active}} aktiv",
+      "count_other": "{{count}} Benutzer, {{active}} aktiv",
+      "toast": {
+        "created": "{{name}} kann sich jetzt anmelden",
+        "updated": "Änderungen an {{name}} gespeichert"
+      },
+      "disable": {
+        "action": "Deaktivieren",
+        "title": "{{name}} deaktivieren?",
+        "body": "{{name}} wird überall abgemeldet und kann sich nicht mehr anmelden oder synchronisieren, bis du das Konto wieder aktivierst. Dateien und Freigabelinks bleiben, wie sie sind.",
+        "submit": "Konto deaktivieren",
+        "submitting": "Wird deaktiviert …",
+        "done": "{{name}} ist deaktiviert"
+      },
+      "enable": {
+        "action": "Aktivieren",
+        "title": "{{name}} aktivieren?",
+        "body": "{{name}} kann sich wieder anmelden. Widerrufene Geräte und Freigabelinks bleiben widerrufen.",
+        "submit": "Konto aktivieren",
+        "submitting": "Wird aktiviert …",
+        "done": "{{name}} ist aktiviert"
+      },
+      "delete": {
+        "action": "Löschen",
+        "title": "{{name}} löschen?",
+        "body": "Das Konto wird deaktiviert, und alle Sitzungen, Sync-Geräte und Freigabelinks von {{name}} werden widerrufen. Der Ordner /data/{{username}} und seine Dateien bleiben unverändert auf dem Server; entferne sie selbst, wenn du sie nicht mehr brauchst.",
+        "submit": "Konto löschen",
+        "submitting": "Wird gelöscht …",
+        "done": "{{name}} ist gelöscht. Der Ordner bleibt auf dem Server."
+      },
+      "form": {
+        "createTitle": "Neuer Benutzer",
+        "createDescription": "Der Benutzername wird zum Ordnernamen im Datenverzeichnis und lässt sich später nicht ändern.",
+        "editTitle": "{{name}} bearbeiten",
+        "editDescription": "Benutzername und Ordner: {{username}}",
+        "adopt": "Bestehenden Ordner übernehmen",
+        "adoptHint": "Für Dateien, die schon im Datenverzeichnis liegen, z. B. nach einem Umzug. Der Benutzer bekommt den Ordnernamen als Benutzernamen.",
+        "noFolders": "Im Datenverzeichnis gibt es keine Ordner ohne Benutzer.",
+        "folder": "Ordner",
+        "displayName": "Anzeigename",
+        "username": "Benutzername",
+        "usernameHint": "Zugleich der Ordnername: /data/<Benutzername>",
+        "email": "E-Mail (optional)",
+        "emailHint": "Kann statt des Benutzernamens zur Anmeldung verwendet werden.",
+        "password": "Passwort",
+        "passwordHint": "Mindestens {{count}} Zeichen. Gib es dem Benutzer auf sicherem Weg weiter.",
+        "newPassword": "Neues Passwort",
+        "newPasswordHint": "Leer lassen, um das bisherige zu behalten. Ein neues Passwort meldet den Benutzer überall ab.",
+        "role": "Rolle",
+        "roleHint": {
+          "user": "Kann die eigenen Dateien und Freigabelinks nutzen.",
+          "admin": "Kann zusätzlich Benutzer, Anmeldeeinstellungen und alle Freigabelinks verwalten."
+        },
+        "roleSelf": "Deine eigene Administratorrolle kannst du nicht entfernen.",
+        "create": "Benutzer anlegen",
+        "creating": "Wird angelegt …",
+        "saving": "Wird gespeichert …",
+        "errors": {
+          "displayNameRequired": "Gib einen Anzeigenamen ein.",
+          "displayNameTooLong": "Der Anzeigename darf höchstens 100 Zeichen lang sein.",
+          "usernameRequired": "Gib einen Benutzernamen ein.",
+          "folderRequired": "Wähle einen Ordner.",
+          "usernameInvalid": "Dieser Name ist als Ordnername nicht erlaubt. Er darf nicht mit einem Punkt beginnen und keine Zeichen wie / \\ : * ? @ enthalten.",
+          "emailInvalid": "Gib eine gültige E-Mail-Adresse ein oder lass das Feld leer.",
+          "passwordRequired": "Gib ein Passwort ein.",
+          "passwordTooShort": "Das Passwort braucht mindestens {{count}} Zeichen.",
+          "passwordTooLong": "Das Passwort darf höchstens 200 Zeichen lang sein."
+        }
+      }
+    },
+    "detail": {
+      "back": "Zurück zu den Benutzern",
+      "notFound": "Benutzer nicht gefunden",
+      "notFoundBody": "Diesen Benutzer gibt es nicht mehr.",
+      "created": "Angelegt",
+      "sessions": "Browser-Sitzungen",
+      "sessionsHint": "Anmeldungen in der Web-App. Ein Widerruf meldet den Browser spätestens nach wenigen Minuten ab.",
+      "sessionsSelf": "Deine eigenen Anmeldungen. Widerrufst du die Sitzung, die du gerade nutzt, wirst du auch hier abgemeldet.",
+      "revokeAll": "Überall abmelden",
+      "noSessions": "Keine aktiven Sitzungen.",
+      "client": "Browser",
+      "lastActive": "Zuletzt aktiv",
+      "expires": "Läuft ab",
+      "revoke": "Widerrufen",
+      "revokeSessionFor": "Sitzung {{client}} widerrufen",
+      "revoking": "Wird widerrufen …",
+      "devices": "Sync-Geräte",
+      "devicesHint": "Apps, die Dateien mit diesem Konto synchronisieren. Ein widerrufenes Gerät synchronisiert nicht mehr und muss neu verbunden werden.",
+      "noDevices": "Keine verbundenen Geräte.",
+      "device": "Gerät",
+      "app": "App-Version",
+      "lastSeen": "Zuletzt gesehen",
+      "revokeDeviceFor": "Gerät {{name}} widerrufen",
+      "uaOn": "{{browser}} auf {{os}}",
+      "uaUnknown": "Unbekannter Browser",
+      "confirm": {
+        "session": {
+          "title": "Diese Sitzung widerrufen?",
+          "body": "{{client}} wird vom Konto von {{name}} abgemeldet.",
+          "submit": "Sitzung widerrufen",
+          "done": "Sitzung widerrufen"
+        },
+        "allSessions": {
+          "title": "Überall abmelden?",
+          "body": "Alle Browser-Sitzungen von {{name}} enden. Sync-Geräte arbeiten weiter.",
+          "submit": "Überall abmelden",
+          "done": "Alle Sitzungen widerrufen"
+        },
+        "device": {
+          "title": "{{device}} widerrufen?",
+          "body": "{{device}} synchronisiert nicht mehr mit dem Konto von {{name}}. Dateien, die schon auf dem Gerät liegen, bleiben dort.",
+          "submit": "Gerät widerrufen",
+          "done": "Gerät widerrufen"
+        }
+      }
+    },
+    "status": {
+      "title": "Serverstatus",
+      "updated": "Aktualisiert {{time}}",
+      "refresh": "Jetzt aktualisieren",
+      "refreshHint": "Aktualisiert sich alle {{seconds}} Sekunden",
+      "loadError": "Der Status konnte nicht geladen werden",
+      "stale": "Die letzte Aktualisierung ist fehlgeschlagen. Die Werte unten sind eventuell veraltet.",
+      "watcher": "Dateiüberwachung",
+      "watch": {
+        "active": "Aktiv",
+        "scan-only": "Nur Scans",
+        "off": "Aus"
+      },
+      "watchHint": {
+        "active": "Änderungen in /data erscheinen sofort",
+        "scan-only": "Änderungen in /data erscheinen beim nächsten Scan",
+        "off": "Direkte Änderungen in /data werden nicht erkannt"
+      },
+      "lastScan": "Letzter Komplettscan",
+      "noScan": "Noch keiner",
+      "users": "Aktive Benutzer",
+      "usersDisabled_one": "{{count}} deaktiviert",
+      "usersDisabled_other": "{{count}} deaktiviert",
+      "office": "Office-Editor",
+      "officeState": {
+        "off": "Nicht eingerichtet",
+        "unknown": "Noch nicht geprüft",
+        "ok": "Erreichbar",
+        "down": "Nicht erreichbar"
+      },
+      "versions": "Dateiversionen",
+      "versionsHint": "Einschalten mit SYNCLET_VERSIONS=on",
+      "on": "An",
+      "off": "Aus",
+      "server": "Version",
+      "uptime": "Läuft seit {{time}}",
+      "uptimeDays": "{{d}} T {{h}} Std",
+      "uptimeHours": "{{h}} Std {{m}} Min",
+      "uptimeMinutes": "{{m}} Min",
+      "storage": "Speicherplatz",
+      "storageHint": "Freier Platz auf den Volumes für Benutzerdateien und für Synclets eigene Daten.",
+      "dataHint": "Benutzerdateien",
+      "metaHint": "Vorschauen, Papierkorb, Versionen, Uploads",
+      "diskLabel": "Belegung von {{path}}",
+      "diskOf": "{{used}} von {{total}}",
+      "diskFree": "{{used}} von {{total}} belegt, {{free}} frei",
+      "diskUnknown": "Größe nicht verfügbar",
+      "metaBreakdown": "Synclet-Daten auf /meta",
+      "meta": {
+        "derived": "Vorschauen und Suchindex",
+        "versions": "Dateiversionen",
+        "trash": "Papierkorb",
+        "uploads": "Unfertige Uploads"
+      },
+      "jobs": "Hintergrundaufgaben",
+      "jobsHint": "Vorschaubilder und Textauszug für die Suche. Fehlgeschlagene Aufgaben werden nicht automatisch wiederholt.",
+      "queue": "Warteschlange",
+      "jobKind": {
+        "thumb": "Vorschaubilder",
+        "text": "Text für die Suche"
+      },
+      "jobState": {
+        "pending": "Wartend",
+        "running": "Läuft",
+        "done": "Fertig",
+        "failed": "Fehlgeschlagen",
+        "unsupported": "Nicht unterstützt"
+      }
+    },
+    "shares": {
+      "title": "Alle Freigabelinks",
+      "loadError": "Die Freigabelinks konnten nicht geladen werden",
+      "owner": "Besitzer",
+      "allUsers": "Alle Benutzer",
+      "none": {
+        "active": "Keine aktiven Links",
+        "expired": "Keine abgelaufenen Links",
+        "all": "Keine Links"
+      },
+      "noneBody": "Links erscheinen hier, sobald jemand eine Datei oder einen Ordner teilt.",
+      "noneForUser": "Dieser Benutzer hat keine Links mit diesem Status.",
+      "revoked": "Widerrufen",
+      "revokedOn": "Widerrufen am {{date}}",
+      "revokeFor": "Link zu {{name}} von {{owner}} widerrufen",
+      "revokeBody": "Der Link zu „{{name}}“, geteilt von {{owner}}, funktioniert sofort nicht mehr. Das lässt sich nicht rückgängig machen."
+    },
+    "sso": {
+      "title": "Anmeldung",
+      "loadError": "Die Anmeldeeinstellungen konnten nicht geladen werden",
+      "saved": "Anmeldeeinstellungen gespeichert",
+      "save": "Änderungen speichern",
+      "saving": "Wird gespeichert …",
+      "discard": "Verwerfen",
+      "unsaved": "Ungespeicherte Änderungen",
+      "upToDate": "Alles gespeichert",
+      "emergency": {
+        "title": "Notfallmodus ist aktiv",
+        "body": "SYNCLET_SSO_EMERGENCY=1 ist gesetzt: Single Sign-on ist ausgeschaltet und alle können sich mit Passwort anmelden. Korrigiere die Einstellungen unten, entferne dann die Variable und starte den Server neu."
+      },
+      "password": {
+        "title": "Anmeldung mit Passwort",
+        "hint": "Administratoren können sich immer mit ihrem Passwort anmelden, auch wenn das hier aus ist (unter /login?local=1).",
+        "forUsers": "Passwort-Anmeldung für Benutzer erlauben",
+        "forUsersHint": "Ausschalten, damit sich Benutzer nur noch per Single Sign-on anmelden."
+      },
+      "oidc": {
+        "title": "OpenID Connect",
+        "hint": "Single Sign-on mit einem Identity Provider wie Authentik, Keycloak, Authelia oder Microsoft Entra ID.",
+        "enabled": "Mit OpenID Connect anmelden",
+        "enabledHint": "Zeigt einen Anmeldeknopf auf der Login-Seite. Konten werden bei der ersten Anmeldung angelegt.",
+        "noPublicUrl": "Braucht SYNCLET_PUBLIC_URL auf dem Server für die Redirect-URI.",
+        "redirectUri": "Redirect-URI",
+        "redirectHint": "Trage diese Adresse beim Identity Provider als Redirect- bzw. Callback-URI des Synclet-Clients ein.",
+        "redirectMissing": "Keine Redirect-URI: Setze SYNCLET_PUBLIC_URL auf die Adresse, unter der Synclet erreichbar ist (z. B. https://files.example.com), und starte den Server neu. Bis dahin lässt sich OpenID Connect nicht einschalten.",
+        "redirectCopied": "Redirect-URI kopiert",
+        "redirectCopyManual": "Die Adresse konnte nicht automatisch kopiert werden. Sie ist markiert: Drücke Strg+C (⌘C auf dem Mac).",
+        "copyRedirect": "Redirect-URI kopieren",
+        "issuer": "Issuer-URL",
+        "issuerHint": "Die Basisadresse des Providers; Synclet liest davon /.well-known/openid-configuration.",
+        "test": "Verbindung testen",
+        "testing": "Wird getestet …",
+        "testOk": "Verbunden. Provider {{issuer}} gefunden",
+        "testFailed": "Provider nicht erreichbar: {{error}}",
+        "clientId": "Client-ID",
+        "clientSecret": "Client-Secret",
+        "secretSet": "Gesetzt",
+        "secretReplace": "Ersetzen",
+        "secretRemove": "Entfernen",
+        "secretUndo": "Secret behalten",
+        "secretWillRemove": "Wird beim Speichern entfernt",
+        "secretKeepHint": "Verschlüsselt gespeichert und nie wieder angezeigt.",
+        "secretReplaceHint": "Das neue Secret ersetzt beim Speichern das gespeicherte.",
+        "secretRemoveHint": "Nur für öffentliche Clients ohne Secret.",
+        "secretHint": "Leer lassen für öffentliche Clients. Wird verschlüsselt gespeichert und nie wieder angezeigt.",
+        "secretPlaceholder": "Client-Secret",
+        "secretNewPlaceholder": "Neues Client-Secret",
+        "scopes": "Scopes",
+        "scopesHint": "Durch Leerzeichen getrennt; openid muss dabei sein.",
+        "buttonLabel": "Beschriftung des Knopfs",
+        "buttonLabelHint": "Text des Anmeldeknopfs auf der Login-Seite.",
+        "usernameClaim": "Claim für den Benutzernamen",
+        "usernameClaimHint": "Wird zum Benutzer- und Ordnernamen neuer Konten.",
+        "groupsClaim": "Claim für Gruppen",
+        "groupsClaimHint": "Claim, der die Gruppen des Benutzers enthält.",
+        "linkByEmail": "Bestehende Konten per E-Mail verknüpfen",
+        "linkByEmailHint": "Eine erste Anmeldung mit einer bestätigten E-Mail-Adresse, die zu einem lokalen Konto passt, meldet in diesem Konto an.",
+        "linkByEmailWarning": "Schalte das nur ein, wenn du dem Identity Provider bei der Bestätigung von E-Mail-Adressen vertraust. Wer dort eine passende, bestätigte Adresse bekommt, übernimmt das Synclet-Konto mit dieser Adresse, auch Administratorkonten.",
+        "copy": "Kopieren",
+        "copied": "Kopiert"
+      },
+      "forward": {
+        "title": "Auth-Proxy (Forward-Auth)",
+        "hint": "Ein Reverse Proxy vor Synclet meldet Benutzer an (z. B. Authelia, Authentik-Outpost, oauth2-proxy) und übergibt den Benutzer in Request-Headern.",
+        "warningTitle": "Nur hinter einem Proxy, der diese Header entfernt",
+        "warning": "Synclet vertraut den Headern unten, wenn sie von den vertrauenswürdigen Proxy-Adressen kommen. Dein Proxy muss diese Header aus jeder eingehenden Client-Anfrage entfernen und selbst setzen. Sonst kann sich jeder als beliebiger Benutzer anmelden, auch als Administrator, indem er den Header mitschickt.",
+        "enabled": "Über den Auth-Proxy anmelden",
+        "enabledHint": "Wer mit dem Benutzer-Header von einem vertrauenswürdigen Proxy kommt, wird automatisch angemeldet.",
+        "trustedProxies": "Vertrauenswürdige Proxy-Adressen",
+        "trustedProxiesHint": "Nur die Adresse, von der Synclet die Header direkt erhält – in der mitgelieferten Installation die feste IP des Caddy-Containers, z. B. 172.30.0.10/32 (siehe README), nicht das ganze Docker-Netz. Header von allen anderen Adressen werden ignoriert.",
+        "userHeader": "Header für den Benutzer",
+        "emailHeader": "Header für die E-Mail",
+        "nameHeader": "Header für den Namen",
+        "groupsHeader": "Header für Gruppen"
+      },
+      "groups": {
+        "allowed": "Erlaubte Gruppen",
+        "allowedHint": "Nur Mitglieder dieser Gruppen können sich anmelden. Leer: alle. Wer aus einer Gruppe entfernt wird, kann sich nur nicht mehr neu anmelden; um den Zugriff sofort zu beenden, deaktiviere den Benutzer.",
+        "emptyWarning": "Keine erlaubten Gruppen: Jede Person mit einem Konto bei diesem Identitätsanbieter kann sich anmelden und bekommt ein Synclet-Konto mit eigenem Ordner. Bei einem öffentlichen Anbieter (Google, Microsoft, GitLab.com, ...) ist das jeder im Internet. Trage mindestens eine erlaubte Gruppe ein, wenn du das nicht willst.",
+        "admin": "Administratorgruppen",
+        "adminHint": "Mitglieder werden Administratoren, alle anderen bei der nächsten Anmeldung Benutzer.",
+        "placeholder": "Gruppe eingeben, Enter drücken"
+      },
+      "lockout": {
+        "title": "Ausgesperrt?",
+        "emergency": "Wenn eine kaputte Einstellung alle von der Anmeldung abhält, starte den Server mit dieser Umgebungsvariable. Sie schaltet Single Sign-on aus und erlaubt allen die Anmeldung mit Passwort:",
+        "reset": "Wenn kein Administrator ein Passwort kennt, setze auf dem Server ein neues. Ohne Passwort über die Standardeingabe wird ein zufälliges ausgegeben:",
+        "local": "Administratoren mit Passwort können immer das Passwortformular unter /login?local=1 nutzen."
+      },
+      "errors": {
+        "issuerUrl": "Gib eine vollständige URL ein, die mit https:// beginnt.",
+        "issuerRequired": "OpenID Connect braucht eine Issuer-URL.",
+        "clientIdRequired": "OpenID Connect braucht eine Client-ID.",
+        "secretRequired": "Gib das neue Secret ein oder brich das Ersetzen ab.",
+        "publicUrlMissing": "OpenID Connect braucht SYNCLET_PUBLIC_URL auf dem Server. Setze die Variable und starte neu oder schalte OpenID Connect aus.",
+        "scopesOpenid": "Die Scopes müssen openid enthalten.",
+        "required": "Dieses Feld darf nicht leer sein.",
+        "tooLong": "Höchstens 60 Zeichen.",
+        "claim": "Gib einen Claim-Namen ohne Leerzeichen ein.",
+        "header": "Nur Buchstaben, Ziffern und Bindestriche.",
+        "cidr": "„{{value}}“ ist keine IP-Adresse und kein CIDR-Bereich.",
+        "proxyRequired": "Trage mindestens eine vertrauenswürdige Proxy-Adresse ein, bevor du den Auth-Proxy einschaltest."
+      }
+    }
   }
 }

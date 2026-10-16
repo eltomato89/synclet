@@ -14,6 +14,7 @@ import { JournalService } from '../journal/journal.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TrashService } from '../trash/trash.service';
 import { TusService } from '../uploads/tus';
+import { VersionsService } from '../versions/versions.service';
 import { IndexerService } from './indexer.service';
 import { WatcherService } from './watcher.service';
 
@@ -37,6 +38,7 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     private readonly trash: TrashService,
     private readonly uploads: TusService,
     private readonly derivativesGc: DerivativesGc,
+    private readonly versions: VersionsService,
     events: AppEvents,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {
@@ -142,6 +144,9 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     await this.prisma.session.deleteMany({ where: { OR: [{ expiresAt: { lt: sessionCutoff } }, { revokedAt: { lt: sessionCutoff } }] } });
     // Trash entries past their retention (files in /meta/trash + rows).
     await this.trash.expire();
+    // File versions: retention buckets, SYNCLET_VERSIONS_MAX_BYTES, versions of items gone for good.
+    const pruned = await this.versions.prune().catch((e) => { this.log.warn(`version prune failed: ${(e as Error).message}`); return null; });
+    if (pruned && (pruned.orphaned || pruned.expired || pruned.evicted)) this.log.log(`versions pruned: ${JSON.stringify(pruned)}`);
     // Abandoned resumable uploads (tus parts in /meta/uploads older than 24 h).
     const expired = await this.uploads.expire().catch((e) => { this.log.warn(`upload expiry failed: ${(e as Error).message}`); return 0; });
     if (expired) this.log.log(`removed ${expired} abandoned upload(s)`);
