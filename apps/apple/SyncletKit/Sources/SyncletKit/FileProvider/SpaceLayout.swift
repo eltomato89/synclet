@@ -138,11 +138,9 @@ public struct SpaceLayout: Sendable, Hashable {
 
     // MARK: Change feeds
 
-    /// Spaces fed by the user's change journal (`GET /changes`). Phase 2: the personal
-    /// space; other kinds get their own feed in a later phase and are enumerated on demand.
-    public var feedSpaces: [SyncSpace] {
-        spaces.filter { $0.kind == .personal }
-    }
+    /// Spaces with a change feed (`GET /changes?space=<id>`): all of them (Phase 4). Each
+    /// keeps its own cursor in the sync anchor.
+    public var feedSpaces: [SyncSpace] { spaces }
 
     /// Server ids of all space roots (never reported as ordinary items).
     public var rootIds: Set<String> { Set(spaces.map(\.rootId)) }

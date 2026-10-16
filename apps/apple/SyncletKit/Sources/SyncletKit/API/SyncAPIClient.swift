@@ -135,18 +135,30 @@ public final class SyncAPIClient: Sendable {
 
     // MARK: - Changes (§5)
 
-    /// `GET /cursor` – current change cursor.
-    public func cursor() async throws -> String {
-        let result: SyncCursor = try await send(.get, sync(["cursor"]))
+    /// Space id of the personal space (`GET /cursor` and `/changes` without `space`).
+    public static let personalSpaceID = "personal"
+
+    /// `GET /cursor?space=<id>` – current change cursor of a space. The personal space sends
+    /// no `space` (the request of servers before Phase 4).
+    public func cursor(space: String = SyncAPIClient.personalSpaceID) async throws -> String {
+        let result: SyncCursor = try await send(.get, sync(["cursor"]), query: [("space", Self.spaceQuery(space))])
         return result.cursor
     }
 
-    /// `GET /changes` – changes since `cursor` (throws ``SyncAPIError/cursorExpired`` on 410).
-    public func changes(since cursor: String, limit: Int? = nil) async throws -> SyncChangesPage {
+    /// `GET /changes?space=<id>` – changes of a space since `cursor` (throws
+    /// ``SyncAPIError/cursorExpired`` on 410). The personal space sends no `space`.
+    public func changes(space: String = SyncAPIClient.personalSpaceID, since cursor: String,
+                        limit: Int? = nil) async throws -> SyncChangesPage {
         try await send(.get, sync(["changes"]), query: [
+            ("space", Self.spaceQuery(space)),
             ("cursor", cursor),
             ("limit", limit.map(String.init)),
         ])
+    }
+
+    /// `nil` (no query item) for the personal space.
+    private static func spaceQuery(_ space: String) -> String? {
+        space == personalSpaceID ? nil : space
     }
 
     // MARK: - Content (§6)

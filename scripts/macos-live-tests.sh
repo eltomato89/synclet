@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Runs the opt-in live tests of SyncletKit (apps/apple/SyncletKit: LiveAPITests, LiveTransferTests,
-# LiveThumbnailTests, EventStreamLiveTests) against a fresh, throwaway stack: empty DB and data
-# folder, its own compose project, ports and image tags, the derivatives worker running (thumbnails).
-# The administrator is created through the setup API; a device token for the SSE test is registered
-# with its access token. The trap removes only this run's project, volumes, images and work folder.
+# LiveThumbnailTests, EventStreamLiveTests, LiveSpacesTests) against a fresh, throwaway stack: empty
+# DB and data folder, its own compose project, ports and image tags, the derivatives worker running
+# (thumbnails). The administrator is created through the setup API; a device token for the SSE and
+# spaces tests is registered with its access token. A team folder `/teams/Test` is seeded and the
+# administrator made a writing member through the admin API (a server without spaces skips this,
+# and LiveSpacesTests skip themselves). The trap removes only this run's project, volumes, images and
+# work folder.
 #
 #   scripts/macos-live-tests.sh                 # all live test classes (swift test --filter Live)
 #   scripts/macos-live-tests.sh LiveAPITests    # another `swift test --filter` expression
@@ -39,10 +42,12 @@ USER_NAME=maclive
 PASSWORD='correct horse battery staple'
 WORK=$(mktemp -d)
 DATA_DIR=${SYNCLET_MACLIVE_DATA_DIR:-$WORK/files}
-mkdir -p "$DATA_DIR" "$WORK/meta"
+TEAM_NAME=Test
+mkdir -p "$DATA_DIR" "$WORK/meta" "$WORK/teams/$TEAM_NAME"
 cat > "$WORK/.env" <<ENV
 SYNCLET_DATA=$DATA_DIR
 SYNCLET_META=$WORK/meta
+SYNCLET_TEAMS=$WORK/teams
 PUID=$(id -u)
 PGID=$(id -g)
 POSTGRES_PASSWORD=maclive
@@ -86,13 +91,34 @@ curl -fs "localhost:$PORT/api/health" >/dev/null || fail "stack did not become h
 [ -n "$("${DC[@]}" ps -q worker)" ] || fail "derivatives worker is not running"
 
 B=http://localhost:$PORT/api
-ACCESS=$(curl -fsS -XPOST "$B/setup" -H 'content-type: application/json' \
-  -d "{\"username\":\"$USER_NAME\",\"displayName\":\"macOS Live\",\"password\":\"$PASSWORD\"}" | jq -r .accessToken)
+SETUP=$(curl -fsS -XPOST "$B/setup" -H 'content-type: application/json' \
+  -d "{\"username\":\"$USER_NAME\",\"displayName\":\"macOS Live\",\"password\":\"$PASSWORD\"}")
+ACCESS=$(jq -r .accessToken <<<"$SETUP")
+USER_ID=$(jq -r .user.id <<<"$SETUP")
 [ -n "$ACCESS" ] && [ "$ACCESS" != null ] || fail "setup returned no access token"
 # A device token for EventStreamLiveTests (it takes a ready token instead of signing in).
 DEVICE_TOKEN=$(curl -fsS -XPOST "$B/sync/v1/devices" -H "authorization: Bearer $ACCESS" -H 'content-type: application/json' \
   -d '{"name":"macos-live-tests SSE","platform":"macos","appVersion":"0.1.0"}' | jq -r .token)
 [ -n "$DEVICE_TOKEN" ] && [ "$DEVICE_TOKEN" != null ] || fail "device registration returned no token"
+
+# Team folder (Phase 4): discovery finds /teams/Test; the administrator becomes a writing member.
+# A server without the admin spaces API (404) only skips this; LiveSpacesTests then skip too.
+TEAM_ID=
+if [ "$(curl -s -o /dev/null -w '%{http_code}' "$B/admin/spaces" -H "authorization: Bearer $ACCESS")" = 200 ]; then
+  for _ in $(seq 1 30); do
+    TEAM_ID=$(curl -fsS "$B/admin/spaces" -H "authorization: Bearer $ACCESS" \
+      | jq -r --arg n "$TEAM_NAME" '[.[] | select(.kind == "team" and .name == $n)][0].id // empty')
+    [ -n "$TEAM_ID" ] && break
+    sleep 1
+  done
+  [ -n "$TEAM_ID" ] || fail "the team folder /teams/$TEAM_NAME was not discovered"
+  curl -fsS -XPATCH "$B/admin/spaces/$TEAM_ID" -H "authorization: Bearer $ACCESS" -H 'content-type: application/json' \
+    -d "{\"members\":[{\"kind\":\"user\",\"id\":\"$USER_ID\",\"role\":\"write\"}]}" >/dev/null \
+    || fail "adding $USER_NAME to the team folder failed"
+  echo "== team folder $TEAM_NAME ($TEAM_ID): $USER_NAME is a writing member"
+else
+  echo "== the server has no admin spaces API: no team folder (LiveSpacesTests skip)"
+fi
 
 if [ "$FILTER" = "--serve" ]; then
   cat <<INFO
@@ -111,5 +137,6 @@ SYNCLET_LIVE_URL="http://localhost:$PORT" \
   SYNCLET_LIVE_USER="$USER_NAME" \
   SYNCLET_LIVE_PASSWORD="$PASSWORD" \
   SYNCLET_LIVE_TOKEN="$DEVICE_TOKEN" \
+  SYNCLET_LIVE_TEAM="$TEAM_NAME" \
   SYNCLET_LIVE_SIZE_MB="${SYNCLET_LIVE_SIZE_MB:-48}" \
   swift test --filter "$FILTER"

@@ -139,6 +139,76 @@ final class PinningModelTests: XCTestCase {
         XCTAssertTrue(content.ensured.isEmpty)   // nothing pinned ⇒ no walk
     }
 
+    static let team = SyncSpace(id: "6f1c", kind: .shared, name: "Marketing", rootId: "r_6f1c", canWrite: true)
+    static let nas = SyncSpace(id: "9a2b", kind: .external, name: "NAS Archiv", rootId: "r_9a2b", canWrite: false)
+
+    /// Children per space root (any host).
+    private func serveSpaceRoots(_ roots: [String: [String]]) {
+        MockURLProtocol.reset { request in
+            for (root, items) in roots where request.path == "/api/sync/v1/items/\(root)/children" {
+                return .json(200, #"{"items":[\#(items.joined(separator: ","))],"nextPageToken":null,"cursor":"1"}"#)
+            }
+            return .json(404, #"{"statusCode":404,"message":"not found","code":"not_found"}"#)
+        }
+    }
+
+    /// Every space of the account is listed (personal, team folders, external storages),
+    /// with its own first-level folders, name and kind.
+    func testListsAllSpacesWithTheirFolders() async throws {
+        let account = try addAccount(host: "a.test", serverId: "srvA", spaces: [.personal(), Self.team, Self.nas])
+        serveSpaceRoots(["root": [Self.folder("d_f", "Fotos")],
+                         "r_6f1c": [Self.folder("d_k", "Kampagnen", parent: "r_6f1c")],
+                         "r_9a2b": [Self.folder("d_a", "Archiv", parent: "r_9a2b")]])
+        let model = makeModel()
+        await model.loadAll()
+
+        let spaces = try XCTUnwrap(model.account(key: account.key)?.spaces)
+        XCTAssertEqual(spaces.map(\.id), ["personal", "6f1c", "9a2b"])
+        XCTAssertEqual(spaces.dropFirst().map(\.title), ["Marketing", "NAS Archiv"])
+        XCTAssertEqual(spaces.map { $0.folders.map(\.name) }, [["Fotos"], ["Kampagnen"], ["Archiv"]])
+        XCTAssertNil(spaces[0].detail)
+        XCTAssertNotNil(spaces[1].detail)
+        XCTAssertNotNil(spaces[2].detail)
+        XCTAssertNotEqual(spaces[1].detail, spaces[2].detail)
+
+        // A team folder is pinned like the personal space (its own pins and containers).
+        await model.setFolder("d_k", pinned: true, key: account.key, space: "6f1c")
+        await model.setWholeSpace(true, key: account.key, space: "9a2b")
+        await model.waitForRefreshes()
+        let store = PinStore(stateDir: harness.manager.accounts.accountDirectory(key: account.key))
+        XCTAssertEqual(store.pins(space: "6f1c").folders, ["d_k"])
+        XCTAssertTrue(store.pins(space: "9a2b").wholeSpace)
+        XCTAssertEqual(model.account(key: account.key)?.pinnedContainers.map(\.rawValue), ["d_k", "space:9a2b"])
+    }
+
+    /// The space list changes (SSE `account`): a new space is listed and its folders load;
+    /// a renamed space shows its new name; a lost space disappears.
+    func testFollowsSpaceChanges() async throws {
+        let account = try addAccount(host: "a.test", serverId: "srvA", spaces: [.personal(), Self.nas])
+        serveSpaceRoots(["root": [Self.folder("d_f", "Fotos")],
+                         "r_6f1c": [Self.folder("d_k", "Kampagnen", parent: "r_6f1c")],
+                         "r_9a2b": [Self.folder("d_a", "Archiv", parent: "r_9a2b")]])
+        let model = makeModel()
+        model.start()
+        await model.loadAll()
+
+        var renamed = Self.nas
+        renamed.name = "NAS"
+        try harness.manager.updateSpaces(key: account.key, spaces: [.personal(), Self.team, renamed])
+        harness.accounts.reload()
+        let loaded = await eventually {
+            model.account(key: account.key)?.spaces.first { $0.id == "6f1c" }?.folders.map(\.name) == ["Kampagnen"]
+        }
+        XCTAssertTrue(loaded)
+        XCTAssertEqual(model.account(key: account.key)?.spaces.map(\.title).dropFirst(), ["Marketing", "NAS"])
+        XCTAssertEqual(model.account(key: account.key)?.spaces.last?.folders.map(\.name), ["Archiv"], "kept")
+
+        try harness.manager.updateSpaces(key: account.key, spaces: [.personal()])
+        harness.accounts.reload()
+        let lost = await eventually { model.account(key: account.key)?.spaces.map(\.id) == ["personal"] }
+        XCTAssertTrue(lost)
+    }
+
     func testFolderToggleWritesTheStorePostsAndSignals() async throws {
         let account = try addAccount(host: "a.test", serverId: "srvA")
         serveRoots(["a.test": [Self.folder("d_f", "Fotos"), Self.folder("d_d", "Docs")]])

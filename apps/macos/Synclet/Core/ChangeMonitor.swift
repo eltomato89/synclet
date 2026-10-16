@@ -13,8 +13,10 @@ import SyncletKit
 /// - `.connected` / `.changes` → signal `.workingSet` (coalesced: at most one per 500 ms).
 /// - Not connected → signal `.workingSet` every 60 s (fallback polling).
 /// - Network path becomes satisfied, or the Mac wakes → reconnect at once and signal.
-/// - On every `.connected` and every 15 min → `GET /account`; changed `spaces` are stored
-///   and `.rootContainer` is signalled.
+/// - On every `.connected`, every `.account` (the user's spaces or rights changed) and every
+///   15 min → `GET /account`; changed `spaces` are stored, the app's account list is
+///   reloaded, and `.rootContainer` plus `.workingSet` are signalled (new spaces' feeds join,
+///   lost spaces are deleted). `.account` signals both even when the spaces look unchanged.
 /// - The server is reachable again → `signalErrorResolved` for `.serverUnreachable` and
 ///   `.insufficientQuota` (``Dependencies/resolveErrors``): once per connection (on `hello`,
 ///   not again for the `/account` refresh it triggers) and after every successful periodic
@@ -53,6 +55,8 @@ final class ChangeMonitor {
         var now: @Sendable () -> Date = { Date() }
         /// Lifts the system's throttling of `.serverUnreachable` / `.insufficientQuota` items.
         var resolveErrors: @Sendable () async -> Void = {}
+        /// The stored spaces changed (the app reloads its account list: pinning settings).
+        var spacesChanged: @MainActor () -> Void = {}
     }
 
     struct Timing {
@@ -200,6 +204,10 @@ final class ChangeMonitor {
         case .changes:
             if state != .connected { setState(.connected) }
             signalWorkingSet()
+        case .account:
+            if state != .connected { setState(.connected) }
+            accountTask?.cancel()
+            accountTask = Task { [weak self] in await self?.refreshAccount(periodic: false, event: true) }
         case .disconnected(let reason):
             Self.log.debug("stream disconnected: \(String(describing: reason), privacy: .public)")
             setState(.offline)
@@ -298,18 +306,24 @@ final class ChangeMonitor {
         Task { await resolve() }
     }
 
-    /// `GET /account`; changed spaces are stored and the root container is signalled. A
-    /// successful periodic refresh also lifts throttled transient errors (the one right
-    /// after `hello` does not: `hello` already did).
-    private func refreshAccount(periodic: Bool) async {
+    /// `GET /account`; changed spaces are stored, the account list is reloaded, and the root
+    /// container and the working set are signalled (`event`: an SSE `account` signals both
+    /// anyway). A successful periodic refresh also lifts throttled transient errors (the one
+    /// right after `hello` does not: `hello` already did).
+    private func refreshAccount(periodic: Bool, event: Bool = false) async {
         do {
             let account = try await dependencies.fetchAccount()
             // Stopped (signed out) or rejected meanwhile: do not touch the account any more.
             guard isRunning, state != .authFailed, !Task.isCancelled else { return }
             if periodic { resolveErrors() }
-            if dependencies.updateSpaces(account.spaces) {
-                Self.log.info("spaces changed: signalling the root container")
+            let changed = dependencies.updateSpaces(account.spaces)
+            if changed {
+                Self.log.info("spaces changed: signalling the root container and the working set")
+                dependencies.spacesChanged()
+            }
+            if changed || event {
                 await dependencies.signal(.rootContainer)
+                signalWorkingSet()
             }
         } catch {
             Self.log.debug("account refresh failed: \(String(describing: error), privacy: .public)")
@@ -333,6 +347,7 @@ extension ChangeMonitor {
     /// keychain, `NWPathMonitor`, `NSWorkspace`).
     static func live(account: StoredAccount, manager: AccountManager, container: URL,
                      finder: FinderIntegrating = SystemFinderIntegration(),
+                     onSpacesChanged: @escaping @MainActor () -> Void = {},
                      onAuthFailure: @escaping @MainActor () -> Void) -> ChangeMonitor {
         let key = account.key
         let key16 = account.key16
@@ -355,7 +370,8 @@ extension ChangeMonitor {
                 onAuthFailure()
             },
             wakeUps: { SystemWakeUps.stream() },
-            resolveErrors: { await finder.resolveTransientErrors(domain: manager.domain(for: key)) }
+            resolveErrors: { await finder.resolveTransientErrors(domain: manager.domain(for: key)) },
+            spacesChanged: onSpacesChanged
         )
         return ChangeMonitor(accountKey: key, dependencies: dependencies)
     }

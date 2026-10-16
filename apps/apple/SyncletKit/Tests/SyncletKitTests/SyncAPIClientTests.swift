@@ -96,6 +96,45 @@ final class SyncAPIClientTests: XCTestCase {
         XCTAssertEqual(requests[1].query["limit"], "50")
     }
 
+    func testPersonalFeedOmitsSpaceAndOtherSpacesSendIt() async throws {
+        MockURLProtocol.reset { request in
+            request.path.hasSuffix("/cursor")
+                ? .json(200, #"{"cursor":"12"}"#)
+                : .json(200, #"{"changes":[],"cursor":"13","hasMore":false}"#)
+        }
+        let client = Fixtures.client()
+        _ = try await client.cursor()
+        _ = try await client.changes(since: "12")
+        _ = try await client.cursor(space: "personal")
+        _ = try await client.cursor(space: "6f1c0d2e-0000-4000-8000-000000000001")
+        _ = try await client.changes(space: "6f1c0d2e-0000-4000-8000-000000000001", since: "40", limit: 10)
+        let requests = MockURLProtocol.requests
+        // `personal` stays the old request (old servers know no `space`).
+        XCTAssertEqual(requests[0...2].map { $0.query["space"] }, [nil, nil, nil])
+        XCTAssertEqual(requests[3].path, "/api/sync/v1/cursor")
+        XCTAssertEqual(requests[3].query["space"], "6f1c0d2e-0000-4000-8000-000000000001")
+        XCTAssertEqual(requests[4].path, "/api/sync/v1/changes")
+        XCTAssertEqual(requests[4].query, ["space": "6f1c0d2e-0000-4000-8000-000000000001", "cursor": "40", "limit": "10"])
+    }
+
+    func testSyncItemSpaceIdIsOptional() throws {
+        let plain = try JSONDecoder().decode(SyncItem.self, from: Data(Fixtures.itemJSON(id: "f_1").utf8))
+        XCTAssertNil(plain.spaceId)
+        var json = Fixtures.itemJSON(id: "f_2", parentId: "r_6f1c")
+        json.removeLast()
+        json += #","spaceId":"6f1c"}"#
+        let item = try JSONDecoder().decode(SyncItem.self, from: Data(json.utf8))
+        XCTAssertEqual(item.spaceId, "6f1c")
+        XCTAssertEqual(try JSONDecoder().decode(SyncItem.self, from: JSONEncoder().encode(item)), item)
+    }
+
+    func testSpaceUnavailableMapsToHTTP503() async {
+        MockURLProtocol.reset { _ in .error(503, "space_unavailable") }
+        await assertThrows(.http(status: 503, code: "space_unavailable", message: "space_unavailable")) {
+            _ = try await Fixtures.client().changes(space: "s1", since: "1")
+        }
+    }
+
     // MARK: Error mapping
 
     func testErrorMappingDeviceRevoked() async {
