@@ -34,7 +34,7 @@ SYNCLET_SITE_ADDRESS=:80
 SYNCLET_SCAN_INTERVAL=${SYNCLET_THROWAWAY_SCAN_INTERVAL:-10}
 SYNCLET_VERSIONS=on
 EOF
-DC=(docker compose -p "$PROJECT" -f "$ROOT/deploy/compose.yml" --env-file "$ENV")
+DC=(docker compose -p "$PROJECT" -f "$ROOT/deploy/compose.yml" -f "$ROOT/deploy/compose.build.yml" --env-file "$ENV")
 STARTED=0
 cleanup() {
   local rc=$?

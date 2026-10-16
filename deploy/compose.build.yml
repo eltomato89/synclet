@@ -1,0 +1,14 @@
+# Build the images from this repository checkout instead of pulling them from GHCR. Use on top of
+# compose.yml (and compose.office.yml, if used):
+#   docker compose -f deploy/compose.yml -f deploy/compose.build.yml --env-file deploy/.env up -d --build
+# Local tags (synclet/*:dev), so a local build never overwrites pulled ghcr.io images.
+services:
+  server:
+    build: { context: .., dockerfile: deploy/Dockerfile.server }
+    image: synclet/server:dev
+  worker:
+    image: synclet/server:dev
+    pull_policy: never # built by the server service; never look it up in a registry
+  caddy:
+    build: { context: .., dockerfile: deploy/Dockerfile.caddy }
+    image: synclet/caddy:dev

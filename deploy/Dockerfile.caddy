@@ -10,6 +10,12 @@ COPY apps/web apps/web
 RUN pnpm --filter @synclet/shared build && pnpm --filter @synclet/web build
 
 FROM caddy:2.11-alpine
+LABEL org.opencontainers.image.title="synclet-web" \
+      org.opencontainers.image.description="Synclet web app behind Caddy (reverse proxy for the Synclet server, automatic HTTPS)" \
+      org.opencontainers.image.source="https://github.com/eltomato89/synclet" \
+      org.opencontainers.image.licenses="MIT"
 COPY deploy/Caddyfile /etc/caddy/Caddyfile
+# Office site: imported by the Caddyfile only with SYNCLET_CADDY_OFFICE=on (set by compose.office.yml).
+COPY deploy/Caddyfile.office /etc/caddy/office/on/office.caddy
 RUN mkdir -p /etc/caddy/conf.d
 COPY --from=web /src/apps/web/dist /srv/web

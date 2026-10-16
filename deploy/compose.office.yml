@@ -1,8 +1,8 @@
 # Optional Euro-Office Document Server (AGPL-3.0, OnlyOffice fork) on its own subdomain, fronted by
-# Caddy. Needs ~4 GB RAM. Use together with compose.yml:
-#   docker compose -f deploy/compose.yml -f deploy/compose.office.yml --env-file deploy/.env up -d --build
-# --build is required: the Caddy image contains the Caddyfile import for the office site, so after
-# upgrading an existing installation rebuild it once.
+# Caddy. Needs ~4 GB RAM. Use together with compose.yml (both files next to each other, no other
+# repository files needed; the office Caddy site is baked into the synclet-web image):
+#   docker compose -f compose.yml -f compose.office.yml up -d
+# From a repository checkout, building the images: add -f compose.build.yml and --build.
 services:
   office:
     image: ghcr.io/euro-office/documentserver:${OFFICE_TAG:-latest}
@@ -35,8 +35,8 @@ services:
       SYNCLET_OFFICE_SITE_ADDRESS: ${SYNCLET_OFFICE_SITE_ADDRESS:?set SYNCLET_OFFICE_SITE_ADDRESS}
       # Added to script-src, frame-src and connect-src (https + wss) of the main site's CSP.
       SYNCLET_OFFICE_PUBLIC_URL: ${SYNCLET_OFFICE_PUBLIC_URL:?set SYNCLET_OFFICE_PUBLIC_URL (browser-facing https URL of the office site)}
-    volumes:
-      - ./Caddyfile.office:/etc/caddy/conf.d/office.caddy:ro
+      # Enables the office site baked into the image (deploy/Caddyfile.office).
+      SYNCLET_CADDY_OFFICE: "on"
     depends_on: [office]
 volumes:
   office-data:

@@ -1,0 +1,169 @@
+name: Container images
+
+# Public multi-arch images on GHCR:
+#   ghcr.io/eltomato89/synclet-server  (deploy/Dockerfile.server; server and worker)
+#   ghcr.io/eltomato89/synclet-web     (deploy/Dockerfile.caddy; Caddy + web app + Caddyfiles)
+# Tag v1.2.3 -> 1.2.3, 1.2, latest. Push to main -> edge, sha-<short>.
+# Each platform is built natively (amd64 on ubuntu-24.04, arm64 on ubuntu-24.04-arm) and pushed by
+# digest; the merge job then creates the multi-arch manifest list with the tags.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*'] # path filters are not evaluated for tag pushes
+    paths:
+      - apps/server/**
+      - apps/web/**
+      - packages/**
+      - deploy/Dockerfile*
+      - deploy/Caddyfile*
+      - deploy/server-entrypoint.sh
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - tsconfig.base.json
+      - .github/workflows/images.yml
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to build (default the selected branch)
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: images-${{ github.ref }}-${{ inputs.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_PREFIX: ghcr.io/eltomato89
+  # Tags and labels, shared by the build and merge jobs (metadata-action, git context so that
+  # workflow_dispatch with a ref input tags what was actually checked out).
+  META_TAGS: |
+    type=semver,pattern={{version}}
+    type=semver,pattern={{major}}.{{minor}}
+    type=edge,branch=main
+    type=sha,prefix=sha-,format=short,enable=${{ github.ref_type != 'tag' }}
+
+jobs:
+  build:
+    name: build ${{ matrix.image }} (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [server, web]
+        arch: [amd64, arm64]
+        include:
+          - image: server
+            dockerfile: deploy/Dockerfile.server
+            description: Synclet server and derivatives worker (self-hosted file sync)
+          - image: web
+            dockerfile: deploy/Dockerfile.caddy
+            description: Synclet web app behind Caddy (reverse proxy for the Synclet server, automatic HTTPS)
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          context: git
+          images: ${{ env.IMAGE_PREFIX }}/synclet-${{ matrix.image }}
+          tags: ${{ env.META_TAGS }}
+          labels: |
+            org.opencontainers.image.title=synclet-${{ matrix.image }}
+            org.opencontainers.image.description=${{ matrix.description }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.licenses=MIT
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/${{ matrix.arch }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=${{ env.IMAGE_PREFIX }}/synclet-${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=synclet-${{ matrix.image }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=synclet-${{ matrix.image }}-${{ matrix.arch }}
+      - name: Export digest
+        run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.image }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: publish ${{ matrix.image }}
+    needs: build
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: server
+            description: Synclet server and derivatives worker (self-hosted file sync)
+          - image: web
+            description: Synclet web app behind Caddy (reverse proxy for the Synclet server, automatic HTTPS)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-${{ matrix.image }}-*
+          merge-multiple: true
+      - id: meta
+        uses: docker/metadata-action@v5
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: index
+        with:
+          context: git
+          images: ${{ env.IMAGE_PREFIX }}/synclet-${{ matrix.image }}
+          tags: ${{ env.META_TAGS }}
+          annotations: |
+            org.opencontainers.image.title=synclet-${{ matrix.image }}
+            org.opencontainers.image.description=${{ matrix.description }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.licenses=MIT
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create manifest list and push
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          IMAGE: ${{ env.IMAGE_PREFIX }}/synclet-${{ matrix.image }}
+        run: |
+          args=()
+          while IFS= read -r tag; do [ -n "$tag" ] && args+=(-t "$tag"); done \
+            < <(jq -r '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          [ "${#args[@]}" -gt 0 ] || { echo "no tags for this ref" >&2; exit 1; }
+          while IFS= read -r ann; do [ -n "$ann" ] && args+=(--annotation "$ann"); done \
+            < <(jq -r '.annotations[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          sources=()
+          for digest in *; do sources+=("$IMAGE@sha256:$digest"); done
+          docker buildx imagetools create "${args[@]}" "${sources[@]}"
+      - name: Inspect
+        run: docker buildx imagetools inspect "${{ env.IMAGE_PREFIX }}/synclet-${{ matrix.image }}:${{ steps.meta.outputs.version }}"

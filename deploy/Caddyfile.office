@@ -1,5 +1,5 @@
-# Euro-Office Document Server site. Only mounted (as /etc/caddy/conf.d/office.caddy) by
-# compose.office.yml. TLS terminates here (domain address) or at an outer proxy (http:// address).
+# Euro-Office Document Server site. Baked into the web image (/etc/caddy/office/on/office.caddy) and
+# only imported when compose.office.yml sets SYNCLET_CADDY_OFFICE=on. TLS terminates here (domain address) or at an outer proxy (http:// address).
 {$SYNCLET_OFFICE_SITE_ADDRESS} {
 	request_body {
 		max_size 0

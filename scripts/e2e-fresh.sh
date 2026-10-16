@@ -36,7 +36,7 @@ E2E_TAG=$TAG
 E2E_OIDC_PORT=$OIDC_PORT
 E2E_FORWARD_PORT=$FORWARD_PORT
 ENV
-FILES=(-f "$ROOT/deploy/compose.yml" -f "$ROOT/e2e/stack/compose.e2e.yml")
+FILES=(-f "$ROOT/deploy/compose.yml" -f "$ROOT/deploy/compose.build.yml" -f "$ROOT/e2e/stack/compose.e2e.yml")
 if [ "$OFFICE" = 1 ]; then
   # The Document Server on its own subdomain of the same Caddy (office.localhost resolves to the
   # loopback address in Chromium), plain http like the rest of the e2e stack.

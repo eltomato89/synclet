@@ -96,7 +96,11 @@
 	header @https Strict-Transport-Security "max-age=31536000"
 }
 
-# Optional extra sites (the Euro-Office Document Server site comes from compose.office.yml, which
-# mounts Caddyfile.office here). A glob that matches nothing is not an error, so the base stack
-# runs unchanged without it.
+# Euro-Office Document Server site (Caddyfile.office, baked into the image as
+# /etc/caddy/office/on/office.caddy). compose.office.yml sets SYNCLET_CADDY_OFFICE=on to enable it;
+# otherwise the glob points at a folder that does not exist, which is not an error.
+import /etc/caddy/office/{$SYNCLET_CADDY_OFFICE:off}/*.caddy
+
+# Optional extra sites of your own (mount *.caddy files into /etc/caddy/conf.d). A glob that
+# matches nothing is not an error, so the base stack runs unchanged without them.
 import /etc/caddy/conf.d/*.caddy

@@ -13,6 +13,10 @@ RUN pnpm --filter @synclet/server deploy --legacy --prod /out && cp -r apps/serv
  && cd /out && /src/apps/server/node_modules/.bin/prisma generate
 
 FROM node:24-bookworm-slim
+LABEL org.opencontainers.image.title="synclet-server" \
+      org.opencontainers.image.description="Synclet server and derivatives worker (self-hosted file sync)" \
+      org.opencontainers.image.source="https://github.com/eltomato89/synclet" \
+      org.opencontainers.image.licenses="MIT"
 RUN apt-get update && apt-get install -y --no-install-recommends openssl ca-certificates tini \
     ffmpeg poppler-utils libheif-examples unzip \
  && rm -rf /var/lib/apt/lists/*

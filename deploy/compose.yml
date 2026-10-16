@@ -1,8 +1,11 @@
+# Synclet. Works standalone: only this file and a filled .env (from .env.example) are needed;
+# the images are pulled from GHCR. Start:  docker compose up -d
+# Update: set SYNCLET_VERSION in .env (or keep latest), then  docker compose pull && docker compose up -d
+# Build the images from a repository checkout instead: add -f compose.build.yml (see there).
 name: synclet
 services:
   server:
-    build: { context: .., dockerfile: deploy/Dockerfile.server }
-    image: synclet/server:dev
+    image: ghcr.io/eltomato89/synclet-server:${SYNCLET_VERSION:-latest}
     user: "${PUID:-1000}:${PGID:-1000}"
     environment:
       DATABASE_URL: postgresql://synclet:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/synclet
@@ -38,7 +41,7 @@ services:
     restart: unless-stopped
   worker:
     # Same image, derivatives worker role: thumbnails, previews, text extraction. Never runs migrations.
-    image: synclet/server:dev
+    image: ghcr.io/eltomato89/synclet-server:${SYNCLET_VERSION:-latest}
     user: "${PUID:-1000}:${PGID:-1000}"
     environment:
       DATABASE_URL: postgresql://synclet:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/synclet
@@ -59,8 +62,8 @@ services:
     stop_grace_period: 150s # a running ffmpeg job may take up to 120 s
     restart: unless-stopped
   caddy:
-    build: { context: .., dockerfile: deploy/Dockerfile.caddy }
-    image: synclet/caddy:dev
+    # Caddy with the built web app and the Caddyfile baked in.
+    image: ghcr.io/eltomato89/synclet-web:${SYNCLET_VERSION:-latest}
     environment:
       SYNCLET_SITE_ADDRESS: ${SYNCLET_SITE_ADDRESS:-:80}
       SYNCLET_TRUSTED_PROXIES: ${SYNCLET_TRUSTED_PROXIES:-}
