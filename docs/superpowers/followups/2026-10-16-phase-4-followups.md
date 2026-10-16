@@ -73,3 +73,8 @@ Stand: 2026-10-16, Branch phase-4 (T1–T10 und die abschließende Fix-Welle). S
   - Keine View-Tests für die Nur-Lesen-UI (deckt der Live-Schritt ab).
   - Die Gleichheit bei Statusänderungen in `updateSpaces` ist ungetestet.
   - Eine `spaceId`, die nicht in `account.spaces` steht, gilt als nur lesbar (alter Server); ein zusätzliches `GET /items/:id` pro Ordner-Laden.
+
+## Re-Review der Final-Fixwelle (offen, bewusst nicht mehr behoben)
+
+- **Uhrzeit-Abweichung beim Hintergrund-Aufräumen:** Das tiefe Aufräumen von Temp-Dateien nach dem Start vergleicht die Startzeit des Servers mit der `ctime` der Datei. Auf NFS/SMB setzt das NAS diese Zeit; geht dessen Uhr nach, kann eine kurz nach dem Start angelegte Temp-Datei als „alt“ gelten und mitten in einem Vorgang gelöscht werden. Folge: ein fehlgeschlagener Request, kein Datenverlust. Abhilfe später: Sicherheitsabstand von einigen Minuten.
+- Kleinigkeiten: ungenutztes `readOnly` in `startupCleanup`; die Warnung des Hintergrund-Aufräumens heißt noch „startup cleanup“.
