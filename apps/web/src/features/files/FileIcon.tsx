@@ -58,3 +58,12 @@ export function FileIcon({ item, className, strokeWidth = 1.75 }: { item: Pick<S
     />
   );
 }
+
+/** Corner badge that keeps a folder's picture (its children's mosaic) recognizable as a folder. */
+export function FolderBadge() {
+  return (
+    <span aria-hidden data-testid="folder-badge" className="absolute bottom-2 left-2 flex size-7 items-center justify-center rounded-md bg-black/55 text-white backdrop-blur-sm">
+      <Folder className="size-3.5 fill-current" strokeWidth={0} />
+    </span>
+  );
+}

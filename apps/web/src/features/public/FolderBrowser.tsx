@@ -5,7 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
-import { FileIcon, fileKind, kindStyle } from '@/features/files/FileIcon';
+import { FileIcon, fileKind, FolderBadge, kindStyle } from '@/features/files/FileIcon';
 import { formatBytes, formatDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { shareUrls } from './api';
@@ -23,15 +23,19 @@ export function useViewMode(): [ViewMode, (v: ViewMode) => void] {
   return [view, (v) => { setView(v); try { localStorage.setItem(VIEW_KEY, v); } catch { /* private mode */ } }];
 }
 
-/** Thumbnail of a file when the server has one; the tinted file-type icon otherwise or on error. */
-function Thumb({ token, entry, size, className, iconClassName }: {
-  token: string; entry: PublicShareEntry; size: 256; className?: string; iconClassName?: string;
+/**
+ * Thumbnail of a file when the server has one (with `folders`, also a folder's mosaic of its
+ * children's thumbnails); the tinted file-type icon otherwise or on error.
+ */
+function Thumb({ token, entry, size, className, iconClassName, folders = false }: {
+  token: string; entry: PublicShareEntry; size: 256; className?: string; iconClassName?: string; folders?: boolean;
 }) {
   const [failed, setFailed] = useState(false);
   const kind = fileKind(entry);
-  if (entry.type === 'file' && entry.hasThumbnail && !failed) {
+  const folder = entry.type === 'folder';
+  if ((!folder || folders) && entry.hasThumbnail && !failed) {
     return (
-      <span className={cn('overflow-hidden bg-muted', className)}>
+      <span className={cn('relative overflow-hidden', !folder && 'bg-muted', className)}>
         <img
           src={shareUrls(token).thumbnail(entry.id, size)}
           alt=""
@@ -41,6 +45,7 @@ function Thumb({ token, entry, size, className, iconClassName }: {
           onError={() => setFailed(true)}
           className="size-full object-cover"
         />
+        {folder && <FolderBadge />}
       </span>
     );
   }
@@ -138,7 +143,7 @@ function GridView({ token, items, allowDownload, onOpen }: ItemsProps) {
             onClick={() => onOpen(it)}
             className={cn('flex w-full flex-col rounded-xl border border-transparent p-1.5 text-left transition-colors duration-100 hover:bg-accent/70 outline-none focus-visible:ring-3 focus-visible:ring-ring/50')}
           >
-            <Thumb token={token} entry={it} size={256} className="aspect-[4/3] w-full rounded-lg" iconClassName="size-12" />
+            <Thumb token={token} entry={it} size={256} folders className="aspect-[4/3] w-full rounded-lg" iconClassName="size-12" />
             <span className="min-w-0 px-1 pt-2 pb-0.5">
               <span className="block truncate text-sm font-medium" title={it.name}>{it.name}</span>
               <span className="block truncate text-xs text-muted-foreground tabular-nums">

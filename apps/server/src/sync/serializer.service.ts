@@ -4,6 +4,7 @@ import type { SyncItem } from '@synclet/shared';
 import { lookup } from 'mime-types';
 import { createHash } from 'node:crypto';
 import { assignDisplayNames } from '../common/names';
+import { chooseFolderThumbs } from '../derivatives/folder-thumbnails';
 import { codeLanguage, previewKind } from '../derivatives/preview-kind';
 import type { IndexUser } from '../common/types';
 import { itemEtag } from '../files/files.service';
@@ -106,10 +107,12 @@ export class SerializerService {
     const thumbs = new Set(shas.length
       ? (await this.prisma.derivativeJob.findMany({ where: { sha: { in: shas }, kind: 'thumb', status: 'done' }, select: { sha: true } })).map((j) => j.sha)
       : []);
-    return rows.map((r) => this.one(r, display.get(r.id) ?? r.name, r.contentHash !== null && thumbs.has(r.contentHash), rootId, view));
+    // And which folders have a mosaic of their children's thumbnails (folder-thumbnails.ts).
+    const folderThumbs = await chooseFolderThumbs(this.prisma, space.id, rows.filter((r) => r.type === 'folder').map((r) => r.id));
+    return rows.map((r) => this.one(r, display.get(r.id) ?? r.name, r.contentHash !== null && thumbs.has(r.contentHash), rootId, view, folderThumbs.get(r.id)?.key));
   }
 
-  private one(r: Item, name: string, thumbnail: boolean, rootId: string, view?: ItemView): SyncItem {
+  private one(r: Item, name: string, thumbnail: boolean, rootId: string, view?: ItemView, folderThumbKey?: string): SyncItem {
     const isFile = r.type === 'file';
     const mime = isFile ? mimeFor(r.name) : null;
     const language = isFile ? codeLanguage(r.name) : undefined;
@@ -129,6 +132,8 @@ export class SerializerService {
       documentId: isFile ? toSyncId(r) : null,
       capabilities: view?.role === 'read' ? READ_ONLY_CAPS : { ...CAPS, addChildren: !isFile },
       ...(isFile ? { preview: { kind, thumbnail, ...(kind === 'code' && language ? { language } : {}) } } : {}),
+      // Folders: only when a mosaic exists (GET thumbnail?composite=1); the key changes with it.
+      ...(!isFile && folderThumbKey ? { preview: { kind: 'none' as const, thumbnail: true, thumbnailKey: folderThumbKey } } : {}),
       ...(view ? { spaceId: view.apiSpaceId } : {}),
     };
   }

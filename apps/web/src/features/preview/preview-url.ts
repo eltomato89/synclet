@@ -56,9 +56,14 @@ export function peekPreviewToken(item: Pick<SyncItem, 'id' | 'etag'>, now = Date
   return hit && hit.key === cacheKey(item) && now - hit.at < PREVIEW_TOKEN_CACHE_MS ? hit.promise : null;
 }
 
-/** Thumbnail URL for a token. `v` busts the browser cache when the file changes. */
-export function thumbnailUrlFor(item: Pick<SyncItem, 'id' | 'etag'>, token: string, size: 256 | 1024): string {
-  return `/api/sync/v1/items/${encodeURIComponent(item.id)}/thumbnail?size=${size}&v=${encodeURIComponent(item.etag)}&dt=${encodeURIComponent(token)}`;
+/**
+ * Thumbnail URL for a token. `v` busts the browser cache when the file changes; a folder's
+ * mosaic (`composite=1`) changes with its children, which its `preview.thumbnailKey` tracks.
+ */
+export function thumbnailUrlFor(item: Pick<SyncItem, 'id' | 'etag'> & Partial<Pick<SyncItem, 'type' | 'preview'>>, token: string, size: 256 | 1024): string {
+  const folder = item.type === 'folder';
+  const v = folder ? item.preview?.thumbnailKey ?? item.etag : item.etag;
+  return `/api/sync/v1/items/${encodeURIComponent(item.id)}/thumbnail?size=${size}${folder ? '&composite=1' : ''}&v=${encodeURIComponent(v)}&dt=${encodeURIComponent(token)}`;
 }
 
 /** For tests. */

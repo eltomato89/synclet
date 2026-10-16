@@ -2,6 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { DerivedStore } from './derived-store';
 
+/** Folder mosaics not served for this long are removed (they are recreated on demand). */
+export const FOLDER_THUMB_TTL_MS = 30 * 24 * 3600_000;
+
 const BATCH = 500;
 /** `done` thumbnail jobs whose files are checked per maintenance run (random sample). */
 const THUMB_SAMPLE = 500;
@@ -80,8 +83,9 @@ export class DerivativesGc {
    * Removes finished job rows of dead hashes, extracted text (ItemText) of dead hashes,
    * unreferenced derivative dirs and stale temp files; then requeues a sample of `done`
    * thumbnail jobs whose files are missing (self-healing after `/meta/derived` was deleted).
+   * Folder mosaics that were not served for FOLDER_THUMB_TTL_MS are removed as well.
    */
-  async run(): Promise<{ dirs: number; jobs: number; texts: number; requeued: number }> {
+  async run(): Promise<{ dirs: number; jobs: number; texts: number; requeued: number; folders: number }> {
     const offline = await this.offlineShas();
     // Job rows first: a finished row for a dead hash would otherwise claim `thumbnail: true`
     // (and block re-enqueueing) if the same content is uploaded again after its files are gone.
@@ -125,6 +129,7 @@ export class DerivativesGc {
     }
     const dirs = await this.store.gc((batch) => this.liveShas(batch, offline), BATCH);
     const requeued = await this.requeueMissingThumbs();
-    return { dirs, jobs, texts, requeued };
+    const folders = await this.store.gcFolderThumbs(FOLDER_THUMB_TTL_MS);
+    return { dirs, jobs, texts, requeued, folders };
   }
 }

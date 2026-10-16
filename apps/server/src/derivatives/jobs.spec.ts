@@ -380,7 +380,7 @@ describe('derivative worker (DB)', () => {
       await utimes(staleTmp, old, old);
 
       const res = await ctx.app.get(DerivativesGc).run();
-      expect(res).toEqual({ dirs: 2, jobs: 3, texts: 2, requeued: 0 });
+      expect(res).toEqual({ dirs: 2, jobs: 3, texts: 2, requeued: 0, folders: 0 });
       expect((await ctx.prisma.itemText.findMany()).map((t) => t.sha).sort()).toEqual([live.contentHash!, trashed, inFlight].sort());
       for (const s of [live.contentHash!, trashed, inFlight]) expect(await store.has(store.pathFor(s, 'thumb', 256))).toBe(true);
       for (const s of [dead, oldFormat]) expect(await store.has(store.pathFor(s, 'thumb', 256))).toBe(false);

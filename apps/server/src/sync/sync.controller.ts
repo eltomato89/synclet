@@ -15,6 +15,7 @@ import type { AuthUser, IndexSpace } from '../common/types';
 import { ZodPipe } from '../common/zod.pipe';
 import { DerivativesGc } from '../derivatives/derivatives-gc';
 import { DerivedStore } from '../derivatives/derived-store';
+import { FolderThumbnails } from '../derivatives/folder-thumbnails';
 import { previewKind } from '../derivatives/preview-kind';
 import { decodeText, readPrefix, TextEncodingName } from '../derivatives/text-extract';
 import { FilesService, itemEtag, OnConflict } from '../files/files.service';
@@ -57,6 +58,7 @@ export class SyncController {
     @Inject(APP_CONFIG) private readonly config: AppConfig,
     private readonly access: SpaceAccess,
     private readonly resolver: ItemResolver,
+    private readonly folderThumbs: FolderThumbnails,
   ) {}
 
   /**
@@ -70,6 +72,13 @@ export class SyncController {
   private async resolveFile(user: AuthUser, rawId: string, need: Role): Promise<Resolved & { item: Item }> {
     const r = await this.resolve(user, rawId, need);
     if (!r.item || r.item.type !== 'file') throw new SyncError('invalid_request', 'not a file');
+    return r as Resolved & { item: Item };
+  }
+
+  /** A file or folder (not a space root). */
+  private async resolveItem(user: AuthUser, rawId: string, need: Role): Promise<Resolved & { item: Item }> {
+    const r = await this.resolve(user, rawId, need);
+    if (!r.item) throw new SyncError('invalid_request', 'not a file or folder');
     return r as Resolved & { item: Item };
   }
 
@@ -205,14 +214,15 @@ export class SyncController {
   @Post('items/:id/download-token')
   async downloadToken(@CurrentUser() user: AuthUser, @Param('id') id: string, @Query('purpose') purpose?: string) {
     if (purpose !== undefined && purpose !== 'download' && purpose !== 'preview') throw new SyncError('invalid_request', 'invalid purpose');
-    const { space, item: row } = await this.resolveFile(user, id, 'read');
-    const syncId = toSyncId(row);
     const preview = purpose === 'preview';
+    // Folders: preview tokens only, for their thumbnail (a mosaic of the children's thumbnails).
+    const { space, item: row } = preview ? await this.resolveItem(user, id, 'read') : await this.resolveFile(user, id, 'read');
+    const syncId = toSyncId(row);
     const ttl = preview ? PREVIEW_TOKEN_TTL_S : DOWNLOAD_TOKEN_TTL_S;
     const dt = await this.auth.signDownloadToken(user.id, syncId, ttl, space.id);
     const query = `${preview ? '' : 'download=1&'}dt=${encodeURIComponent(dt)}`;
     return {
-      url: `/api/sync/v1/items/${syncId}/content?${query}`,
+      url: row.type === 'folder' ? `/api/sync/v1/items/${syncId}/thumbnail?composite=1&${query}` : `/api/sync/v1/items/${syncId}/content?${query}`,
       token: dt,
       expiresAt: new Date(Date.now() + ttl * 1000).toISOString(),
     };
@@ -232,29 +242,41 @@ export class SyncController {
 
   /**
    * Thumbnail (always re-encoded webp, never the original bytes – an SVG is only ever served
-   * rasterized). 404 until the worker has produced it.
+   * rasterized). 404 until the worker has produced it. Folders, with `composite=1` only (sync
+   * clients asking for every item keep getting 400): a mosaic of the children's thumbnails,
+   * 404 when none of them has one.
    */
   @Get('items/:id/thumbnail')
   @AllowDownloadToken()
-  async thumbnail(@CurrentUser() user: AuthUser, @Param('id') id: string, @Query('size') sizeRaw: string | undefined, @Req() req: FastifyRequest, @Res() reply: FastifyReply) {
+  async thumbnail(@CurrentUser() user: AuthUser, @Param('id') id: string, @Query('size') sizeRaw: string | undefined, @Query('composite') composite: string | undefined, @Req() req: FastifyRequest, @Res() reply: FastifyReply) {
     const size = sizeRaw === undefined || sizeRaw === '256' ? 256 : sizeRaw === '1024' ? 1024 : null;
     if (size === null) throw new SyncError('invalid_request', 'size must be 256 or 1024');
-    const { space, item: row } = await this.resolveFile(user, id, 'read');
+    const { space, item: row } = composite === '1' ? await this.resolveItem(user, id, 'read') : await this.resolveFile(user, id, 'read');
     this.checkDownloadSpace(user, space);
+    if (row.type === 'folder') {
+      const mosaic = await this.folderThumbs.thumbnail(space.id, row.id, size);
+      if (!mosaic) throw new SyncError('not_found', 'no thumbnail');
+      // The picture behind this URL changes with the children: revalidated on every use.
+      return this.sendThumb(req, reply, mosaic.path, `${mosaic.key}-${size}`, 'private, no-cache');
+    }
     const sha = row.contentHash;
     if (!sha) throw new SyncError('not_found', 'no thumbnail');
     const job = await this.prisma.derivativeJob.findUnique({ where: { sha_kind: { sha, kind: 'thumb' } }, select: { status: true } });
     if (job?.status !== 'done') throw new SyncError('not_found', 'no thumbnail');
-    const fh = await open(this.derived.pathFor(sha, 'thumb', size), constants.O_RDONLY | constants.O_NOFOLLOW)
+    return this.sendThumb(req, reply, this.derived.pathFor(sha, 'thumb', size), `${sha}-${size}`, 'private, max-age=31536000, immutable',
+      () => this.gc.requeueThumb(sha)); // derived files lost: regenerate
+  }
+
+  private async sendThumb(req: FastifyRequest, reply: FastifyReply, file: string, tag: string, cacheControl: string, onMissing?: () => Promise<unknown>) {
+    const fh = await open(file, constants.O_RDONLY | constants.O_NOFOLLOW)
       .catch(async (e: NodeJS.ErrnoException) => {
-        if (e.code === 'ENOENT') await this.gc.requeueThumb(sha); // derived files lost: regenerate
+        if (e.code === 'ENOENT') await onMissing?.();
         throw new SyncError('not_found', 'no thumbnail');
       });
     let handedOver = false;
     try {
       const st = await fh.stat();
-      const tag = `${sha}-${size}`;
-      reply.header('ETag', `"${tag}"`).header('Cache-Control', 'private, max-age=31536000, immutable')
+      reply.header('ETag', `"${tag}"`).header('Cache-Control', cacheControl)
         .header('X-Content-Type-Options', 'nosniff').header('Content-Security-Policy', SANDBOX_CSP)
         .header('Referrer-Policy', 'no-referrer');
       if (etagList(req.headers['if-none-match']).includes(tag)) return reply.status(304).send();

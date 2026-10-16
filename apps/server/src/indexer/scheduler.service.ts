@@ -233,7 +233,7 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     if (expired) this.log.log(`removed ${expired} abandoned upload(s)`);
     // Last: tombstones purged above no longer keep their derivatives alive.
     const gc = await this.derivativesGc.run();
-    if (gc.dirs || gc.jobs || gc.texts) this.log.log(`derivatives gc: ${gc.dirs} dirs, ${gc.jobs} job rows, ${gc.texts} extracted texts removed`);
+    if (gc.dirs || gc.jobs || gc.texts || gc.folders) this.log.log(`derivatives gc: ${gc.dirs} dirs, ${gc.jobs} job rows, ${gc.texts} extracted texts, ${gc.folders} folder thumbnails removed`);
     if (gc.requeued) this.log.log(`derivatives gc: ${gc.requeued} thumbnail job(s) with missing files requeued`);
   }
 }
