@@ -45,6 +45,8 @@ tags:
     description: File versions (only when enabled on the server).
   - name: search
     description: Search and recent files.
+  - name: shares
+    description: Share links of the signed-in user (owner side).
   - name: trash
     description: Trash (deleted items).
 
@@ -926,6 +928,88 @@ paths:
         '409': { $ref: '#/components/responses/TrashBusy' }
         '507': { $ref: '#/components/responses/InsufficientStorage' }
 
+  /shares:
+    get:
+      tags: [shares]
+      operationId: listShares
+      summary: Active share links of the user, newest first
+      description: |
+        Revoked links are not listed. Links of items in the trash are listed with `itemTrashed: true`.
+      parameters:
+        - { name: itemId, in: query, required: false, description: 'Only the links of this item (`d_<uuid>` / `f_<uuid>`).', schema: { type: string } }
+      responses:
+        '200':
+          description: Links.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ShareLink' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [shares]
+      operationId: createShare
+      summary: Create a share link for a file or folder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateShareLink' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ShareLink' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /shares/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      tags: [shares]
+      operationId: patchShare
+      summary: Change password, expiry or permissions of a link
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PatchShareLink' }
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ShareLink' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [shares]
+      operationId: revokeShare
+      summary: Revoke a link (idempotent)
+      responses:
+        '204': { description: Revoked (or already revoked). }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /shares/{id}/rotate:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [shares]
+      operationId: rotateShare
+      summary: Issue a new token; the old link stops working immediately
+      responses:
+        '200':
+          description: The link with its new `url`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ShareLink' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 components:
   securitySchemes:
     bearer:
@@ -1364,6 +1448,47 @@ components:
       required: [removed]
       properties:
         removed: { type: integer, minimum: 0 }
+
+    ShareLink:
+      type: object
+      required: [id, itemId, itemName, itemType, url, hasPassword, expiresAt, allowDownload, allowUpload, createdAt, revokedAt, hits, itemTrashed]
+      properties:
+        id: { type: string, format: uuid }
+        itemId: { $ref: '#/components/schemas/ItemId' }
+        itemName: { type: string }
+        itemType: { type: string, enum: [folder, file] }
+        url:
+          type: string
+          description: |
+            `/s/<token>` (relative to the server origin), or absolute when the server has
+            `SYNCLET_PUBLIC_URL` set. Empty only if the server secret changed; rotate then.
+        hasPassword: { type: boolean }
+        expiresAt: { type: [string, 'null'], format: date-time }
+        allowDownload: { type: boolean }
+        allowUpload: { type: boolean, description: Only ever true for folders. }
+        createdAt: { type: string, format: date-time }
+        revokedAt: { type: [string, 'null'], format: date-time, description: Always null in `GET /shares` (revoked links are not listed). }
+        hits: { type: integer, minimum: 0 }
+        itemTrashed: { type: boolean, description: The item is in the trash; the link answers 404 until it is restored. }
+    CreateShareLink:
+      type: object
+      required: [itemId]
+      additionalProperties: false
+      properties:
+        itemId: { $ref: '#/components/schemas/ItemId' }
+        password: { type: [string, 'null'], minLength: 1, maxLength: 1024 }
+        expiresAt: { type: [string, 'null'], format: date-time, description: 'ISO 8601 with offset; must be in the future.' }
+        allowDownload: { type: boolean, default: true }
+        allowUpload: { type: boolean, default: false, description: 'Folders only; `400 invalid_request` for files.' }
+    PatchShareLink:
+      type: object
+      additionalProperties: false
+      description: Omitted fields stay unchanged; `null` removes the password / expiry.
+      properties:
+        password: { type: [string, 'null'], minLength: 1, maxLength: 1024 }
+        expiresAt: { type: [string, 'null'], format: date-time }
+        allowDownload: { type: boolean }
+        allowUpload: { type: boolean }
 
     SetupStatus:
       type: object
