@@ -11,12 +11,42 @@
         }
       }
     },
+    "%lld selected": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld ausgewählt"
+          }
+        }
+      }
+    },
+    "Account": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Konto"
+          }
+        }
+      }
+    },
     "Accounts": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
             "value": "Konten"
+          }
+        }
+      }
+    },
+    "Add": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hinzufügen"
           }
         }
       }
@@ -41,6 +71,36 @@
         }
       }
     },
+    "Can’t Load Folder": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ordner kann nicht geladen werden"
+          }
+        }
+      }
+    },
+    "Changed in the meantime": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wurde inzwischen geändert"
+          }
+        }
+      }
+    },
+    "Choose a Place": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ort auswählen"
+          }
+        }
+      }
+    },
     "Connect Synclet": {
       "localizations": {
         "de": {
@@ -61,12 +121,252 @@
         }
       }
     },
+    "Create": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Erstellen"
+          }
+        }
+      }
+    },
+    "Date Modified": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Änderungsdatum"
+          }
+        }
+      }
+    },
     "Done": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
             "value": "Fertig"
+          }
+        }
+      }
+    },
+    "Empty Folder": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leerer Ordner"
+          }
+        }
+      }
+    },
+    "Files": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dateien"
+          }
+        }
+      }
+    },
+    "Manage Accounts…": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Konten verwalten …"
+          }
+        }
+      }
+    },
+    "More": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mehr"
+          }
+        }
+      }
+    },
+    "Move": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verschieben"
+          }
+        }
+      }
+    },
+    "Move %lld items to the Trash?": {
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Move %lld item to the Trash?"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Move %lld items to the Trash?"
+                }
+              }
+            }
+          }
+        },
+        "de": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld Objekt in den Papierkorb legen?"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld Objekte in den Papierkorb legen?"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "Move Here": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hierher verschieben"
+          }
+        }
+      }
+    },
+    "Move to Trash": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In den Papierkorb legen"
+          }
+        }
+      }
+    },
+    "Move “%@” to the Trash?": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "„%@“ in den Papierkorb legen?"
+          }
+        }
+      }
+    },
+    "Moving %lld items": {
+      "localizations": {
+        "en": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Moving %lld item"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "Moving %lld items"
+                }
+              }
+            }
+          }
+        },
+        "de": {
+          "variations": {
+            "plural": {
+              "one": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld Objekt wird verschoben"
+                }
+              },
+              "other": {
+                "stringUnit": {
+                  "state": "translated",
+                  "value": "%lld Objekte werden verschoben"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "My Files": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Meine Dateien"
+          }
+        }
+      }
+    },
+    "Name": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Name"
+          }
+        }
+      }
+    },
+    "Name already taken": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Name bereits vergeben"
+          }
+        }
+      }
+    },
+    "Names can’t contain / \\ : * ? \" < > |": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Namen dürfen diese Zeichen nicht enthalten: / \\ : * ? \" < > |"
+          }
+        }
+      }
+    },
+    "New Folder": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neuer Ordner"
+          }
+        }
+      }
+    },
+    "No Subfolders": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keine Unterordner"
           }
         }
       }
@@ -81,6 +381,36 @@
         }
       }
     },
+    "No longer exists": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nicht mehr vorhanden"
+          }
+        }
+      }
+    },
+    "Offline": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Offline"
+          }
+        }
+      }
+    },
+    "Please enter a name.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bitte gib einen Namen ein."
+          }
+        }
+      }
+    },
     "Please enter a valid server address, e.g. files.example.com.": {
       "localizations": {
         "de": {
@@ -91,12 +421,42 @@
         }
       }
     },
+    "Rename": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Umbenennen"
+          }
+        }
+      }
+    },
     "Server": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
             "value": "Server"
+          }
+        }
+      }
+    },
+    "Show as Grid": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Als Raster anzeigen"
+          }
+        }
+      }
+    },
+    "Show as List": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Als Liste anzeigen"
           }
         }
       }
@@ -181,12 +541,42 @@
         }
       }
     },
+    "Size": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Größe"
+          }
+        }
+      }
+    },
+    "Sort By": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sortieren nach"
+          }
+        }
+      }
+    },
     "The login window could not be opened.": {
       "localizations": {
         "de": {
           "stringUnit": {
             "state": "translated",
             "value": "Das Anmeldefenster konnte nicht geöffnet werden."
+          }
+        }
+      }
+    },
+    "The name is too long.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Name ist zu lang."
           }
         }
       }
@@ -211,6 +601,36 @@
         }
       }
     },
+    "This folder is empty.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dieser Ordner ist leer."
+          }
+        }
+      }
+    },
+    "Try Again": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Erneut versuchen"
+          }
+        }
+      }
+    },
+    "You are offline. Please try again later.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Du bist offline. Bitte versuche es später erneut."
+          }
+        }
+      }
+    },
     "You sign in in the browser window that opens next.": {
       "localizations": {
         "de": {
@@ -227,6 +647,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "Deine Dateien findest du auch in der Dateien-App unter „Orte“."
+          }
+        }
+      }
+    },
+    "Your files can only be browsed with a connection to the server.": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deine Dateien können nur mit einer Verbindung zum Server angezeigt werden."
           }
         }
       }

@@ -2,42 +2,27 @@ import SwiftUI
 import SyncletKit
 
 /// Root of the app. Without accounts: the empty state with „Konto hinzufügen“. With
-/// accounts: a placeholder list (Task 7 replaces it with the browser shell).
+/// accounts: the browser (``BrowserShell``).
 struct RootView: View {
     let environment: AppEnvironment
     @State private var showsLogin = false
-    @State private var showsAccounts = false
 
     private var accounts: AccountsModel { environment.accounts }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if accounts.entries.isEmpty {
+        // A stable container: the login sheet outlives the switch to the browser (its success page).
+        ZStack {
+            if accounts.entries.isEmpty {
+                NavigationStack {
                     emptyState
-                } else {
-                    accountList
+                        .navigationTitle(Text(verbatim: "Synclet"))
                 }
-            }
-            .navigationTitle(Text(verbatim: "Synclet"))
-            .toolbar {
-                if !accounts.entries.isEmpty {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button {
-                            showsAccounts = true
-                        } label: {
-                            Label("Accounts", systemImage: "person.crop.circle")
-                        }
-                        .accessibilityIdentifier("root.accounts")
-                    }
-                }
+            } else {
+                BrowserShell(environment: environment)
             }
         }
         .sheet(isPresented: $showsLogin) {
             LoginView(model: LoginModel(accounts: accounts))
-        }
-        .sheet(isPresented: $showsAccounts) {
-            AccountsView(accounts: accounts)
         }
     }
 
@@ -51,24 +36,6 @@ struct RootView: View {
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("root.addAccount")
         }
-    }
-
-    private var accountList: some View {
-        List(accounts.entries) { entry in
-            Button {
-                accounts.selectedKey = entry.id
-            } label: {
-                HStack {
-                    AccountRow(entry: entry)
-                    Spacer()
-                    if entry.id == accounts.selectedKey {
-                        Image(systemName: "checkmark").foregroundStyle(.tint)
-                    }
-                }
-            }
-            .foregroundStyle(.primary)
-        }
-        .accessibilityIdentifier("root.accountList")
     }
 }
 
