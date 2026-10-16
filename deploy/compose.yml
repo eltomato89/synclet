@@ -2,6 +2,9 @@
 # the images are pulled from GHCR. Start:  docker compose up -d
 # Update: set SYNCLET_VERSION in .env (or keep latest), then  docker compose pull && docker compose up -d
 # Build the images from a repository checkout instead: add -f compose.build.yml (see there).
+# Office (Euro-Office Document Server, ~4 GB RAM) below ${SYNCLET_PUBLIC_URL}/documentserver: set
+# COMPOSE_PROFILES=office and OFFICE_JWT_SECRET in .env (see .env.example). On its own subdomain
+# instead: add compose.office.yml.
 name: synclet
 services:
   server:
@@ -27,6 +30,12 @@ services:
       SYNCLET_SSO_ALLOW_HTTP_ISSUER: ${SYNCLET_SSO_ALLOW_HTTP_ISSUER:-}
       SYNCLET_UPDATE_CHECK: ${SYNCLET_UPDATE_CHECK:-}
       SYNCLET_UPDATE_REPO: ${SYNCLET_UPDATE_REPO:-}
+      # Office editing is on iff OFFICE_JWT_SECRET is set (and the office profile runs the
+      # Document Server). Browser-facing Document Server URL: below the Synclet site by default.
+      OFFICE_URL: ${SYNCLET_OFFICE_PUBLIC_URL:-${SYNCLET_PUBLIC_URL:-}/documentserver}
+      OFFICE_JWT_SECRET: ${OFFICE_JWT_SECRET:-}
+      OFFICE_API_URL: http://server:3000/api
+      OFFICE_INTERNAL_URL: http://office
     volumes:
       - ${SYNCLET_DATA:?set SYNCLET_DATA to your files folder}:/data
       - ${SYNCLET_META:?set SYNCLET_META to a folder outside SYNCLET_DATA}:/meta
@@ -74,11 +83,41 @@ services:
       # Declared request body limit for /api/* (same variable and default as the server's upload
       # limit; Caddy would take an empty value literally, so the default is spelled out here).
       SYNCLET_MAX_UPLOAD_BYTES: ${SYNCLET_MAX_UPLOAD_BYTES:-53687091200}
+      # "on" (OFFICE_JWT_SECRET set) proxies /documentserver/* to the Document Server; otherwise 404.
+      SYNCLET_OFFICE_ENABLED: ${OFFICE_JWT_SECRET:+on}
+      # on = also serve the Document Server's welcome/example/admin pages (404 by default).
+      SYNCLET_OFFICE_WELCOME: ${SYNCLET_OFFICE_WELCOME:-}
+      # A Document Server on another origin is added to the CSP (empty: same origin, 'self').
+      SYNCLET_OFFICE_PUBLIC_URL: ${SYNCLET_OFFICE_PUBLIC_URL:-}
     ports:
       - "${SYNCLET_PORT:-8080}:80"
       - "${SYNCLET_TLS_PORT:-8443}:443"
     volumes: [caddy-data:/data]
     depends_on: [server]
+    restart: unless-stopped
+  office:
+    # Euro-Office Document Server (AGPL-3.0, ONLYOFFICE fork), only with COMPOSE_PROFILES=office.
+    # Needs ~4 GB RAM. Reached by browsers through Caddy below /documentserver.
+    profiles: [office]
+    image: ghcr.io/euro-office/documentserver:${OFFICE_TAG:-latest}
+    environment:
+      JWT_ENABLED: "true"
+      # The shared secret; without it office editing stays off (Synclet and Caddy ignore the office).
+      JWT_SECRET: ${OFFICE_JWT_SECRET:-}
+      # Files are fetched from http://server:3000 (a private address).
+      ALLOW_PRIVATE_IP_ADDRESS: "true"
+    expose: ["80"] # not published on the host; only Caddy (and the server) reach it
+    # Named volumes: Docker seeds them from the image; empty bind mounts break the service start.
+    volumes:
+      - office-data:/var/www/euro-office/Data
+      - office-lib:/var/lib/euro-office/documentserver
+      - office-logs:/var/log/euro-office/documentserver
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost/healthcheck | grep -q true"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 120s
     restart: unless-stopped
   postgres:
     image: postgres:16-alpine
@@ -95,6 +134,9 @@ services:
 volumes:
   pgdata:
   caddy-data:
+  office-data:
+  office-lib:
+  office-logs:
   # External storage on a NAS (SMB/CIFS), mounted by Docker on the host:
   # nas-fotos:
   #   driver: local

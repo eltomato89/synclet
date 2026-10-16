@@ -56,6 +56,21 @@ describe('loadConfig', () => {
     expect(e).toMatchObject({ versions: false, officeUrl: null, officeApiUrl: 'http://server:3000/api', ssoEmergency: false });
   });
 
+  it('OFFICE_URL: only with OFFICE_JWT_SECRET, normalized, absolute http(s) required', () => {
+    // compose always passes a default URL below SYNCLET_PUBLIC_URL; without the secret office stays off.
+    expect(loadConfig({ OFFICE_URL: 'https://files.example.com/documentserver' }).officeUrl).toBeNull();
+    expect(loadConfig({ OFFICE_URL: '/documentserver', OFFICE_JWT_SECRET: '' }).officeUrl).toBeNull();
+    const url = (v: string) => loadConfig({ OFFICE_URL: v, OFFICE_JWT_SECRET: 's' }).officeUrl;
+    expect(url('https://files.example.com/documentserver')).toBe('https://files.example.com/documentserver');
+    expect(url('https://files.example.com//documentserver/')).toBe('https://files.example.com/documentserver');
+    expect(url('http://localhost:8080/documentserver')).toBe('http://localhost:8080/documentserver');
+    expect(url('https://office.example.com/')).toBe('https://office.example.com');
+    // SYNCLET_PUBLIC_URL unset: compose passes just "/documentserver".
+    for (const bad of ['/documentserver', 'office.example.com', 'ftp://x/y', 'https://u:p@x/y', 'https://x/y?a=1']) {
+      expect(() => url(bad)).toThrow(/OFFICE_URL must be an absolute http\(s\) URL/);
+    }
+  });
+
   it('SYNCLET_SSO_EMERGENCY accepts the usual boolean spellings', () => {
     for (const v of ['1', 'true', 'TRUE', 'on', 'yes']) expect(loadConfig({ SYNCLET_SSO_EMERGENCY: v }).ssoEmergency).toBe(true);
     for (const v of ['0', 'false', 'off', 'no', '']) expect(loadConfig({ SYNCLET_SSO_EMERGENCY: v }).ssoEmergency).toBe(false);

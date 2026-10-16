@@ -74,6 +74,8 @@ docker compose up -d
 
 The server migrates the database on start. Downgrading after a migration is not supported, so back up the database before updating if you want a way back. If the release notes say that `compose.yml` changed, download it again (for a pinned release from its tag, e.g. `https://raw.githubusercontent.com/eltomato89/synclet/v1.2.3/deploy/compose.yml`).
 
+**With Office on its own subdomain (`compose.office.yml`):** the office container moved into `compose.yml`. Download the new `compose.office.yml` together with the new `compose.yml` (a new `compose.yml` with the old `compose.office.yml` fails with "depends on undefined service office"), or switch to the default `/documentserver` setup; see [Upgrading from the subdomain-only setup](#office-euro-office-editing).
+
 ### Building from source
 
 To build the images yourself from a checkout, add `deploy/compose.build.yml`. It builds both images and tags them locally (`synclet/server:dev`, `synclet/caddy:dev`), so they never overwrite pulled images:
@@ -153,12 +155,14 @@ All settings go into `.env` next to `compose.yml` (in a checkout: `deploy/.env`,
 | `SYNCLET_VERSIONS_MAX_BYTES` | `0` (unlimited) | Per-user cap for stored version bytes; the oldest versions are evicted first. |
 | `SYNCLET_SSO_EMERGENCY` | (empty) | `1` (or `true`, `on`, `yes`) ignores OIDC and forward-auth and allows password login for everyone; see [Locked out?](#locked-out-emergency-recovery). |
 | `SYNCLET_SSO_ALLOW_HTTP_ISSUER` | (empty) | `1` accepts an `http://` OIDC issuer on a loopback/private host (lab setups only; otherwise `https://` is required). |
-| `SYNCLET_UPDATE_CHECK` | `on` | The server asks `api.github.com` for the latest release (at most every 12 hours, only while an admin uses the web app; the request carries nothing but the installed version in its User-Agent) and the admin area shows when an update is available. `off` makes no outbound request at all. Development builds (`edge`, source builds) are never checked. |
+| `SYNCLET_UPDATE_CHECK` | `on` | The server asks `api.github.com` for the latest release (at most every 12 hours, only while an admin uses the web app). GitHub sees the server's public IP address and the installed version (in the User-Agent); nothing else is sent. The admin area then shows when an update is available. `off` makes no outbound request at all. Development builds (`edge`, source builds) are never checked. |
 | `SYNCLET_UPDATE_REPO` | `eltomato89/synclet` | Repository (`owner/repo`) whose GitHub releases the update check compares against, for forks. |
-| `SYNCLET_OFFICE_SITE_ADDRESS` | (empty) | Office override only: Caddy site address of the Document Server (domain, or `http://...` behind a TLS-terminating proxy). Required with `compose.office.yml`. |
-| `SYNCLET_OFFICE_PUBLIC_URL` | (empty) | Office override only: browser-facing `https://` URL of the office site; also added to the Synclet site's CSP. Required with `compose.office.yml`. |
-| `OFFICE_JWT_SECRET` | (empty) | Office override only: shared JWT secret with the Document Server (`openssl rand -hex 32`). Required with `compose.office.yml`. |
-| `OFFICE_TAG` | `latest` | Office override only: image tag of `ghcr.io/euro-office/documentserver`; pin it in production. |
+| `COMPOSE_PROFILES` | (empty) | `office` starts the Euro-Office Document Server container; see [Office](#office-euro-office-editing). |
+| `OFFICE_JWT_SECRET` | (empty) | Shared JWT secret with the Document Server (`openssl rand -hex 32`). Set = office editing on (and `/documentserver` routed by Caddy); empty = off. |
+| `OFFICE_TAG` | `latest` | Image tag of `ghcr.io/euro-office/documentserver`; pin it in production. |
+| `SYNCLET_OFFICE_WELCOME` | (empty) | `on` serves the Document Server's welcome, example and admin pages below `/documentserver` (404 by default). |
+| `SYNCLET_OFFICE_PUBLIC_URL` | `${SYNCLET_PUBLIC_URL}/documentserver` | Browser-facing URL of the Document Server, without trailing slash. Whenever set, Caddy also adds its origin to the Synclet site's CSP (not needed for the same-origin default). With `compose.office.yml`: the `https://` URL of the office subdomain (required there). |
+| `SYNCLET_OFFICE_SITE_ADDRESS` | (empty) | `compose.office.yml` only: Caddy site address of the office subdomain (domain, or `http://...` behind a TLS-terminating proxy). Required there. |
 
 ### PostgreSQL extensions
 
@@ -178,22 +182,52 @@ The rate limits for login, setup and public share links count requests per clien
 
 ## Office (Euro-Office editing)
 
-Optional. Edit `docx`, `xlsx`, `pptx`, `odt`, `ods` and `odp` files in the browser with the [Euro-Office](https://github.com/euro-office) Document Server (AGPL-3.0, an OnlyOffice fork). It runs as an extra container on its **own subdomain**, behind the same Caddy.
+Optional. Edit `docx`, `xlsx`, `pptx`, `odt`, `ods` and `odp` files in the browser with the [Euro-Office](https://github.com/euro-office) Document Server (AGPL-3.0, an OnlyOffice fork). It runs as an extra container (`office`, part of `compose.yml` behind the compose profile `office`) and is served by the bundled Caddy below **`/documentserver`** on the Synclet domain, e.g. `https://files.example.com/documentserver/`. No second DNS name or certificate is needed.
 
 **Requirements**
 
 - About **4 GB of free RAM** for the Document Server (the first start takes a minute or two).
-- A second DNS name for the editor, e.g. `office.example.com`, pointing at the same host as Synclet.
+- `SYNCLET_PUBLIC_URL` set to the browser-facing URL of Synclet (the editor URL is derived from it). With `OFFICE_JWT_SECRET` set but `SYNCLET_PUBLIC_URL` (and `SYNCLET_OFFICE_PUBLIC_URL`) empty, the server does not start and logs why.
 
 **Setup**
 
-1. Download the office override next to `compose.yml` (in a checkout it is `deploy/compose.office.yml`):
+1. Add to `.env` (`COMPOSE_PROFILES` makes every `docker compose` command, including `pull`, `logs` and `down -v`, include the office container):
+
+   ```
+   COMPOSE_PROFILES=office
+   OFFICE_JWT_SECRET=<openssl rand -hex 32>
+   ```
+
+2. Start the stack:
+
+   ```bash
+   docker compose up -d
+   ```
+
+   From a checkout with source builds: `docker compose -f deploy/compose.yml -f deploy/compose.build.yml --env-file deploy/.env up -d --build` (the profile comes from `deploy/.env` as well).
+
+3. Open a document in the web app with "Open in Office" (new documents can be created there as well). The admin status page shows whether the Document Server is reachable.
+
+Both settings are needed: `OFFICE_JWT_SECRET` turns office editing on in Synclet and the `/documentserver` route in Caddy (without it, `/documentserver` answers 404), the profile starts the container. `COMPOSE_PROFILES=office` without a secret starts a Document Server that nothing uses (it still takes its RAM). The server uses `OFFICE_URL=${SYNCLET_PUBLIC_URL}/documentserver`; set `SYNCLET_OFFICE_PUBLIC_URL` to override it. The Document Server's welcome, example and admin pages (`/documentserver/welcome/`, `/documentserver/example/`, `/documentserver/admin/`) are not needed and answer 404; `SYNCLET_OFFICE_WELCOME=on` serves them anyway (e.g. to check the installation).
+
+**Behind an outer reverse proxy** (nginx, Traefik, Nginx Proxy Manager) that terminates TLS, the proxy must, for the Synclet host:
+
+- pass **WebSocket** upgrades (Nginx Proxy Manager: "Websockets Support"),
+- use **long or no read timeouts** (the editor keeps a WebSocket open for the whole session; nginx: `proxy_read_timeout 3600s` or more) and no response buffering,
+- accept **large request bodies** (`client_max_body_size 0`, already needed for uploads),
+- forward the original `Host` (with the port, if it is not the default one).
+
+Put the proxy into `SYNCLET_TRUSTED_PROXIES`, otherwise Caddy tells the Document Server the request was plain `http` and it generates `http://` and `ws://` URLs (mixed content; the editor does not load).
+
+**Alternative: Document Server on its own subdomain.** In the default setup the Document Server's pages share Synclet's origin. That is simpler (one hostname, the Content-Security-Policy stays at `'self'`), but it means an XSS vulnerability in the Document Server could act as the signed-in Synclet user (read the web app's state, call the API with the session). On a separate subdomain the browser isolates the two. To use it:
+
+1. Download the override next to `compose.yml` (in a checkout it is `deploy/compose.office.yml`):
 
    ```bash
    curl -fsSLO https://raw.githubusercontent.com/eltomato89/synclet/main/deploy/compose.office.yml
    ```
 
-2. Add to `.env` (`COMPOSE_FILE` makes every `docker compose` command, including `pull`, `logs` and `down -v`, use both files, so the office container is never left behind):
+2. Add to `.env` (`COMPOSE_PROFILES` is not needed: the override always starts the office container):
 
    ```
    COMPOSE_FILE=compose.yml:compose.office.yml
@@ -202,24 +236,18 @@ Optional. Edit `docx`, `xlsx`, `pptx`, `odt`, `ods` and `odp` files in the brows
    OFFICE_JWT_SECRET=<openssl rand -hex 32>
    ```
 
-3. Start the stack (the office site is built into the `synclet-web` image; the override turns it on):
+3. `docker compose up -d`. From a checkout with source builds, leave out `COMPOSE_FILE` and pass the files instead: `docker compose -f deploy/compose.yml -f deploy/compose.build.yml -f deploy/compose.office.yml --env-file deploy/.env up -d --build`. Every later `docker compose` command (`down`, `logs`, ...) needs the same `-f` options. The override needs Docker Compose 2.24 or newer.
 
-   ```bash
-   docker compose up -d
-   ```
-
-   From a checkout with source builds, leave out `COMPOSE_FILE` and pass the files instead: `docker compose -f deploy/compose.yml -f deploy/compose.build.yml -f deploy/compose.office.yml --env-file deploy/.env up -d --build`. Every later `docker compose` command (`down`, `logs`, ...) needs the same `-f` options.
-
-4. Open a document in the web app with "Open in Office" (new documents can be created there as well). The admin status page shows whether the Document Server is reachable.
-
-**DNS and TLS.** Both sites share Caddy's ports and are told apart by the `Host` header.
+It needs a second DNS name pointing at the same host. Both sites share Caddy's ports and are told apart by the `Host` header; `/documentserver` on the Synclet site stays 404.
 
 - *Caddy terminates TLS:* `SYNCLET_OFFICE_SITE_ADDRESS` is the domain; Caddy fetches a Let's Encrypt certificate for it (same prerequisites as for the main site: public DNS, ports 80/443 reachable, see [Architecture](#architecture)).
-- *Behind an outer reverse proxy that terminates TLS:* set `SYNCLET_OFFICE_SITE_ADDRESS=http://office.example.com`, route both hostnames to Caddy and forward the original `Host`. Put the proxy into `SYNCLET_TRUSTED_PROXIES`, otherwise Caddy tells the Document Server the request was plain `http` and it generates `http://` URLs (mixed content; the editor does not load). The proxy must support WebSocket upgrades.
+- *Behind an outer reverse proxy that terminates TLS:* set `SYNCLET_OFFICE_SITE_ADDRESS=http://office.example.com`, route both hostnames to Caddy and forward the original `Host`. The same proxy requirements as above apply (WebSockets, long timeouts, large bodies, `SYNCLET_TRUSTED_PROXIES`).
 
-`SYNCLET_OFFICE_PUBLIC_URL` is the browser-facing `https://` URL of that site, without trailing slash. With the office override Caddy adds exactly this origin to `script-src`, `frame-src` and `connect-src` (https and wss) of the Content-Security-Policy of the Synclet site; without it the policy stays strict.
+`SYNCLET_OFFICE_PUBLIC_URL` is the browser-facing `https://` URL of that site, without trailing slash. Caddy adds exactly this origin to `script-src`, `frame-src` and `connect-src` (https and wss) of the Content-Security-Policy of the Synclet site.
 
-**Security.** `OFFICE_JWT_SECRET` is shared between Synclet and the Document Server (JWT on every request in both directions). Keep it secret and set it to a random value. The Document Server fetches and saves files from Synclet over the internal Docker network (`http://server:3000/api`) with short-lived, file-bound tokens; only Caddy publishes ports. Pin `OFFICE_TAG` to a specific image tag in production.
+**Upgrading from the subdomain-only setup.** Before, the office container was defined in `compose.office.yml` only. Download the new `compose.yml` *and* `compose.office.yml`: with your existing `.env` (`COMPOSE_FILE=compose.yml:compose.office.yml`, `SYNCLET_OFFICE_SITE_ADDRESS`, `SYNCLET_OFFICE_PUBLIC_URL`) everything keeps working on the subdomain, with the same volumes. To move to `/documentserver` instead: remove `COMPOSE_FILE`, `SYNCLET_OFFICE_SITE_ADDRESS` and `SYNCLET_OFFICE_PUBLIC_URL` from `.env`, add `COMPOSE_PROFILES=office`, run `docker compose up -d --remove-orphans`, and drop the office hostname from DNS and your outer proxy. Editor sessions open during the switch are lost (save before), files are not affected.
+
+**Security.** `OFFICE_JWT_SECRET` is shared between Synclet and the Document Server (JWT on every request in both directions). Keep it secret and set it to a random value. The Document Server fetches and saves files from Synclet over the internal Docker network (`http://server:3000/api`) with short-lived, file-bound tokens; only Caddy publishes ports. Pin `OFFICE_TAG` to a specific image tag in production. For an **internet-facing** installation we recommend the [subdomain setup](#office-euro-office-editing) (`compose.office.yml`): with the default `/documentserver` the Document Server shares Synclet's origin, so a vulnerability in it could act as the signed-in user.
 
 **Size limits.** The Document Server has its own limit, `FileConverter.converter.maxDownloadBytes`, **500 MB** by default (`/etc/euro-office/documentserver/default.json` in the `office` container; override it with a `local.json`). Larger documents do not open. `SYNCLET_MAX_UPLOAD_BYTES` does not apply to it.
 
@@ -344,8 +372,9 @@ Outer proxy example with Caddy and Authelia:
 ```
 files.example.com {
 	# Everything that authenticates itself (Synclet tokens, share links) or carries no secret
-	# (the SPA's static files) bypasses the SSO gate.
-	@open path /api/sync/* /api/auth/app/* /api/public/* /s/* /assets/* /favicon.svg /index.html
+	# (the SPA's static files) bypasses the SSO gate. /documentserver/*: only with Office (the
+	# Document Server checks its own JWTs).
+	@open path /api/sync/* /api/auth/app/* /api/public/* /s/* /assets/* /favicon.svg /index.html /documentserver/*
 	handle @open {
 		reverse_proxy synclet-caddy:80
 	}
@@ -361,7 +390,7 @@ files.example.com {
 
 For Authentik use its outpost instead: add `handle /outpost.goauthentik.io/* { reverse_proxy authentik-outpost:9000 }` before the other blocks, and `forward_auth authentik-outpost:9000 { uri /outpost.goauthentik.io/auth/caddy; copy_headers X-authentik-username X-authentik-email X-authentik-name X-authentik-groups }` (with the matching header names in the Synclet settings and in `deploy/Caddyfile`).
 
-Why these paths bypass: `/s/<token>` is a route of the single-page app, so anonymous visitors of a public share link get the app shell (`index.html`, `/assets/*`, `/favicon.svg`) and then call `/api/public/*`; without the static files the share page does not load. Native apps and sync clients send Synclet tokens to `/api/sync/*` and sign in through `/api/auth/app/*`. **Tradeoff:** the bypass of `/api/auth/app/*` exposes the (rate-limited) password authorize endpoint outside the SSO gate. If you don't want password sign-in reachable that way, turn off password login for users in the SSO settings (admins keep it, by design); the apps then sign in through the browser with an existing SSO session. The `Remote-*` headers are only needed on the web login entry: what must stay behind the gate is `/`, `/login` and `/api/auth/forward`, not the API (the web app also calls `/api/sync/v1/*` with Synclet tokens, which authenticate themselves). The gate must **not** wrap the office subdomain: the Document Server loads in an iframe, uses WebSockets and fetches files from Synclet with its own tokens.
+Why these paths bypass: `/s/<token>` is a route of the single-page app, so anonymous visitors of a public share link get the app shell (`index.html`, `/assets/*`, `/favicon.svg`) and then call `/api/public/*`; without the static files the share page does not load. Native apps and sync clients send Synclet tokens to `/api/sync/*` and sign in through `/api/auth/app/*`. **Tradeoff:** the bypass of `/api/auth/app/*` exposes the (rate-limited) password authorize endpoint outside the SSO gate. If you don't want password sign-in reachable that way, turn off password login for users in the SSO settings (admins keep it, by design); the apps then sign in through the browser with an existing SSO session. The `Remote-*` headers are only needed on the web login entry: what must stay behind the gate is `/`, `/login` and `/api/auth/forward`, not the API (the web app also calls `/api/sync/v1/*` with Synclet tokens, which authenticate themselves). The gate must **not** wrap `/documentserver/*` (or the office subdomain): the Document Server loads in an iframe, uses WebSockets and fetches files from Synclet with its own tokens.
 
 nginx and Traefik work the same way with `auth_request` / the `forwardAuth` middleware; copy the four headers to the upstream request. Put the proxy's exact address into `SYNCLET_FORWARD_AUTH_PROXIES` (and `SYNCLET_TRUSTED_PROXIES` for the client IP), enter Caddy's address in the forward-auth trusted proxies as described, and keep the bypass list above.
 
@@ -416,7 +445,7 @@ Admins get an "Admin" entry in the web app with:
 - **Groups:** bundle users to grant access to spaces at once.
 - **Status:** version and uptime (with an update hint, see below), file watcher state and last full scan, number of users, free and used space of the data and meta volumes, size of derivatives / trash / versions / uploads in `SYNCLET_META`, thumbnail and text-extraction job queues, whether versions are on and whether the Document Server is reachable.
 
-**Update check.** The status page shows the installed version (baked into the image at build time) and whether a newer release exists on GitHub; if so, "Administration" in the sidebar gets a dot and the status page links the release notes. Release images only: `edge` and source builds show "Development build" (with the commit) and never ask GitHub. Turn the check off with `SYNCLET_UPDATE_CHECK=off`; updating itself stays manual (see [Updating](#updating)).
+**Update check.** The status page shows the installed version (baked into the image at build time) and whether a newer release exists on GitHub; if so, "Administration" in the sidebar gets a dot and the status page links the release notes. Release images only: `edge` and source builds show "Development build" (with the commit) and never ask GitHub. The check runs in the background and never delays the page: right after a start the status shows "Could not check for updates" until the first answer arrives (usually seconds). If GitHub is unreachable (no internet access, rate limit), it stays like that and is retried after an hour; a release found earlier keeps being shown meanwhile. The request reveals the server's IP address and version to GitHub; turn the check off with `SYNCLET_UPDATE_CHECK=off`. Updating itself stays manual (see [Updating](#updating)).
 
 ## Known limitations
 
@@ -434,7 +463,7 @@ Admins get an "Admin" entry in the web app with:
 
 ## Leaving Synclet
 
-`docker compose down -v` (with Office, `COMPOSE_FILE` in `.env` includes the office container) removes the containers and the Postgres/Caddy volumes. Your `SYNCLET_DATA` folder is untouched (trash in `SYNCLET_META` stays too).
+`docker compose down -v` (with Office, `COMPOSE_PROFILES` or `COMPOSE_FILE` in `.env` includes the office container) removes the containers and the Postgres/Caddy volumes. Your `SYNCLET_DATA` folder is untouched (trash in `SYNCLET_META` stays too).
 
 ## Architecture
 

@@ -38,14 +38,11 @@ E2E_FORWARD_PORT=$FORWARD_PORT
 ENV
 FILES=(-f "$ROOT/deploy/compose.yml" -f "$ROOT/deploy/compose.build.yml" -f "$ROOT/e2e/stack/compose.e2e.yml")
 if [ "$OFFICE" = 1 ]; then
-  # The Document Server on its own subdomain of the same Caddy (office.localhost resolves to the
-  # loopback address in Chromium), plain http like the rest of the e2e stack.
+  # The Document Server below /documentserver of the same site (the default office setup).
   cat >> "$WORK/.env" <<ENV
+COMPOSE_PROFILES=office
 OFFICE_JWT_SECRET=$(openssl rand -hex 32)
-SYNCLET_OFFICE_SITE_ADDRESS=http://office.localhost
-SYNCLET_OFFICE_PUBLIC_URL=http://office.localhost:$PORT
 ENV
-  FILES+=(-f "$ROOT/deploy/compose.office.yml")
 fi
 DC=(docker compose -p "$PROJECT" "${FILES[@]}" --env-file "$WORK/.env")
 cleanup() {
@@ -79,7 +76,7 @@ echo "SYNCLET_TRUSTED_PROXIES=$PROXY_IP/32" >> "$WORK/.env"
 "${DC[@]}" up -d --no-deps caddy
 wait_for 30 "localhost:$PORT/api/health" "Caddy"
 wait_for 30 "localhost:$FORWARD_PORT/api/health" "auth proxy"
-if [ "$OFFICE" = 1 ]; then wait_for 150 "http://office.localhost:$PORT/healthcheck" "Document Server"; fi
+if [ "$OFFICE" = 1 ]; then wait_for 150 "localhost:$PORT/documentserver/healthcheck" "Document Server"; fi
 
 cd "$ROOT" && SYNCLET_URL="http://localhost:$PORT" \
   E2E_DATA_DIR="$WORK/files" \
@@ -87,7 +84,7 @@ cd "$ROOT" && SYNCLET_URL="http://localhost:$PORT" \
   E2E_FORWARD_URL="http://localhost:$FORWARD_PORT" \
   E2E_NETWORK_CIDR="$CIDR" \
   E2E_OFFICE="$OFFICE" \
-  E2E_OFFICE_URL="http://office.localhost:$PORT" \
+  E2E_OFFICE_URL="http://localhost:$PORT/documentserver" \
   pnpm test:e2e "$@"
 
 # The Sync API conformance suite against the same stack (versions on, worker running), as the
