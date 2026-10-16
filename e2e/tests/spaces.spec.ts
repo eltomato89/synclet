@@ -68,7 +68,7 @@ test('kim sees "Familie" in the sidebar and uploads a file', async ({ browser })
   // The breadcrumb starts with the space name; kim can write, so there is no read-only banner.
   await expect(page.getByRole('navigation', { name: 'Ordnerpfad' })).toContainText('Familie');
   await expect(page.getByRole('status', { name: 'Nur lesen' })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Hochladen' })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Hochladen', exact: true })).toBeEnabled();
 
   await page.locator('input[data-upload=files]').setInputFiles({ name: 'Einkaufsliste.txt', mimeType: 'text/plain', buffer: Buffer.from('Milch, Brot') });
   await expect(row(page, 'Einkaufsliste.txt')).toBeVisible();
@@ -82,7 +82,7 @@ test('lu reads the space: sees the file, but no upload', async ({ browser }) => 
   await link.click();
   await expect(row(page, 'Einkaufsliste.txt')).toBeVisible();
   await expect(page.getByRole('status', { name: 'Nur lesen' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Hochladen' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Hochladen', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Neu' })).toHaveCount(0);
   await page.context().close();
 });

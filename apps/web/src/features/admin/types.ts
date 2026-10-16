@@ -11,7 +11,7 @@ export interface SpaceWire {
   kind: 'team' | 'external';
   name: string;
   rootPath: string;
-  status: 'available' | 'missing';
+  status: 'available' | 'missing' | 'ignored';
   readOnly: boolean;
   watch: 'auto' | 'off' | null;
   scanIntervalSec: number | null;

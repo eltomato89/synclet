@@ -23,6 +23,7 @@ const team: SpaceWire = {
   id: 's1', kind: 'team', name: 'Projekte', rootPath: '/teams/Projekte', status: 'available', readOnly: false, watch: 'auto',
   scanIntervalSec: null, sizeBytes: 2048, itemCount: 3, members: [{ kind: 'group', id: 'g1', name: 'Marketing', role: 'write' }],
 };
+const gone: SpaceWire = { ...team, id: 's3', name: 'Alt', rootPath: '/teams/Alt', status: 'ignored', members: [] };
 const ext: SpaceWire = {
   id: 's2', kind: 'external', name: 'nas', rootPath: '/storage/nas', status: 'missing', readOnly: true, watch: 'auto',
   scanIntervalSec: 600, sizeBytes: 0, itemCount: 0, members: [],
@@ -42,7 +43,7 @@ beforeEach(() => {
     const method = init?.method ?? 'GET';
     if (path === '/admin/users') return users;
     if (path === '/admin/groups' && method === 'GET') return [group];
-    if (path === '/admin/spaces' && method === 'GET') return [team, ext];
+    if (path === '/admin/spaces' && method === 'GET') return [team, ext, gone];
     if (postError && method === 'POST') throw postError;
     return {};
   });
@@ -125,7 +126,7 @@ it('external storage edit has no name field but watch mode and scan interval', a
   renderPage(<SpacesPage />);
   fireEvent.keyDown(await screen.findByRole('button', { name: 'Actions for nas' }), { key: 'Enter' });
   const menu = await screen.findByRole('menu');
-  expect(within(menu).queryByRole('menuitem', { name: 'Remove' })).toBeNull();
+  expect(within(menu).getByRole('menuitem', { name: 'Remove' })).toBeInTheDocument();
   fireEvent.click(within(menu).getByRole('menuitem', { name: 'Edit' }));
   const dialog = await screen.findByRole('dialog');
   expect(within(dialog).queryByLabelText('Name')).toBeNull();
@@ -186,4 +187,36 @@ it('sends only the changed external settings', async () => {
   fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
   await waitFor(() => expect(sent('PATCH')).toBeDefined());
   expect(sent('PATCH')?.init?.json).toEqual({ scanIntervalSec: 30, members: [] });
+});
+
+it('hides edit and scan for removed spaces and restores them', async () => {
+  renderPage(<SpacesPage />);
+  const row = (await screen.findByText('Alt')).closest('tr')!;
+  expect(within(row).getByText('Hidden')).toBeInTheDocument();
+  fireEvent.keyDown(within(row).getByRole('button', { name: 'Actions for Alt' }), { key: 'Enter' });
+  const menu = await screen.findByRole('menu');
+  expect(within(menu).getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Restore']);
+  fireEvent.click(within(menu).getByRole('menuitem', { name: 'Restore' }));
+  await waitFor(() => expect(sent('POST')?.path).toBe('/admin/spaces/s3/restore'));
+});
+
+it('removes an external storage with the hide-in-Synclet confirmation', async () => {
+  renderPage(<SpacesPage />);
+  fireEvent.keyDown(await screen.findByRole('button', { name: 'Actions for nas' }), { key: 'Enter' });
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove' }));
+  const dialog = await screen.findByRole('alertdialog');
+  expect(dialog).toHaveTextContent('The space is hidden in Synclet. The folder stays on disk.');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Remove folder' }));
+  await waitFor(() => expect(sent('DELETE')?.path).toBe('/admin/spaces/s2'));
+});
+
+it('requires a scan interval of at least 10 seconds', async () => {
+  renderPage(<SpacesPage />);
+  fireEvent.keyDown(await screen.findByRole('button', { name: 'Actions for nas' }), { key: 'Enter' });
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit' }));
+  const dialog = await screen.findByRole('dialog');
+  fireEvent.change(within(dialog).getByLabelText('Scan interval (seconds)'), { target: { value: '5' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+  expect(within(dialog).getByText(/10 or more/)).toBeInTheDocument();
+  expect(sent('PATCH')).toBeUndefined();
 });
