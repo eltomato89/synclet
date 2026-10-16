@@ -79,6 +79,14 @@ export function conflictName(name: string, at: Date): string {
 }
 
 const trimSlash = (url: string) => url.replace(/\/+$/, '');
+/** Path prefix of a base URL without trailing slashes ("" for none). */
+const pathPrefix = (base: URL) => base.pathname.replace(/\/+$/, '');
+/** `url`'s path relative to `base`'s path prefix; null when it is not below it. */
+const belowPrefix = (url: URL, base: URL): string | null => {
+  const prefix = pathPrefix(base);
+  if (!prefix) return url.pathname;
+  return url.pathname === prefix || url.pathname.startsWith(`${prefix}/`) ? url.pathname.slice(prefix.length) : null;
+};
 
 export type CallbackResult = { error: 0 | 1 };
 
@@ -302,7 +310,10 @@ export class OfficeService {
 
   /**
    * The download URL from a callback, only on the configured Document Server (public or internal
-   * origin; no SSRF to anything else), rewritten to the internal URL (keeping its path prefix).
+   * URL; no SSRF to anything else), rewritten to the internal URL. A path prefix of the public URL
+   * (the Document Server below https://files.example.com/documentserver) is replaced by the
+   * internal URL's (http://office): such a URL must lie below that prefix, since the public origin
+   * is then Synclet's own. A URL on the internal origin keeps its path (below the internal prefix).
    * null when not allowed.
    */
   private downloadUrl(raw: unknown): string | null {
@@ -318,16 +329,16 @@ export class OfficeService {
     }
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
     if (url.username || url.password) return null;
-    if (url.origin !== pub.origin && url.origin !== internal.origin) return null;
     // A path starting with "//" (a backslash variant is normalized to it) would be scheme-relative
     // if it were ever resolved as a reference: refuse it outright.
     if (url.pathname.startsWith('//')) return null;
+    let rel: string | null = null;
+    if (url.origin === internal.origin) rel = belowPrefix(url, internal) ?? url.pathname;
+    else if (url.origin === pub.origin) rel = belowPrefix(url, pub);
+    if (rel === null) return null;
     // Built on a copy of the internal URL, so host and port can only come from the configuration.
     const target = new URL(internal.href);
-    const prefix = internal.pathname.replace(/\/+$/, '');
-    const rel = url.origin === internal.origin && prefix && (url.pathname === prefix || url.pathname.startsWith(`${prefix}/`))
-      ? url.pathname.slice(prefix.length) : url.pathname;
-    target.pathname = `${prefix}${rel}`;
+    target.pathname = `${pathPrefix(internal)}${rel}`;
     target.search = url.search;
     target.hash = '';
     if (target.origin !== internal.origin) return null;
