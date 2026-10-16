@@ -870,11 +870,13 @@
       "stale": "The latest refresh failed. The values below may be out of date.",
       "watcher": "File watcher",
       "watch": {
+        "starting": "Starting",
         "active": "Watching",
         "scan-only": "Scans only",
         "off": "Off"
       },
       "watchHint": {
+        "starting": "Setting up; until then changes in /data show up with the next scan",
         "active": "Changes in /data show up right away",
         "scan-only": "Changes in /data show up with the next scan",
         "off": "Changes made directly in /data aren't picked up"
