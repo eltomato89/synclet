@@ -1,6 +1,7 @@
 packages:
   - apps/server
   - apps/web
+  - apps/site
   - packages/*
   - e2e
 allowBuilds:
