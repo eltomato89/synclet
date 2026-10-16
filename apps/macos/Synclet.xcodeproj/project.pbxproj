@@ -15,6 +15,7 @@
 		1F4D23B1BF33782B565492D3 /* LoginModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25E1633E6ACB75BECC4645B5 /* LoginModel.swift */; };
 		2BACE763045072E41D574C9D /* AccountsModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9DEFD96AA4B8F7CC31E78232 /* AccountsModelTests.swift */; };
 		386D65F16AD4BFE59389D3CA /* ChangeMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDA45935F8FDAC9C7C8FC8D5 /* ChangeMonitor.swift */; };
+		3C2B81473037B695EDABB99C /* BrowserLoginTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FEF5C0A6195DD7B317D5344C /* BrowserLoginTests.swift */; };
 		448E51CE094CEC5AB88F2FBD /* SyncletKit in Frameworks */ = {isa = PBXBuildFile; productRef = 8FC63EFAA00022D3F750C6C8 /* SyncletKit */; };
 		4A1E92D64853EC51BA0C07CE /* MenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A53080418DFB6AA2F6F65AA3 /* MenuView.swift */; };
 		5EB9D35B01838B40E74F2AD9 /* MenuStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89A3DC5BF17F409309EB8197 /* MenuStatus.swift */; };
@@ -109,6 +110,7 @@
 		D4A29675CD5201E8AD9E062E /* FileProviderExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderExtension.swift; sourceTree = "<group>"; };
 		E7B95538C4E2F3B17506ED94 /* LoginModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoginModelTests.swift; sourceTree = "<group>"; };
 		EC952CD368A166FD6AA98466 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		FEF5C0A6195DD7B317D5344C /* BrowserLoginTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserLoginTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -235,6 +237,7 @@
 			isa = PBXGroup;
 			children = (
 				9DEFD96AA4B8F7CC31E78232 /* AccountsModelTests.swift */,
+				FEF5C0A6195DD7B317D5344C /* BrowserLoginTests.swift */,
 				0C72D8D5CBEEA1E36AFC7D73 /* ChangeMonitorTests.swift */,
 				95FDA675DF54DA8C1DDAFFD8 /* ErrorLogTests.swift */,
 				E7B95538C4E2F3B17506ED94 /* LoginModelTests.swift */,
@@ -373,6 +376,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				2BACE763045072E41D574C9D /* AccountsModelTests.swift in Sources */,
+				3C2B81473037B695EDABB99C /* BrowserLoginTests.swift in Sources */,
 				EEA44006D1FCA7BF0F7DBD0F /* ChangeMonitorTests.swift in Sources */,
 				C6BE5942DD6C874061ACC06A /* ErrorLogTests.swift in Sources */,
 				190ED6BF5373EDBCB3FA9A63 /* LoginModelTests.swift in Sources */,
