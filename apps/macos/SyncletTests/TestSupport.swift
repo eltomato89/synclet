@@ -185,6 +185,15 @@ final class FakeFinder: FinderIntegrating, @unchecked Sendable {
     func resolveAuthentication(domain: NSFileProviderDomain) async {
         resolvedAuthentication.append(domain.identifier.rawValue)
     }
+
+    private let lock = NSLock()
+    private var transient: [String] = []
+    /// Domains whose `.serverUnreachable` / `.insufficientQuota` throttling was lifted.
+    var resolvedTransient: [String] { lock.withLock { transient } }
+
+    func resolveTransientErrors(domain: NSFileProviderDomain) async {
+        lock.withLock { transient.append(domain.identifier.rawValue) }
+    }
 }
 
 /// Returns a prepared redirect instead of opening a browser.

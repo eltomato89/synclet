@@ -87,7 +87,8 @@ final class AccountsModel {
     func reload() {
         entries = manager.accounts.all().map { account in
             let failed = AuthFailureSignal.pending(container: container, key16: account.key16) != nil
-            let missingToken = manager.credentials.token(for: account.key) == nil
+            // Only a missing token asks for a sign-in; a keychain read error is transient.
+            let missingToken = manager.credentials.lookupToken(for: account.key) == .notFound
             return AccountEntry(account: account, status: failed || missingToken ? .needsLogin : .ok)
         }
         syncMonitors()
@@ -98,8 +99,8 @@ final class AccountsModel {
     /// Starts one ``ChangeMonitor`` per account (app launch; tests pass a factory). Accounts
     /// added later get theirs in ``reload()``.
     func startMonitoring(factory: ((StoredAccount) -> ChangeMonitor)? = nil) {
-        makeMonitor = factory ?? { [weak self, manager] account in
-            ChangeMonitor.live(account: account, manager: manager, container: manager.accounts.directory) {
+        makeMonitor = factory ?? { [weak self, manager, finder] account in
+            ChangeMonitor.live(account: account, manager: manager, container: manager.accounts.directory, finder: finder) {
                 self?.processAuthFailures()
             }
         }

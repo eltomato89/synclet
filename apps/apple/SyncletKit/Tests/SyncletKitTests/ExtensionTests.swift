@@ -86,6 +86,63 @@ final class ExtensionTests: XCTestCase {
         XCTAssertEqual(upload.body, Data("lokal geändert".utf8))
     }
 
+    /// I1: the first PUT is published but its response is lost; the system retries with the
+    /// old base version and gets 412 with our own content ⇒ no conflict copy, no problem.
+    func testLostPutResponseThenRetryWith412OfOwnContentMakesNoConflictCopy() async throws {
+        let content = "lokal geändert"
+        let file = Fixtures.tempFile(content)
+        let sha = try TransferEngine.sha256(of: file)
+        let published = Fixtures.itemJSON(id: "f_1", parentId: "d_5", name: "Angebot.pdf", version: 4,
+                                          contentEtag: "v4", etag: "v4", sha256: sha, size: Data(content.utf8).count)
+        let puts = Counter()
+        MockURLProtocol.reset { request in
+            switch (request.method, request.path) {
+            case ("PUT", "/api/sync/v1/items/f_1/content"):
+                if puts.next() == 1 { throw URLError(.networkConnectionLost) } // committed, response lost
+                return .error(412, "conflict", item: published)
+            default:
+                XCTFail("unexpected: \(request.method) \(request.path)")
+                return .empty(500)
+            }
+        }
+        let local = FileProviderItem(Fixtures.item(id: "f_1", parentId: "d_5", name: "Angebot.pdf"), layout: Fixtures.layout)
+        let base = NSFileProviderItemVersion(contentVersion: Data("v3".utf8), metadataVersion: Data("m".utf8))
+        let ext = ReportRecordingExtension.make(tempDir: tempDir, context: context)
+
+        do {
+            _ = try await ext.modify(item: local, baseVersion: base, changedFields: [.contents],
+                                     contents: file, context: context, progress: nil)
+            XCTFail("the lost response must fail the first attempt")
+        } catch {}
+        let result = try await ext.modify(item: local, baseVersion: base, changedFields: [.contents],
+                                          contents: file, context: context, progress: nil)
+
+        XCTAssertEqual(result.item.syncItem?.contentEtag, "v4")
+        XCTAssertFalse(result.shouldFetchContent)
+        XCTAssertEqual(MockURLProtocol.requests.map(\.method), ["PUT", "PUT"])
+        XCTAssertEqual(MockURLProtocol.requests.last?.header("If-Match"), "\"v3\"")
+        XCTAssertTrue(ext.problems.isEmpty)
+    }
+
+    /// Same size but other content on the server ⇒ still a real conflict.
+    func testConflictWithSameSizeButOtherShaStillMakesCopy() async throws {
+        let content = "lokal geändert"
+        let serverJSON = Fixtures.itemJSON(id: "f_1", parentId: "d_5", name: "Angebot.pdf", version: 4, contentEtag: "v4",
+                                           etag: "v4", sha256: String(repeating: "0", count: 64), size: Data(content.utf8).count)
+        MockURLProtocol.reset { request in
+            request.method == "PUT" ? .error(412, "conflict", item: serverJSON)
+                : .json(201, Fixtures.itemJSON(id: "f_copy", parentId: "d_5", name: request.query["name"] ?? ""))
+        }
+        let local = FileProviderItem(Fixtures.item(id: "f_1", parentId: "d_5", name: "Angebot.pdf"), layout: Fixtures.layout)
+        let base = NSFileProviderItemVersion(contentVersion: Data("v3".utf8), metadataVersion: Data())
+        let ext = ReportRecordingExtension.make(tempDir: tempDir, context: context)
+        let result = try await ext.modify(item: local, baseVersion: base, changedFields: [.contents],
+                                          contents: Fixtures.tempFile(content), context: context, progress: nil)
+        XCTAssertTrue(result.shouldFetchContent)
+        XCTAssertEqual(MockURLProtocol.requests.map(\.method), ["PUT", "POST"])
+        XCTAssertEqual(ext.problems.map(\.code), [.conflictCopy])
+    }
+
     func testModifyContentConflictAtTopLevelUploadsCopyIntoRoot() async throws {
         let serverJSON = Fixtures.itemJSON(id: "f_1", parentId: "root", name: "Notiz.txt", version: 5, contentEtag: "v5", etag: "v5")
         MockURLProtocol.reset { request in
@@ -417,7 +474,10 @@ final class ExtensionTests: XCTestCase {
     func testCreateFileNameConflictRenamesUnlessIdentical() async throws {
         let existing = Fixtures.itemJSON(id: "f_old", parentId: "d_1", name: "Notiz.txt", sha256: "0000")
         MockURLProtocol.reset { request in
-            request.query["onConflict"] == "fail"
+            if request.method == "GET" { // children lookup for an earlier published "(n)" copy
+                return .json(200, #"{"items":[\#(existing)],"nextPageToken":null,"cursor":"1"}"#)
+            }
+            return request.query["onConflict"] == "fail"
                 ? .error(409, "name_conflict", item: existing)
                 : .json(201, Fixtures.itemJSON(id: "f_new", parentId: "d_1", name: "Notiz (2).txt"))
         }
@@ -425,7 +485,7 @@ final class ExtensionTests: XCTestCase {
         let created = try await makeExtension().create(template: template, contents: Fixtures.tempFile("x"), modifiedAt: nil,
                                                        mayAlreadyExist: false, context: context, progress: nil)
         XCTAssertEqual(created.name, "Notiz (2).txt")
-        XCTAssertEqual(MockURLProtocol.requests.map { $0.query["onConflict"] }, ["fail", "rename"])
+        XCTAssertEqual(MockURLProtocol.requests.filter { $0.method == "POST" }.map { $0.query["onConflict"] }, ["fail", "rename"])
     }
 
     func testCreateReusesIdenticalExistingFile() async throws {
@@ -575,6 +635,37 @@ final class ExtensionTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: result.url, encoding: .utf8), "Stand 2")
     }
 
+    /// M4: a keychain read error is transient (`serverUnreachable`); only a missing token
+    /// means "sign in again" (`notAuthenticated`, which writes the auth-failure marker).
+    func testKeychainReadFailureIsTransientNotSignInRequired() throws {
+        let accounts = AccountStore(directory: tempDir)
+        let stored = try accounts.upsert(StoredAccount(key: "srv1:u1", serverURL: Fixtures.server, userId: "u1",
+                                                      username: "jens", displayName: "Jens", spaces: [Fixtures.personal]))
+        let domain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(stored.key16), displayName: "x")
+        func ext(_ storage: SecureStorage) -> SyncletReplicatedExtension {
+            let provider = SyncletReplicatedExtension.makeContextProvider(domain: domain, accounts: accounts,
+                                                                         credentials: CredentialStore(storage: storage))
+            return SyncletReplicatedExtension(domain: domain, temporaryDirectory: tempDir, contextProvider: provider)
+        }
+        func code(_ ext: SyncletReplicatedExtension) -> Int? {
+            do {
+                _ = try ext.context()
+                return nil
+            } catch {
+                return (ErrorMapping.fileProviderError(error) as NSError).code
+            }
+        }
+
+        XCTAssertEqual(code(ext(LockedKeychain())), NSFileProviderError.Code.serverUnreachable.rawValue)
+        XCTAssertEqual(code(ext(InMemorySecureStorage())), NSFileProviderError.Code.notAuthenticated.rawValue)
+        let ok = InMemorySecureStorage()
+        ok.write("syd_x", account: "srv1:u1")
+        XCTAssertNil(code(ext(ok)))
+        XCTAssertThrowsError(try ext(LockedKeychain()).enumerator(for: personal, request: NSFileProviderRequest())) { error in
+            XCTAssertEqual((ErrorMapping.fileProviderError(error) as NSError).code, NSFileProviderError.Code.serverUnreachable.rawValue)
+        }
+    }
+
     func testEnumeratorsAndMissingCredentials() throws {
         let domain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier("0123456789abcdef"), displayName: "x")
         let signedOut = SyncletReplicatedExtension(domain: domain) { nil }
@@ -587,4 +678,30 @@ final class ExtensionTests: XCTestCase {
         XCTAssertTrue(try ext.enumerator(for: personal, request: NSFileProviderRequest()) is FileProviderEnumerator)
         XCTAssertTrue(try ext.enumerator(for: .workingSet, request: NSFileProviderRequest()) is FileProviderEnumerator)
     }
+}
+
+/// Records reported problems.
+final class ReportRecordingExtension: SyncletReplicatedExtension, @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [SyncProblem] = []
+    var problems: [SyncProblem] { lock.withLock { recorded } }
+
+    override func report(_ problem: SyncProblem) {
+        lock.withLock { recorded.append(problem) }
+    }
+
+    static func make(tempDir: URL, context: Context) -> ReportRecordingExtension {
+        let domain = NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier("0123456789abcdef"), displayName: "Synclet – jens@test")
+        return ReportRecordingExtension(domain: domain, temporaryDirectory: tempDir,
+                                        now: { Date(timeIntervalSince1970: 1_791_031_815) }) { context }
+    }
+}
+
+
+/// A keychain that cannot be read right now (`errSecInteractionNotAllowed`).
+struct LockedKeychain: SecureStorage {
+    func read(account: String) -> String? { nil }
+    func lookup(account: String) -> SecureLookup { .failed(errSecInteractionNotAllowed) }
+    func write(_ value: String, account: String) -> OSStatus { errSecInteractionNotAllowed }
+    func remove(account: String) {}
 }

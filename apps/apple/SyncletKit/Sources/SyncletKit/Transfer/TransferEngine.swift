@@ -139,6 +139,15 @@ public final class TransferEngine: Sendable {
                     && existing.sha256 != nil && existing.sha256 == (try? Self.sha256(of: file)) {
             return existing
         } catch SyncAPIError.nameConflict {
+            // Another file has the name. An earlier attempt may already have been published
+            // under a server-picked `(n)` name with its response lost: reuse that one
+            // (size + sha256, and `modifiedAt` when known) instead of uploading `(n+1)`.
+            if let published = try await findIdentical(name: name, parentId: parentId, modifiedAt: modifiedAt,
+                                                       size: try Self.fileInfo(file).size, hash: LazyHash(file: file),
+                                                       allowSuffixed: true) {
+                progress?.completedUnitCount = published.size
+                return published
+            }
             return try await api.uploadNewFile(parentID: parentId, name: name, from: file, onConflict: .rename,
                                                modifiedAt: modifiedAt, progress: progress)
         }
@@ -163,7 +172,11 @@ public final class TransferEngine: Sendable {
         var resumed = false
 
         // 1. Resume a stored upload when the local file and the target are unchanged.
-        if let state = stateStore.load(key: key) {
+        if let state = stateStore.load(key: key), !tus.isSameOrigin(state.uploadURL) {
+            // Stored by another server address (or tampered with): never send the token there.
+            Log.transfer.error("stored upload URL is on another origin, discarding it")
+            stateStore.remove(key: key)
+        } else if let state = stateStore.load(key: key) {
             if state.fileSize == info.size, state.length == info.size, state.fileMtime == info.mtime,
                Self.sameTarget(state.target, requested, nameMayChange: nameMayChange) {
                 // The server publishes with the stored metadata (N2: the first attempt's name).

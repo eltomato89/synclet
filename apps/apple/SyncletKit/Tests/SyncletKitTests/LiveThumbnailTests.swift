@@ -133,7 +133,7 @@ final class LiveThumbnailTests: XCTestCase {
 
         // Cached by item id in the size bucket 256 (300 is nearer to 256 than to 1024), with
         // the server's ETag "<sha256>-256" as the validator: the server answers 304 to it.
-        let cacheDir = temp.appending(path: "thumbnails")
+        let cacheDir = temp.appending(path: "thumbnails").appending(path: domain.identifier.rawValue)
         let files = Set(try FileManager.default.contentsOfDirectory(atPath: cacheDir.path))
         XCTAssertTrue(files.contains(ThumbnailCache.fileName(itemID: png.id, size: 256)), "\(files)")
         let cached = try XCTUnwrap(ThumbnailCache(directory: cacheDir).entry(itemID: png.id, size: 256))

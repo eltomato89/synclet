@@ -15,6 +15,10 @@ import SyncletKit
 /// - Network path becomes satisfied, or the Mac wakes → reconnect at once and signal.
 /// - On every `.connected` and every 15 min → `GET /account`; changed `spaces` are stored
 ///   and `.rootContainer` is signalled.
+/// - The server is reachable again → `signalErrorResolved` for `.serverUnreachable` and
+///   `.insufficientQuota` (``Dependencies/resolveErrors``): once per connection (on `hello`,
+///   not again for the `/account` refresh it triggers) and after every successful periodic
+///   `/account` refresh (a full disk can be freed while the stream stays open).
 /// - 401/403 → ``State/authFailed``, the auth-failure marker is written, the stream stops.
 ///
 /// Owned by ``AccountsModel`` (one per account). The state feeds the menu (T8).
@@ -47,6 +51,8 @@ final class ChangeMonitor {
         /// Fires when the network path becomes satisfied or the Mac wakes.
         var wakeUps: @Sendable () -> AsyncStream<Void>
         var now: @Sendable () -> Date = { Date() }
+        /// Lifts the system's throttling of `.serverUnreachable` / `.insufficientQuota` items.
+        var resolveErrors: @Sendable () async -> Void = {}
     }
 
     struct Timing {
@@ -83,6 +89,8 @@ final class ChangeMonitor {
     @ObservationIgnored private var lastWorkingSetSignal: ContinuousClock.Instant?
     /// Identifies the current stream task (an old task's late signals are ignored).
     @ObservationIgnored private var generation = 0
+    /// Errors were signalled as resolved for the current connection (reset when it drops).
+    @ObservationIgnored private var resolvedThisConnection = false
 
     private static let log = Logger(subsystem: "tech.jensk.synclet", category: "changes")
 
@@ -109,7 +117,7 @@ final class ChangeMonitor {
             while !Task.isCancelled {
                 try? await Task.sleep(for: timing.accountRefresh)
                 guard !Task.isCancelled, let self else { return }
-                if self.state != .authFailed { await self.refreshAccount() }
+                if self.state != .authFailed { await self.refreshAccount(periodic: true) }
             }
         }
         connect()
@@ -183,8 +191,12 @@ final class ChangeMonitor {
             reconnectAttempt = 0
             setState(.connected)
             signalWorkingSet()
+            if !resolvedThisConnection {
+                resolvedThisConnection = true
+                resolveErrors()
+            }
             accountTask?.cancel()
-            accountTask = Task { [weak self] in await self?.refreshAccount() }
+            accountTask = Task { [weak self] in await self?.refreshAccount(periodic: false) }
         case .changes:
             if state != .connected { setState(.connected) }
             signalWorkingSet()
@@ -237,6 +249,7 @@ final class ChangeMonitor {
 
     private func setState(_ newState: State) {
         if state != newState { state = newState }
+        if newState != .connected { resolvedThisConnection = false }
         // Fallback polling runs exactly while the stream is not connected (and sign-in is fine).
         let wantsFallback = isRunning && (newState == .connecting || newState == .offline)
         if wantsFallback, fallbackTask == nil {
@@ -280,12 +293,20 @@ final class ChangeMonitor {
         Task { await signal(.workingSet) }
     }
 
-    /// `GET /account`; changed spaces are stored and the root container is signalled.
-    private func refreshAccount() async {
+    private func resolveErrors() {
+        let resolve = dependencies.resolveErrors
+        Task { await resolve() }
+    }
+
+    /// `GET /account`; changed spaces are stored and the root container is signalled. A
+    /// successful periodic refresh also lifts throttled transient errors (the one right
+    /// after `hello` does not: `hello` already did).
+    private func refreshAccount(periodic: Bool) async {
         do {
             let account = try await dependencies.fetchAccount()
             // Stopped (signed out) or rejected meanwhile: do not touch the account any more.
             guard isRunning, state != .authFailed, !Task.isCancelled else { return }
+            if periodic { resolveErrors() }
             if dependencies.updateSpaces(account.spaces) {
                 Self.log.info("spaces changed: signalling the root container")
                 await dependencies.signal(.rootContainer)
@@ -311,6 +332,7 @@ extension ChangeMonitor {
     /// The monitor of a stored account, wired to the system (`NSFileProviderManager`,
     /// keychain, `NWPathMonitor`, `NSWorkspace`).
     static func live(account: StoredAccount, manager: AccountManager, container: URL,
+                     finder: FinderIntegrating = SystemFinderIntegration(),
                      onAuthFailure: @escaping @MainActor () -> Void) -> ChangeMonitor {
         let key = account.key
         let key16 = account.key16
@@ -332,7 +354,8 @@ extension ChangeMonitor {
                 AuthFailureSignal.report(container: container, key16: key16, post: false)
                 onAuthFailure()
             },
-            wakeUps: { SystemWakeUps.stream() }
+            wakeUps: { SystemWakeUps.stream() },
+            resolveErrors: { await finder.resolveTransientErrors(domain: manager.domain(for: key)) }
         )
         return ChangeMonitor(accountKey: key, dependencies: dependencies)
     }

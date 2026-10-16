@@ -15,8 +15,11 @@ import SyncletKit
 /// - After a toggle the model signals the working set, so the extension re-reports the
 ///   affected items with their new policy.
 /// - Fallback (whether or not macOS acts on the policy by itself):
-///   - after a toggle, at launch and on load: a walk below the pins requests every file that
-///     is not downloaded yet (and measures the pinned bytes shown as "≈ …");
+///   - after a toggle and on load: a walk below the pins requests every file that is not
+///     downloaded yet (and measures the pinned bytes shown as "≈ …");
+///   - at launch only when the pins differ from those of the last finished walk
+///     (``OfflineWalkRecord``, which also restores the measured sizes), or when the
+///     extension's download queue overflowed; queued announced ids are drained at launch;
 ///   - when the extension announces new pinned content
 ///     (`tech.jensk.synclet.pinnedContentChanged.<key16>`): exactly the announced ids from
 ///     the ``PinnedDownloadQueue`` are requested (no walk; metadata-only changes are never
@@ -93,6 +96,10 @@ final class PinningModel {
         }
 
         var hasPins: Bool { spaces.contains { !$0.pins.isEmpty } }
+        /// Pins per space id (non-empty ones).
+        var pinsBySpace: [String: PinSet] {
+            Dictionary(uniqueKeysWithValues: spaces.filter { !$0.pins.isEmpty }.map { ($0.id, $0.pins) })
+        }
         var pinnedContainers: [NSFileProviderItemIdentifier] { spaces.flatMap(\.pinnedContainers) }
     }
 
@@ -180,12 +187,28 @@ final class PinningModel {
         refreshing.remove(key)
     }
 
-    /// App launch: watch the account list, and catch up on pinned downloads.
+    /// App launch: watch the account list, and catch up on pinned downloads. A full walk of
+    /// the pinned trees runs only when the pins changed since the last finished walk (or the
+    /// download queue overflowed, see ``pinnedContentChanged(key16:)``); announced ids queued
+    /// while the app was not running are requested.
     func start() {
         observeAccounts()
         for account in accounts where account.hasPins {
-            refreshOffline(key: account.key)
+            if let record = OfflineWalkRecord.load(from: walkRecordURL(key: account.key)),
+               record.pins == account.pinsBySpace {
+                applyMeasurements(Dictionary(uniqueKeysWithValues: record.measured.map { (NSFileProviderItemIdentifier($0.key), $0.value) }),
+                                  key: account.key)
+                Logger.app.info("pins unchanged since the last walk: no launch walk")
+            } else {
+                refreshOffline(key: account.key)
+            }
+            pinnedContentChanged(key16: account.key16)
         }
+    }
+
+    /// `accounts/<key16>/offline-walk.json` (app only).
+    private func walkRecordURL(key: String) -> URL {
+        accountsModel.manager.accounts.accountDirectory(key: key).appending(path: "offline-walk.json", directoryHint: .notDirectory)
     }
 
     private func observeAccounts() {
@@ -312,7 +335,10 @@ final class PinningModel {
             refreshAgain.insert(key)
             return
         }
-        guard let containers = account(key: key)?.pinnedContainers, !containers.isEmpty else { return }
+        guard let account = account(key: key), !account.pinnedContainers.isEmpty else { return }
+        let containers = account.pinnedContainers
+        let pins = account.pinsBySpace
+        let recordURL = walkRecordURL(key: key)
         let domain = domain(key: key)
         let content = content
         refreshing.insert(key)
@@ -320,6 +346,8 @@ final class PinningModel {
             let bytes = await content.ensureDownloaded(domain: domain, containers: containers)
             guard !Task.isCancelled else { return }
             self.applyMeasurements(bytes, key: key)
+            OfflineWalkRecord(pins: pins, measured: Dictionary(uniqueKeysWithValues: bytes.map { ($0.key.rawValue, $0.value) }))
+                .save(to: recordURL)
             self.refreshes[key] = nil
             self.refreshing.remove(key)
             if self.refreshAgain.remove(key) != nil { self.refreshOffline(key: key) }
@@ -422,6 +450,40 @@ final class PinningModel {
             pinsChanged(key16: String(name.dropFirst(PinStore.notificationPrefix.count)))
         } else if name.hasPrefix(PinStore.pinnedContentNotificationPrefix) {
             pinnedContentChanged(key16: String(name.dropFirst(PinStore.pinnedContentNotificationPrefix.count)))
+        }
+    }
+}
+
+/// The pins and measured sizes of the last finished offline walk of an account
+/// (`accounts/<key16>/offline-walk.json`, app only), so the launch can skip the walk when
+/// nothing changed.
+struct OfflineWalkRecord: Codable, Equatable {
+    static let formatVersion = StateFormat.version
+    var v = OfflineWalkRecord.formatVersion
+    var pins: [String: PinSet]
+    /// Bytes per container identifier.
+    var measured: [String: Int64]
+
+    init(pins: [String: PinSet], measured: [String: Int64]) {
+        self.pins = pins
+        self.measured = measured
+    }
+
+    /// `nil` when missing, unreadable or of a newer format (then the walk runs).
+    static func load(from url: URL) -> OfflineWalkRecord? {
+        guard let data = try? Data(contentsOf: url),
+              let record = try? JSONDecoder().decode(OfflineWalkRecord.self, from: data),
+              record.v <= formatVersion else { return nil }
+        return record
+    }
+
+    func save(to url: URL) {
+        // Only into an existing account directory (signed out meanwhile ⇒ nothing).
+        guard FileManager.default.fileExists(atPath: url.deletingLastPathComponent().path) else { return }
+        do {
+            try JSONEncoder().encode(self).write(to: url, options: .atomic)
+        } catch {
+            Logger.app.error("offline walk record not saved: \(String(describing: error), privacy: .public)")
         }
     }
 }

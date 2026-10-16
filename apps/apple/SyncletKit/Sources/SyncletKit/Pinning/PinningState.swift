@@ -1,5 +1,19 @@
 import Foundation
 
+/// Format version written into the JSON files of the app group (`"v"`). Readers accept files
+/// without it (written before versioning, same format as version 1); a future breaking change
+/// bumps it and migrates instead of silently resetting.
+public enum StateFormat {
+    public static let version = 1
+}
+
+/// A versioned JSON map file: `{"v":1,"entries":{…}}`.
+struct VersionedEntries<Value: Codable>: Codable {
+    var v: Int = StateFormat.version
+    var entries: Value
+    init(_ entries: Value) { self.entries = entries }
+}
+
 /// An exclusive `flock` on a lock file, shared by app and extension (cross-process).
 enum FileLock {
     static func withLock<T>(_ url: URL, _ body: () throws -> T) throws -> T {
@@ -24,6 +38,8 @@ final class SharedJSONMap<Value: Codable & Sendable & Equatable>: @unchecked Sen
     // Guarded by `lock`.
     private var storage: [String: Value]?
     private var dirty = false
+    /// Identity of the directory the storage was loaded from (``DirectoryStamp``).
+    private var stamp: DirectoryStamp?
 
     init(fileURL: URL?) {
         self.fileURL = fileURL
@@ -55,9 +71,15 @@ final class SharedJSONMap<Value: Codable & Sendable & Equatable>: @unchecked Sen
     func flush() {
         lock.withLock {
             guard dirty, let fileURL, let storage else { return }
+            // The account directory is gone (signed out while an operation was in flight):
+            // drop the state instead of recreating the directory.
+            guard FileManager.default.fileExists(atPath: fileURL.deletingLastPathComponent().path) else {
+                self.storage = nil
+                dirty = false
+                return
+            }
             do {
-                try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try JSONEncoder().encode(storage).write(to: fileURL, options: .atomic)
+                try JSONEncoder().encode(VersionedEntries(storage)).write(to: fileURL, options: .atomic)
                 dirty = false
             } catch {
                 Log.pinning.error("\(fileURL.lastPathComponent, privacy: .public) not saved: \(String(describing: error), privacy: .public)")
@@ -65,16 +87,41 @@ final class SharedJSONMap<Value: Codable & Sendable & Equatable>: @unchecked Sen
         }
     }
 
-    /// Must be called with `lock` held.
+    /// Must be called with `lock` held. Reloads when the directory was removed or replaced
+    /// meanwhile (sign-out and a new sign-in of the same account in a long-lived process).
     private func loaded() -> [String: Value] {
-        if let storage { return storage }
+        let current = fileURL.flatMap { DirectoryStamp($0.deletingLastPathComponent()) }
+        if let storage, current == stamp { return storage }
+        if storage != nil { Log.pinning.info("account directory replaced: reloading \(self.fileURL?.lastPathComponent ?? "", privacy: .public)") }
+        stamp = current
+        dirty = false
         var result: [String: Value] = [:]
-        if let fileURL, let data = try? Data(contentsOf: fileURL),
-           let decoded = try? JSONDecoder().decode([String: Value].self, from: data) {
-            result = decoded
+        if let fileURL, let data = try? Data(contentsOf: fileURL) {
+            // Versioned file, or the unversioned map of earlier builds.
+            if let decoded = try? JSONDecoder().decode(VersionedEntries<[String: Value]>.self, from: data) {
+                result = decoded.entries
+            } else if let decoded = try? JSONDecoder().decode([String: Value].self, from: data) {
+                result = decoded
+            }
         }
         storage = result
         return result
+    }
+}
+
+/// Inode and creation time of a directory: tells a directory apart from one removed and
+/// created again at the same path. `nil` when it does not exist.
+struct DirectoryStamp: Equatable, Sendable {
+    let inode: UInt64
+    let birthSeconds: Int
+    let birthNanoseconds: Int
+
+    init?(_ url: URL) {
+        var info = stat()
+        guard stat(url.path, &info) == 0 else { return nil }
+        inode = UInt64(info.st_ino)
+        birthSeconds = info.st_birthtimespec.tv_sec
+        birthNanoseconds = info.st_birthtimespec.tv_nsec
     }
 }
 
@@ -144,6 +191,8 @@ public final class PinnedDownloadQueue: Sendable {
     public struct Batch: Codable, Sendable, Equatable {
         public var ids: [String] = []
         public var overflow = false
+        /// ``StateFormat/version`` (absent in files of earlier builds).
+        public var v: Int? = StateFormat.version
         public init(ids: [String] = [], overflow: Bool = false) {
             self.ids = ids
             self.overflow = overflow

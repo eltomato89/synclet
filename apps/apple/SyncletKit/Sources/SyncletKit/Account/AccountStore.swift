@@ -20,10 +20,14 @@ public struct StoredAccount: Codable, Sendable, Hashable, Identifiable {
     public var deviceName: String?
     public var deviceId: String?
     public var email: String?
+    /// When the current device token was stored (JSON: seconds since 2001-01-01, the
+    /// `Date` reference, so it round-trips exactly). An auth failure of an operation that started before it may have used the
+    /// previous token and is ignored (it must not mark the fresh sign-in as rejected).
+    public var signedInAt: Date?
 
     public init(key: String, serverURL: URL, userId: String, username: String, displayName: String,
                 spaces: [SyncSpace], addedAt: Date = Date(), deviceName: String? = nil,
-                deviceId: String? = nil, email: String? = nil) {
+                deviceId: String? = nil, email: String? = nil, signedInAt: Date? = nil) {
         self.key = key
         self.serverURL = serverURL
         self.userId = userId
@@ -34,6 +38,7 @@ public struct StoredAccount: Codable, Sendable, Hashable, Identifiable {
         self.deviceName = deviceName
         self.deviceId = deviceId
         self.email = email
+        self.signedInAt = signedInAt
     }
 
     public var id: String { key }
@@ -47,7 +52,7 @@ public struct StoredAccount: Codable, Sendable, Hashable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case key, serverURL, userId, username, displayName, spaces, addedAt, deviceName, deviceId, email
+        case v, key, serverURL, userId, username, displayName, spaces, addedAt, deviceName, deviceId, email, signedInAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -62,6 +67,24 @@ public struct StoredAccount: Codable, Sendable, Hashable, Identifiable {
         deviceName = try c.decodeIfPresent(String.self, forKey: .deviceName)
         deviceId = try c.decodeIfPresent(String.self, forKey: .deviceId)
         email = try c.decodeIfPresent(String.self, forKey: .email)
+        signedInAt = try c.decodeIfPresent(Double.self, forKey: .signedInAt).map(Date.init(timeIntervalSinceReferenceDate:))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(StateFormat.version, forKey: .v)
+        try c.encode(key, forKey: .key)
+        try c.encode(serverURL, forKey: .serverURL)
+        try c.encode(userId, forKey: .userId)
+        try c.encode(username, forKey: .username)
+        try c.encode(displayName, forKey: .displayName)
+        try c.encode(spaces, forKey: .spaces)
+        try c.encode(addedAt, forKey: .addedAt)
+        try c.encodeIfPresent(deviceName, forKey: .deviceName)
+        try c.encodeIfPresent(deviceId, forKey: .deviceId)
+        try c.encodeIfPresent(email, forKey: .email)
+        // Sub-second precision (the ISO 8601 dates of this file have whole seconds only).
+        try c.encodeIfPresent(signedInAt?.timeIntervalSinceReferenceDate, forKey: .signedInAt)
     }
 }
 
@@ -70,6 +93,8 @@ public struct SpaceSyncState: Codable, Sendable, Hashable {
     /// Last change cursor the extension reported to the system.
     public var cursor: String
     public var updatedAt: Date
+    /// ``StateFormat/version`` (absent in files of earlier builds).
+    public var v: Int? = StateFormat.version
 
     public init(cursor: String, updatedAt: Date = Date()) {
         self.cursor = cursor
@@ -164,16 +189,22 @@ public final class AccountStore: Sendable {
     }
 
     /// Inserts or replaces the account with the same key. A replaced account keeps its
-    /// `addedAt` and its state directory (spaces, pins).
+    /// `addedAt` and its state directory (spaces, pins); a new one starts with an empty
+    /// directory (leftovers of an earlier sign-in are removed).
     @discardableResult
     public func upsert(_ account: StoredAccount) throws -> StoredAccount {
         var stored = account
         // Whole seconds: the JSON stores ISO 8601 without fractions.
         stored.addedAt = Date(timeIntervalSince1970: account.addedAt.timeIntervalSince1970.rounded(.down))
+        let directory = accountDirectory(key: account.key)
         if let existing = self.account(key: account.key) {
             stored.addedAt = existing.addedAt
+        } else if FileManager.default.fileExists(atPath: directory.path) {
+            // A new account: whatever is left in its directory (an extension operation still
+            // in flight at sign-out wrote a cursor, ledger or queue) must not be inherited.
+            Log.account.info("clearing leftover state of a previous sign-in")
+            try FileManager.default.removeItem(at: directory)
         }
-        let directory = accountDirectory(key: account.key)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try Self.encoder.encode(stored).write(to: accountFile(key16: stored.key16), options: .atomic)
         return stored

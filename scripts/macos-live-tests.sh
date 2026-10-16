@@ -10,7 +10,10 @@
 #   scripts/macos-live-tests.sh --serve         # no tests: keep the stack up for the manual Finder
 #                                               # checklist (apps/macos/README.md) until Ctrl-C
 #
-# Env: SYNCLET_MACLIVE_PORT / _TLS_PORT (default 18181 / 18544), SYNCLET_LIVE_SIZE_MB (size of the
+# Env: SYNCLET_MACLIVE_PORT / _TLS_PORT (default: the first free port from 18181 / 18544 up, so
+# parallel runs do not collide), SYNCLET_MACLIVE_DATA_DIR (the server's files folder instead of a fresh
+# temp folder, e.g. on a small disk image for the manual 507 check; never removed by the trap),
+# SYNCLET_LIVE_SIZE_MB (size of the
 # interrupted-transfer tests, default 48 here), SYNCLET_LIVE_INTERRUPT (see LiveTransferTests),
 # SYNCLET_MACLIVE_MAX_UPLOAD_BYTES sets the server's SYNCLET_MAX_UPLOAD_BYTES (for the manual 413 check
 # with --serve; the live tests need more than 64 MB), MACLIVE_LOGS=1 prints the server log on
@@ -21,17 +24,24 @@ command -v jq >/dev/null || { echo "FAIL: jq is required" >&2; exit 2; }
 command -v swift >/dev/null || { echo "FAIL: swift (Xcode) is required" >&2; exit 2; }
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-PORT=${SYNCLET_MACLIVE_PORT:-18181}
-TLS_PORT=${SYNCLET_MACLIVE_TLS_PORT:-18544}
+# First port from $1 up that nothing listens on (and that is not $2).
+free_port() {
+  local port=$1
+  while nc -z localhost "$port" >/dev/null 2>&1 || [ "$port" = "${2:-}" ]; do port=$((port + 1)); done
+  echo "$port"
+}
+PORT=${SYNCLET_MACLIVE_PORT:-$(free_port 18181)}
+TLS_PORT=${SYNCLET_MACLIVE_TLS_PORT:-$(free_port 18544 "$PORT")}
 PROJECT=synclet-maclive-$$
 TAG=maclive-$$
 FILTER=${1:-Live}
 USER_NAME=maclive
 PASSWORD='correct horse battery staple'
 WORK=$(mktemp -d)
-mkdir -p "$WORK/files" "$WORK/meta"
+DATA_DIR=${SYNCLET_MACLIVE_DATA_DIR:-$WORK/files}
+mkdir -p "$DATA_DIR" "$WORK/meta"
 cat > "$WORK/.env" <<ENV
-SYNCLET_DATA=$WORK/files
+SYNCLET_DATA=$DATA_DIR
 SYNCLET_META=$WORK/meta
 PUID=$(id -u)
 PGID=$(id -g)
@@ -41,8 +51,11 @@ SYNCLET_TLS_PORT=$TLS_PORT
 SYNCLET_SITE_ADDRESS=:80
 SYNCLET_PUBLIC_URL=http://localhost:$PORT
 SYNCLET_VERSIONS=on
-SYNCLET_MAX_UPLOAD_BYTES=${SYNCLET_MACLIVE_MAX_UPLOAD_BYTES:-}
 ENV
+# Only when set: an empty value would override the server's default.
+if [ -n "${SYNCLET_MACLIVE_MAX_UPLOAD_BYTES:-}" ]; then
+  echo "SYNCLET_MAX_UPLOAD_BYTES=$SYNCLET_MACLIVE_MAX_UPLOAD_BYTES" >> "$WORK/.env"
+fi
 # Images tagged per run, so parallel runs and the dev images (synclet/*:dev) never collide.
 cat > "$WORK/compose.maclive.yml" <<YML
 services:

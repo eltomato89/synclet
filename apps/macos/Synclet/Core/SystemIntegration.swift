@@ -75,6 +75,10 @@ protocol FinderIntegrating: Sendable {
     /// After signing in again: lifts the system's throttling of items that failed with
     /// `.notAuthenticated` (`signalErrorResolved`) and lets the extension re-read the working set.
     func resolveAuthentication(domain: NSFileProviderDomain) async
+    /// The server is reachable again (SSE `hello`, a successful `GET /account`): lifts the
+    /// system's throttling of items that failed with `.serverUnreachable` or
+    /// `.insufficientQuota` (507), so stuck uploads are retried now.
+    func resolveTransientErrors(domain: NSFileProviderDomain) async
 }
 
 /// Production: `NSFileProviderManager`.
@@ -92,6 +96,17 @@ struct SystemFinderIntegration: FinderIntegrating {
             Logger.app.error("signalErrorResolved failed: \(String(describing: error), privacy: .public)")
         }
         try? await manager.signalEnumerator(for: .workingSet)
+    }
+
+    func resolveTransientErrors(domain: NSFileProviderDomain) async {
+        guard let manager = NSFileProviderManager(for: domain) else { return }
+        for code in [NSFileProviderError.Code.serverUnreachable, .insufficientQuota] {
+            do {
+                try await manager.signalErrorResolved(NSFileProviderError(code))
+            } catch {
+                Logger.app.error("signalErrorResolved(\(code.rawValue, privacy: .public)) failed: \(String(describing: error), privacy: .public)")
+            }
+        }
     }
 
     func pendingItemCount(domain: NSFileProviderDomain) async -> Int? {

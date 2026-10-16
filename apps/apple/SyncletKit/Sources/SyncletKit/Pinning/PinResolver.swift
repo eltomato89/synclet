@@ -128,6 +128,7 @@ struct PinResolver: Sendable {
                       walking: Bool, announce: Bool) -> String? {
         let kept = Self.isKept(policy)
         if item.isFolder {
+            guard hasPins else { return nil }
             if map.notePolicy(item.id, kept: kept), !walking {
                 Log.pinning.info("folder \(item.id, privacy: .public) moved across a pin: re-reporting its subtree")
                 queue.enqueue(PinTask(kind: .walk, id: item.id, spaceId: spaceId, firstLevel: firstLevel, announce: true))
@@ -145,7 +146,9 @@ struct PinResolver: Sendable {
     /// Records the folders and maps the items with their policy. Returns the ids of kept
     /// files with new content. Only cancellation is thrown.
     func items(_ syncItems: [SyncItem], announce: Bool = true) async throws -> (items: [FileProviderItem], announce: [String]) {
-        map.record(syncItems)
+        // Without pins no ancestor is ever resolved: keep the map empty instead of growing it
+        // with every enumerated folder (it is rebuilt by the walks once a pin appears).
+        if hasPins { map.record(syncItems) } else { map.removeAll() }
         var result: [FileProviderItem] = []
         var fresh: [String] = []
         result.reserveCapacity(syncItems.count)
@@ -364,6 +367,7 @@ public final class PinWorkQueue: @unchecked Sendable {
     private let lock = NSLock()
     // Guarded by `lock`.
     private var storage: [PinTask]?
+    private var stamp: DirectoryStamp?
     private var dirty = false
     private var corrupted = false
     private var roundRequested = false
@@ -376,12 +380,18 @@ public final class PinWorkQueue: @unchecked Sendable {
         sharedInstance(at: url) { PinWorkQueue(fileURL: url) }
     }
 
+    /// Reloads when the account directory was removed or replaced (see ``SharedJSONMap``).
     private func loaded() -> [PinTask] {
-        if let storage { return storage }
+        let current = fileURL.flatMap { DirectoryStamp($0.deletingLastPathComponent()) }
+        if let storage, current == stamp { return storage }
+        stamp = current
+        dirty = false
         var result: [PinTask] = []
         if let fileURL, let data = try? Data(contentsOf: fileURL) {
-            if let decoded = try? JSONDecoder().decode([PinTask].self, from: data) {
-                result = decoded
+            if let decoded = try? JSONDecoder().decode(VersionedEntries<[PinTask]>.self, from: data) {
+                result = decoded.entries
+            } else if let decoded = try? JSONDecoder().decode([PinTask].self, from: data) {
+                result = decoded // unversioned file of an earlier build
             } else {
                 Log.pinning.error("pin-queue.json unreadable: moved aside, scheduling a full re-walk")
                 quarantine(fileURL)
@@ -457,9 +467,14 @@ public final class PinWorkQueue: @unchecked Sendable {
     public func flush() {
         lock.withLock {
             guard dirty, let fileURL, let storage else { return }
+            // Signed out meanwhile: never recreate the removed account directory.
+            guard FileManager.default.fileExists(atPath: fileURL.deletingLastPathComponent().path) else {
+                self.storage = nil
+                dirty = false
+                return
+            }
             do {
-                try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try JSONEncoder().encode(storage).write(to: fileURL, options: .atomic)
+                try JSONEncoder().encode(VersionedEntries(storage)).write(to: fileURL, options: .atomic)
                 dirty = false
             } catch {
                 Log.pinning.error("pin queue not saved: \(String(describing: error), privacy: .public)")

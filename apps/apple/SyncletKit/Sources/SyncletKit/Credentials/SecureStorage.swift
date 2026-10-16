@@ -2,11 +2,27 @@ import Foundation
 import Security
 
 /// Secret storage (keychain, or in-memory for tests).
+/// Result of a lookup that tells "no entry" apart from "the keychain could not be read".
+public enum SecureLookup: Sendable, Equatable {
+    case found(String)
+    case notFound
+    /// Any other keychain status (locked, interaction not allowed, daemon hiccup …): transient.
+    case failed(OSStatus)
+}
+
 public protocol SecureStorage: Sendable {
     func read(account: String) -> String?
+    /// Like ``read(account:)``, but reports why nothing was returned.
+    func lookup(account: String) -> SecureLookup
     /// Writes (replaces) the value; returns the keychain status (`errSecSuccess` on success).
     @discardableResult func write(_ value: String, account: String) -> OSStatus
     func remove(account: String)
+}
+
+public extension SecureStorage {
+    func lookup(account: String) -> SecureLookup {
+        read(account: account).map(SecureLookup.found) ?? .notFound
+    }
 }
 
 /// Keychain storage (generic password) in the data protection keychain, with an
@@ -40,13 +56,25 @@ public struct KeychainStorage: SecureStorage {
     }
 
     public func read(account: String) -> String? {
+        if case .found(let value) = lookup(account: account) { return value }
+        return nil
+    }
+
+    public func lookup(account: String) -> SecureLookup {
         var query = baseQuery(account: account)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        switch status {
+        case errSecSuccess:
+            guard let data = result as? Data, let value = String(data: data, encoding: .utf8) else { return .notFound }
+            return .found(value)
+        case errSecItemNotFound:
+            return .notFound
+        default:
+            return .failed(status)
+        }
     }
 
     @discardableResult

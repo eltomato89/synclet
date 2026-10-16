@@ -342,8 +342,55 @@ final class TransferEngineTests: XCTestCase {
         }
         let item = try await engine().upload(file: file, newIn: "root", name: "a.txt", modifiedAt: nil)
         XCTAssertEqual(item.id, "f_new")
-        XCTAssertEqual(server.allRequests.map { $0.query["onConflict"] }, ["fail", "rename"])
+        XCTAssertEqual(server.allRequests.filter { $0.method == "POST" }.map { $0.query["onConflict"] }, ["fail", "rename"])
         XCTAssertEqual(server.allRequests.last?.body, Data("abc".utf8))
+    }
+
+    /// M8: the rename upload was published as "a (2).txt" but its response was lost. The
+    /// retry finds that identical suffixed copy instead of uploading "a (3).txt".
+    func testSingleRequestLostRenameResponseReusesPublishedSuffixedCopy() async throws {
+        let server = FakeTusServer()
+        let file = Fixtures.tempFile("abc")
+        files.append(file)
+        let modified = Date(timeIntervalSince1970: 1_700_000_000)
+        let existing = FakeTusServer.itemJSON(id: "f_other", parentId: "root", name: "a.txt", size: 3, sha256: Self.otherSHA)
+        server.seed(existing)
+        server.fallback = { request in
+            if request.query["onConflict"] == "fail" { return .response(.error(409, "name_conflict", item: existing)) }
+            server.seed(FakeTusServer.itemJSON(id: "f_new", parentId: "root", name: "a (2).txt", data: Data("abc".utf8),
+                                               modifiedAt: "2023-11-14T22:13:20.000Z"))
+            return .failure(.networkConnectionLost) // published, response lost
+        }
+        do {
+            _ = try await engine().upload(file: file, newIn: "root", name: "a.txt", modifiedAt: modified)
+            XCTFail("network error expected")
+        } catch SyncAPIError.transport {
+        }
+
+        let item = try await engine().upload(file: file, newIn: "root", name: "a.txt", modifiedAt: modified)
+
+        XCTAssertEqual(item.id, "f_new")
+        XCTAssertEqual(server.allRequests.filter { $0.method == "POST" }.map { $0.query["onConflict"] },
+                       ["fail", "rename", "fail"], "no second rename upload")
+    }
+
+    /// A stored upload URL on another origin is dropped, never contacted.
+    func testStoredUploadOnAnotherOriginIsDiscarded() async throws {
+        let server = FakeTusServer()
+        let size = 33 * Self.mib
+        let file = patternFile(size)
+        let info = try TransferEngine.fileInfo(file)
+        let target = TusUploadMetadata(name: "Big.bin", parentId: "root", onConflict: .rename, modifiedAt: nil)
+        try UploadStateStore(directory: stateDir).save(
+            UploadState(uploadURL: URL(string: "https://evil.example.test/api/sync/v1/uploads/x")!, length: Int64(size),
+                        fileSize: info.size, fileMtime: info.mtime, target: target, createdAt: Date()),
+            key: "k")
+
+        let item = try await engine().upload(file: file, newIn: "root", name: "Big.bin", modifiedAt: nil, resumeKey: "k")
+
+        XCTAssertEqual(item.size, Int64(size))
+        XCTAssertFalse(server.allRequests.contains { $0.request.url?.host == "evil.example.test" })
+        XCTAssertEqual(server.tusRequests.first?.method, "POST", "started over")
     }
 
     // MARK: - Hardening (M1, M2)

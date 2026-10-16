@@ -12,10 +12,14 @@ import Foundation
 ///   folder and every recorded descendant).
 /// - Persisted as JSON (`accounts/<key16>/parent-map.json`, one per account: the space of an
 ///   item from the change feed is only known after resolving it) on ``flush()``, which the
-///   extension calls once per enumeration call, not per page.
+///   extension calls once per enumeration call, not per page, and only when it changed.
+/// - Kept only while something is pinned, and bounded (``maxEntries``).
 /// - Unknown parents are fetched (`GET /items/:id`) and cached; at most ``maxHops`` levels.
 public final class ParentMap: Sendable {
     public static let maxHops = 64
+    /// Bound of the map (a cache: unknown parents are fetched again). Beyond it the map
+    /// starts over, so a huge tree never makes every flush a multi-MB rewrite.
+    public static let maxEntries = 50_000
 
     struct Entry: Codable, Sendable, Equatable {
         /// Parent id.
@@ -45,6 +49,10 @@ public final class ParentMap: Sendable {
         let folders = items.filter(\.isFolder)
         guard !folders.isEmpty else { return }
         map.mutate { entries in
+            if entries.count + folders.count > Self.maxEntries {
+                Log.pinning.info("parent map above \(Self.maxEntries, privacy: .public) folders: starting over")
+                entries.removeAll()
+            }
             for item in folders {
                 guard let parent = item.parentId else { continue }
                 entries[item.id, default: Entry(p: parent)].p = parent
@@ -52,8 +60,16 @@ public final class ParentMap: Sendable {
         }
     }
 
+    /// Forgets everything (no pins left: nothing needs resolving).
+    public func removeAll() {
+        map.mutate { entries in if !entries.isEmpty { entries.removeAll() } }
+    }
+
+    public var count: Int { map.read(\.count) }
+
     /// Remembers that `id` was reported kept (`true`) or not; returns `true` when this flips
-    /// a previously reported state (its descendants then need re-reporting).
+    /// a previously reported state (its descendants then need re-reporting). A folder without
+    /// a recorded state (new, or forgotten when the map was cleared) never counts as a flip.
     @discardableResult
     public func notePolicy(_ id: String, kept: Bool) -> Bool {
         map.mutate { entries in

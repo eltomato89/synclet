@@ -1,5 +1,6 @@
 import FileProvider
 import Foundation
+import Synchronization
 import UniformTypeIdentifiers
 
 /// Base class of the File Provider extensions (macOS now, iOS later).
@@ -62,23 +63,44 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
     open class var sharedConfiguration: SharedConfiguration { .fromInfoPlist() }
 
     public let domain: NSFileProviderDomain
-    private let contextProvider: @Sendable () -> Context?
+    /// `nil` ⇒ signed out (`notAuthenticated`); throws for transient failures (keychain).
+    private let contextProvider: @Sendable () throws -> Context?
     let temporaryDirectoryOverride: URL?
     /// Clock for conflict names (injected by tests).
     let now: @Sendable () -> Date
 
     public required init(domain: NSFileProviderDomain) {
         self.domain = domain
-        self.contextProvider = Self.makeContextProvider(domain: domain, configuration: Self.sharedConfiguration)
+        let configuration = Self.sharedConfiguration
+        if configuration.appGroup == nil { Log.fileProvider.error("SyncletAppGroup missing in the Info.plist") }
+        self.contextProvider = Self.makeContextProvider(domain: domain,
+                                                        accounts: configuration.appGroup.map { AccountStore(appGroup: $0) },
+                                                        credentials: CredentialStore(configuration: configuration))
         self.temporaryDirectoryOverride = nil
         self.now = { Date() }
         super.init()
+        Self.purgeSignedOutThumbnailsOnce(configuration: Self.sharedConfiguration)
+    }
+
+    private static let thumbnailsPurged = Mutex(false)
+
+    /// Once per process: drops the thumbnail caches of accounts that no longer exist (the app
+    /// cannot reach the extension's caches on sign-out).
+    private static func purgeSignedOutThumbnailsOnce(configuration: SharedConfiguration) {
+        guard let appGroup = configuration.appGroup else { return }
+        let first = thumbnailsPurged.withLock { done in
+            defer { done = true }
+            return !done
+        }
+        guard first else { return }
+        let keep = Set(AccountStore(appGroup: appGroup).all().map(\.key16))
+        ThumbnailCache.purge(base: ThumbnailCache.defaultDirectory(), keeping: keep)
     }
 
     /// For tests and custom wiring: context, temp directory and clock given.
     public init(domain: NSFileProviderDomain, temporaryDirectory: URL? = nil,
                 now: @escaping @Sendable () -> Date = { Date() },
-                contextProvider: @escaping @Sendable () -> Context?) {
+                contextProvider: @escaping @Sendable () throws -> Context?) {
         self.domain = domain
         self.temporaryDirectoryOverride = temporaryDirectory
         self.contextProvider = contextProvider
@@ -86,26 +108,38 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
         super.init()
     }
 
+    /// The keychain could not be read (not "no token"): retry later, never "sign in again".
+    static let keychainUnavailableError = SyncAPIError.transport(
+        .resourceUnavailable, message: "The keychain is not available right now. It will be retried.")
+
     /// Reads the account (app group) and token (keychain group) of `domain` on every call.
-    private static func makeContextProvider(domain: NSFileProviderDomain,
-                                            configuration: SharedConfiguration) -> @Sendable () -> Context? {
-        let credentials = CredentialStore(configuration: configuration)
-        let accounts = configuration.appGroup.map { AccountStore(appGroup: $0) }
-        if accounts == nil { Log.fileProvider.error("SyncletAppGroup missing in the Info.plist") }
+    /// No account or no token ⇒ `nil` (sign-in required); a keychain read error ⇒ a
+    /// transient error (`serverUnreachable`, no auth-failure marker).
+    static func makeContextProvider(domain: NSFileProviderDomain, accounts: AccountStore?,
+                                    credentials: CredentialStore) -> @Sendable () throws -> Context? {
         let key16 = domain.identifier.rawValue
         return {
-            guard let accounts, let account = accounts.account(key16: key16),
-                  credentials.token(for: account.key) != nil else { return nil }
+            guard let accounts, let account = accounts.account(key16: key16) else { return nil }
+            switch credentials.lookupToken(for: account.key) {
+            case .found: break
+            case .notFound: return nil
+            case .failed(let status):
+                Log.fileProvider.error("keychain read failed (\(status, privacy: .public)): retrying later")
+                throw keychainUnavailableError
+            }
             let key = account.key
             let client = SyncAPIClient(baseURL: account.serverURL, token: {
-                guard let token = credentials.token(for: key) else {
-                    throw SyncAPIError.unauthorized(message: "no device token")
+                switch credentials.lookupToken(for: key) {
+                case .found(let token): return token
+                case .notFound: throw SyncAPIError.unauthorized(message: "no device token")
+                case .failed: throw keychainUnavailableError
                 }
-                return token
             })
             return Context(client: client, deviceName: account.deviceName ?? "Mac",
                            layout: SpaceLayout(spaces: account.spaces),
                            cursorSink: { spaceID, cursor in
+                               // Signed out meanwhile: never recreate the removed account directory.
+                               guard accounts.account(key: key) != nil else { return }
                                try? accounts.saveSyncState(SpaceSyncState(cursor: cursor), key: key, spaceId: spaceID)
                            },
                            transferStateDirectory: accounts.accountDirectory(key: key)
@@ -123,7 +157,7 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
     // MARK: - Helpers
 
     func context() throws -> Context {
-        guard let context = contextProvider() else { throw NSFileProviderError(.notAuthenticated) }
+        guard let context = try contextProvider() else { throw NSFileProviderError(.notAuthenticated) }
         return context
     }
 
@@ -197,7 +231,7 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
         if containerItemIdentifier == .trashContainer { throw NSFileProviderError(.noSuchItem) }
         let context = try context()
         let fallback = context.layout
-        let layout: @Sendable () -> SpaceLayout = { [contextProvider] in contextProvider()?.layout ?? fallback }
+        let layout: @Sendable () -> SpaceLayout = { [contextProvider] in (try? contextProvider())??.layout ?? fallback }
         if containerItemIdentifier == .rootContainer {
             let store = context.pinning?.store
             return TopLevelEnumerator(layout: layout, pins: { store?.allPins(spaces: layout().spaces.map(\.id)) ?? [:] })
@@ -376,7 +410,9 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
     /// - Moving into the root container → ``SpaceLayoutError/readOnlyTopLevel``.
     /// - `412` (PUT, or tus replace at creation or completion): the local content is uploaded as a conflict copy
     ///   `"<base> (Konflikt <device> <date>).<ext>"` into the same folder and the server
-    ///   state is returned (`shouldFetchContent`).
+    ///   state is returned (`shouldFetchContent`). If the server state already has the local
+    ///   content (size + sha256: our own attempt whose response was lost), it is returned
+    ///   as is – no copy.
     /// - `404` on PUT (deleted remotely, changed locally): the local content is uploaded as
     ///   a new file into the parent, then `noSuchItem` lets the system drop the old item.
     /// - Unsupported fields (tags, last used, favorites, extended attributes, dates without
@@ -456,6 +492,13 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
                 } else {
                     server = try await client.item(id: id)
                 }
+                // The server already has exactly our content: our own earlier attempt was
+                // published but its response was lost, and the system retried with the old
+                // base version. That is not a conflict – no copy, no problem.
+                if try await Self.hasSameContent(server, as: newContents) {
+                    Log.fileProvider.info("412 on \(id, privacy: .public) with identical content: lost response, no conflict copy")
+                    return (FileProviderItem(server, layout: layout), false)
+                }
                 let copyName = ConflictNaming.name(original: server.name, device: context.deviceName, date: now())
                 let parentID = server.parentId ?? newParent ?? (try? layout.serverParentId(for: item.parentItemIdentifier))
                     ?? SyncItem.rootID
@@ -481,6 +524,14 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
 
         if let current { return (FileProviderItem(current, layout: layout), false) }
         return (FileProviderItem(try await client.item(id: id), layout: layout), false)
+    }
+
+    /// `server` is a file with the size and sha256 of the local file at `url`.
+    static func hasSameContent(_ server: SyncItem, as url: URL) async throws -> Bool {
+        guard !server.isFolder, let serverHash = server.sha256 else { return false }
+        let size = (try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value
+        guard size == server.size else { return false }
+        return serverHash == (try await TransferEngine.sha256Cancellable(of: url))
     }
 
     /// A locally changed file that was deleted on the server: upload the local content as
@@ -527,6 +578,11 @@ open class SyncletReplicatedExtension: NSObject, NSFileProviderReplicatedExtensi
     /// Deletes an item (already deleted ⇒ success). Without `.recursive` a non-empty
     /// folder is refused (`directoryNotEmpty`). The root container and space folders
     /// cannot be deleted (`CocoaError(.featureUnsupported)`).
+    ///
+    /// Unconditional: `DELETE /items/:id` takes no `If-Match` (SYNC_API.md §8.3), so a local
+    /// delete also removes a newer remote version this Mac has not seen yet, and a recursive
+    /// folder delete removes children added remotely meanwhile. Both stay recoverable from
+    /// the server trash (§8.4).
     func delete(_ identifier: NSFileProviderItemIdentifier, recursive: Bool, context: Context) async throws {
         if context.layout.isTopLevel(identifier) { throw CocoaError(.featureUnsupported) }
         let id = try serverID(identifier, layout: context.layout)

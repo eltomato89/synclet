@@ -130,10 +130,59 @@ final class ChangeMonitorTests: XCTestCase {
     }
 
     private func monitor(coalesce: Duration = .milliseconds(300), fallback: Duration = .seconds(60),
-                         refresh: Duration = .seconds(3600), reconnectBase: Duration = .seconds(1)) -> ChangeMonitor {
-        ChangeMonitor(accountKey: "srv1:u1", dependencies: world.dependencies(storedSpaces: stored, authFailures: authFailures),
-                      timing: ChangeMonitor.Timing(coalesce: coalesce, fallback: fallback, accountRefresh: refresh,
-                                                   reconnectBase: reconnectBase))
+                         refresh: Duration = .seconds(3600), reconnectBase: Duration = .seconds(1),
+                         finder: FakeFinder? = nil) -> ChangeMonitor {
+        var dependencies = world.dependencies(storedSpaces: stored, authFailures: authFailures)
+        if let finder {
+            dependencies.resolveErrors = {
+                await finder.resolveTransientErrors(domain: NSFileProviderDomain(
+                    identifier: NSFileProviderDomainIdentifier("0123456789abcdef"), displayName: "x"))
+            }
+        }
+        return ChangeMonitor(accountKey: "srv1:u1", dependencies: dependencies,
+                             timing: ChangeMonitor.Timing(coalesce: coalesce, fallback: fallback, accountRefresh: refresh,
+                                                          reconnectBase: reconnectBase))
+    }
+
+    // MARK: - Resolved errors (I2)
+
+    /// `hello` lifts `.serverUnreachable` / `.insufficientQuota` throttling once per
+    /// connection: not again for its own `/account` refresh or for later `changes`, but
+    /// again after the stream dropped and reconnected.
+    func testHelloResolvesTransientErrorsOncePerConnection() async throws {
+        let finder = FakeFinder()
+        let monitor = monitor(coalesce: .milliseconds(1), reconnectBase: .milliseconds(20), finder: finder)
+        monitor.start()
+        defer { monitor.stop() }
+        _ = await eventually { self.world.streamCount == 1 }
+        XCTAssertEqual(finder.resolvedTransient, [], "nothing before the server answered")
+
+        world.send(.connected(cursor: "1"))
+        let resolved = await eventually { finder.resolvedTransient.count == 1 }
+        XCTAssertTrue(resolved)
+        _ = await eventually { self.world.accountFetches == 1 }
+        world.send(.changes(space: "personal", cursor: "2"))
+        world.send(.connected(cursor: "2"))
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(finder.resolvedTransient, ["0123456789abcdef"], "coalesced within one connection")
+
+        world.fail(URLError(.networkConnectionLost))
+        _ = await eventually { self.world.streamCount == 2 }
+        world.send(.connected(cursor: "3"))
+        let again = await eventually { finder.resolvedTransient.count == 2 }
+        XCTAssertTrue(again, "a new connection is a new transition")
+    }
+
+    /// A full disk can be freed while the stream stays open: the periodic `/account`
+    /// refresh lifts the throttling too (also without a stream).
+    func testPeriodicAccountRefreshResolvesTransientErrors() async throws {
+        let finder = FakeFinder()
+        let monitor = monitor(refresh: .milliseconds(100), finder: finder)
+        monitor.start()
+        defer { monitor.stop() }
+        let resolved = await eventually { finder.resolvedTransient.count >= 1 }
+        XCTAssertTrue(resolved)
+        XCTAssertGreaterThanOrEqual(world.accountFetches, 1)
     }
 
     func testStreamEndingByItselfReconnectsWithBackoffAndPolls() async throws {

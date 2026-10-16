@@ -112,6 +112,8 @@ public final class AccountManager: Sendable {
         let previousToken = credentials.token(for: key)
         let previousServer = accounts.account(key: key)?.serverURL ?? server
 
+        // Every operation that started before this moment may still hold the previous token.
+        let tokenStoredAt = Date()
         do {
             try credentials.save(token: registration.token, for: key)
         } catch {
@@ -130,7 +132,8 @@ public final class AccountManager: Sendable {
         let stored = try accounts.upsert(StoredAccount(
             key: key, serverURL: server, userId: account.userId, username: account.slug,
             displayName: account.displayName, spaces: account.spaces,
-            deviceName: registration.device.name, deviceId: registration.device.id, email: account.email))
+            deviceName: registration.device.name, deviceId: registration.device.id, email: account.email,
+            signedInAt: tokenStoredAt))
 
         let existing = (try? await domains.domainIdentifiers()) ?? []
         if !existing.contains(stored.key16) {

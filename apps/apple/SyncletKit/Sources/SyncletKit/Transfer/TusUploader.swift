@@ -113,6 +113,8 @@ public final class TusUploader: Sendable {
               let url = URL(string: location, relativeTo: api.baseURL)?.absoluteURL else {
             throw SyncAPIError.invalidResponse("tus: Location missing")
         }
+        // The device token must never go to another host (a misbehaving proxy).
+        guard isSameOrigin(url) else { throw SyncAPIError.invalidResponse("tus: Location on another origin") }
         if length == 0 {
             return .completed(try await publishedItem(http, data: data).item)
         }
@@ -162,7 +164,20 @@ public final class TusUploader: Sendable {
 
     // MARK: - Internals
 
+    /// `url` has the server's scheme, host and port (default ports made explicit).
+    public func isSameOrigin(_ url: URL) -> Bool {
+        Self.origin(url) == Self.origin(api.baseURL)
+    }
+
+    static func origin(_ url: URL) -> String? {
+        guard let scheme = url.scheme?.lowercased(), let host = url.host(percentEncoded: false)?.lowercased() else { return nil }
+        let port = url.port ?? (scheme == "https" ? 443 : scheme == "http" ? 80 : -1)
+        return "\(scheme)://\(host):\(port)"
+    }
+
     private func request(_ method: String, _ url: URL) async throws -> URLRequest {
+        // Also guards stored upload URLs (UploadStateStore) before the token is attached.
+        guard isSameOrigin(url) else { throw SyncAPIError.invalidResponse("tus: upload URL on another origin") }
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("1.0.0", forHTTPHeaderField: "Tus-Resumable")

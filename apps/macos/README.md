@@ -139,7 +139,7 @@ Some steps decide rulings that are still open. They are marked **(ruling)**.
 ### Preparation
 
 1. **Start a throwaway server.** Run `scripts/macos-live-tests.sh --serve`.
-   - **Expected:** after the image build, it prints "Throwaway server ready: http://localhost:18181", user `maclive`, the password and the compose project name. Keep this terminal open; Ctrl-C removes the stack.
+   - **Expected:** after the image build, it prints "Throwaway server ready: http://localhost:18181" (or the next free port when 18181 is taken; use the printed address below), user `maclive`, the password and the compose project name. Keep this terminal open; Ctrl-C removes the stack.
    - **Report if different:** the last 30 lines of the output.
 2. **Build and start the app** as in "Build and run". In a second terminal, start the `log stream` command from above.
    - **Expected:** a menu bar icon (two circling arrows). The window "Konto hinzufügen" opens because there is no account.
@@ -283,7 +283,7 @@ Open Settings → Offline, or start the app with `-SyncletShowOffline`.
    - **Report:**
      - the time until the new file was local
      - whether the log shows "requested N pinned downloads" (the app's fallback had to act) or not (macOS acted on the policy itself)
-20. **Pin a normal folder.** Pin "Fotos" (with some images).
+20. **Pin a normal folder.** First create a folder "Fotos" with some images in the web UI, then pin "Fotos".
    - **Expected:** every file inside is downloaded. Settings shows "Offline-Inhalte ≈ …", and the menu's account section shows "Offline-Inhalte ≈ …".
    - **Report if different:** what the footer and the menu show.
 21. **Rename a pinned folder in the web UI.**
@@ -313,7 +313,7 @@ Open Settings → Offline, or start the app with `-SyncletShowOffline`.
    - "Status unbekannt"
 
    Also note whether the menu bar icon gets the exclamation badge.
-   - **Expected:** each state appears in its situation (steps 10, 26 and 28). The badge shows only for "Anmeldung erforderlich" or for a problem from the last hour, not for conflict info entries. "Im Finder öffnen" and "Web öffnen" work.
+   - **Expected:** each state appears in its situation (steps 10, 26, 28 and 30). The badge shows only for "Anmeldung erforderlich" or for a problem from the last hour, not for conflict info entries. "Im Finder öffnen" and "Web öffnen" work.
    - **Report:** any state text that was wrong for the situation, or a badge that did not go away within 1 hour.
 26. **Upload too large (413) and the problem list.**
    1. Start a second server with a small limit: `SYNCLET_MACLIVE_PORT=18182 SYNCLET_MACLIVE_TLS_PORT=18545 SYNCLET_MACLIVE_MAX_UPLOAD_BYTES=1000000 scripts/macos-live-tests.sh --serve`.
@@ -366,9 +366,19 @@ Open Settings → Offline, or start the app with `-SyncletShowOffline`.
        - `~/Library/Group Containers/JC32M95WLZ.group.tech.jensk.synclet/accounts/` no longer has the account's folder, and the keychain item is gone.
        - After you start the server again, the web device list no longer shows the device (revoke is best effort while the server is down: then it stays listed; report which).
    - **Report:** the confirmation text, and anything left in the sidebar, in `~/Library/CloudStorage` or in the app group.
-30. **Clean up.**
+30. **Server disk full (507), then space freed: the stuck upload completes.**
+   1. Create and attach a small disk image: `hdiutil create -size 64m -fs HFS+ -volname SyncletFull ~/Desktop/SyncletFull.dmg && hdiutil attach ~/Desktop/SyncletFull.dmg`.
+   2. Start another server whose files folder is on it: `SYNCLET_MACLIVE_DATA_DIR=/Volumes/SyncletFull/files scripts/macos-live-tests.sh --serve`, and sign in to it (the printed address).
+   3. Fill the image outside the files folder: `dd if=/dev/zero of=/Volumes/SyncletFull/filler bs=1m` (it stops with "No space left on device").
+   4. Copy a 5 MB file and a 40 MB file (tus) into this account's "Meine Dateien".
+   - **Expected:** "Letzte Probleme" shows "<file> – Der Speicher des Servers ist voll – neuer Versuch folgt." The files stay pending (cloud icon with an error badge), nothing is lost.
+   5. Free the space: `rm /Volumes/SyncletFull/filler`. Note the time.
+   - **Expected:** both files upload within about 1 minute, without restarting the app or signing in again, and the server has exactly one copy of each (no "(2)"). The app lifts the system's throttling (`signalErrorResolved` for `.insufficientQuota` and `.serverUnreachable`) on every new SSE connection and after every successful `/account` refresh (every 15 minutes). If nothing happens within 1 minute, wait up to 15 minutes; if it still does not upload, run `docker compose -p <project> restart server` (a new SSE `hello` lifts the throttling as well).
+   - **Report:** the time from `rm` until the upload, and which of the three cases it took (by itself within 1 minute, at the 15-minute refresh, only after the server restart). Also report the `transfer` log lines.
+   6. Sign out of this account, stop the server with Ctrl-C, then `hdiutil detach /Volumes/SyncletFull && rm ~/Desktop/SyncletFull.dmg`.
+31. **Clean up.**
    1. Run `DerivedData/Build/Products/Debug/Synclet.app/Contents/MacOS/Synclet -SyncletSignOutAll`.
-   2. Press Ctrl-C in both server terminals.
+   2. Press Ctrl-C in all server terminals.
    - **Expected:** `fileproviderctl dump | grep -i "synclet –"` shows no domain, and `docker ps` shows no `synclet-maclive-*` containers.
    - **Report if different:** what is left over.
 

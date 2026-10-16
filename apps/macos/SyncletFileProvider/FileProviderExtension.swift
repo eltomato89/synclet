@@ -19,10 +19,12 @@ final class FileProviderExtension: SyncletReplicatedExtension, @unchecked Sendab
     /// auth failures, so the cost does not matter.
     private var container: URL? { Self.sharedConfiguration.appGroup.map { AccountStore(appGroup: $0).directory } }
 
-    /// Reports `.notAuthenticated` to the app; other errors are ignored.
-    fileprivate func inspect(_ error: Error?) {
+    /// Reports `.notAuthenticated` to the app; other errors are ignored. `started` is when the
+    /// operation began: a failure of an operation older than the current sign-in is ignored
+    /// (it used the previous, revoked token).
+    fileprivate func inspect(_ error: Error?, started: Date) {
         guard let error, AuthFailureSignal.isAuthenticationFailure(error), let container else { return }
-        AuthFailureSignal.report(container: container, key16: key16)
+        AuthFailureSignal.report(container: container, key16: key16, startedAt: started)
     }
 
     /// A problem of a create/modify or a conflict copy ⇒ the app's "Letzte Probleme".
@@ -38,19 +40,21 @@ final class FileProviderExtension: SyncletReplicatedExtension, @unchecked Sendab
     override func fetchThumbnails(for itemIdentifiers: [NSFileProviderItemIdentifier], requestedSize size: CGSize,
                                   perThumbnailCompletionHandler: @escaping (NSFileProviderItemIdentifier, Data?, Error?) -> Void,
                                   completionHandler: @escaping (Error?) -> Void) -> Progress {
-        super.fetchThumbnails(for: itemIdentifiers, requestedSize: size, perThumbnailCompletionHandler: { [self] id, data, error in
-            inspect(error)
+        let started = Date()
+        return super.fetchThumbnails(for: itemIdentifiers, requestedSize: size, perThumbnailCompletionHandler: { [self] id, data, error in
+            inspect(error, started: started)
             perThumbnailCompletionHandler(id, data, error)
         }, completionHandler: { [self] error in
-            inspect(error)
+            inspect(error, started: started)
             completionHandler(error)
         })
     }
 
     override func item(for identifier: NSFileProviderItemIdentifier, request: NSFileProviderRequest,
                        completionHandler: @escaping (NSFileProviderItem?, Error?) -> Void) -> Progress {
-        super.item(for: identifier, request: request) { [self] item, error in
-            inspect(error)
+        let started = Date()
+        return super.item(for: identifier, request: request) { [self] item, error in
+            inspect(error, started: started)
             completionHandler(item, error)
         }
     }
@@ -59,9 +63,9 @@ final class FileProviderExtension: SyncletReplicatedExtension, @unchecked Sendab
                              request: NSFileProviderRequest) throws -> NSFileProviderEnumerator {
         do {
             let inner = try super.enumerator(for: containerItemIdentifier, request: request)
-            return SignallingEnumerator(inner: inner) { [weak self] error in self?.inspect(error) }
+            return SignallingEnumerator(inner: inner) { [weak self] error, started in self?.inspect(error, started: started) }
         } catch {
-            inspect(error)
+            inspect(error, started: Date())
             throw error
         }
     }
@@ -69,8 +73,9 @@ final class FileProviderExtension: SyncletReplicatedExtension, @unchecked Sendab
     override func fetchContents(for itemIdentifier: NSFileProviderItemIdentifier, version requestedVersion: NSFileProviderItemVersion?,
                                 request: NSFileProviderRequest,
                                 completionHandler: @escaping (URL?, NSFileProviderItem?, Error?) -> Void) -> Progress {
-        super.fetchContents(for: itemIdentifier, version: requestedVersion, request: request) { [self] url, item, error in
-            inspect(error)
+        let started = Date()
+        return super.fetchContents(for: itemIdentifier, version: requestedVersion, request: request) { [self] url, item, error in
+            inspect(error, started: started)
             completionHandler(url, item, error)
         }
     }
@@ -78,8 +83,9 @@ final class FileProviderExtension: SyncletReplicatedExtension, @unchecked Sendab
     override func createItem(basedOn itemTemplate: NSFileProviderItem, fields: NSFileProviderItemFields, contents url: URL?,
                              options: NSFileProviderCreateItemOptions = [], request: NSFileProviderRequest,
                              completionHandler: @escaping (NSFileProviderItem?, NSFileProviderItemFields, Bool, Error?) -> Void) -> Progress {
-        super.createItem(basedOn: itemTemplate, fields: fields, contents: url, options: options, request: request) { [self] item, fields, later, error in
-            inspect(error)
+        let started = Date()
+        return super.createItem(basedOn: itemTemplate, fields: fields, contents: url, options: options, request: request) { [self] item, fields, later, error in
+            inspect(error, started: started)
             completionHandler(item, fields, later, error)
         }
     }
@@ -88,9 +94,10 @@ final class FileProviderExtension: SyncletReplicatedExtension, @unchecked Sendab
                              changedFields: NSFileProviderItemFields, contents newContents: URL?,
                              options: NSFileProviderModifyItemOptions = [], request: NSFileProviderRequest,
                              completionHandler: @escaping (NSFileProviderItem?, NSFileProviderItemFields, Bool, Error?) -> Void) -> Progress {
-        super.modifyItem(item, baseVersion: version, changedFields: changedFields, contents: newContents,
+        let started = Date()
+        return super.modifyItem(item, baseVersion: version, changedFields: changedFields, contents: newContents,
                          options: options, request: request) { [self] item, fields, later, error in
-            inspect(error)
+            inspect(error, started: started)
             completionHandler(item, fields, later, error)
         }
     }
@@ -98,8 +105,9 @@ final class FileProviderExtension: SyncletReplicatedExtension, @unchecked Sendab
     override func deleteItem(identifier: NSFileProviderItemIdentifier, baseVersion version: NSFileProviderItemVersion,
                              options: NSFileProviderDeleteItemOptions = [], request: NSFileProviderRequest,
                              completionHandler: @escaping (Error?) -> Void) -> Progress {
-        super.deleteItem(identifier: identifier, baseVersion: version, options: options, request: request) { [self] error in
-            inspect(error)
+        let started = Date()
+        return super.deleteItem(identifier: identifier, baseVersion: version, options: options, request: request) { [self] error in
+            inspect(error, started: started)
             completionHandler(error)
         }
     }

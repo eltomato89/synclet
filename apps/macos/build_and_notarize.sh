@@ -35,8 +35,9 @@ notary_missing() {
          xcrun notarytool store-credentials $PROFILE --apple-id <your Apple ID> --team-id $TEAM
        Then run this script again. (SYNCLET_SKIP_NOTARIZE=1 builds an unnotarized DMG for local tests.)" 3
 }
-if [ "$SKIP_NOTARIZE" != 1 ] && ! notary_profile_ok; then
-  echo "WARNING: notary profile '$PROFILE' not found; the build runs up to the export and stops at notarization." >&2
+# Fail fast: without the notary profile there is no point in archiving and exporting first.
+if [ "$SKIP_NOTARIZE" != 1 ]; then
+  notary_profile_ok || notary_missing
 fi
 
 # notarize <file>: submits and waits; prints the log on rejection.

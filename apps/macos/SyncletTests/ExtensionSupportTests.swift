@@ -13,7 +13,7 @@ final class ExtensionSupportTests: XCTestCase {
     func testSignallingEnumeratorReportsErrorsAndPassesResultsThrough() {
         let inner = FakeEnumerator(itemsError: NSFileProviderError(.notAuthenticated))
         var reported: [Error] = []
-        let enumerator = SignallingEnumerator(inner: inner) { reported.append($0) }
+        let enumerator = SignallingEnumerator(inner: inner) { error, _ in reported.append(error) }
 
         let items = ItemObserver()
         enumerator.enumerateItems(for: items, startingAt: NSFileProviderPage.initialPageSortedByName as NSFileProviderPage)
@@ -27,7 +27,7 @@ final class ExtensionSupportTests: XCTestCase {
     }
 
     func testSignallingEnumeratorWithoutChangeTrackingExpiresTheAnchor() {
-        let enumerator = SignallingEnumerator(inner: ItemsOnlyEnumerator()) { _ in }
+        let enumerator = SignallingEnumerator(inner: ItemsOnlyEnumerator()) { _, _ in }
         let changes = ChangeObserver()
         enumerator.enumerateChanges(for: changes, from: NSFileProviderSyncAnchor(Data("a".utf8)))
         XCTAssertEqual((changes.error as NSError?)?.code, NSFileProviderError.syncAnchorExpired.rawValue)

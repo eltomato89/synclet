@@ -38,6 +38,28 @@ final class TusUploaderTests: XCTestCase {
         XCTAssertEqual(post.header("Authorization"), "Bearer syd_test")
     }
 
+    /// M1: an absolute `Location` on another host never receives the device token.
+    func testCreateRejectsLocationOnAnotherOrigin() async throws {
+        MockURLProtocol.reset { _ in
+            .empty(201, headers: ["Location": "https://evil.example.test/api/sync/v1/uploads/u1", "Tus-Resumable": "1.0.0"])
+        }
+        let tus = TusUploader(api: Fixtures.client())
+        do {
+            _ = try await tus.create(length: 10, metadata: TusUploadMetadata(name: "a.bin", parentId: "root"))
+            XCTFail("invalidResponse expected")
+        } catch SyncAPIError.invalidResponse {
+        }
+        // Same host, other port or scheme: other origin too; a stored URL is checked before any request.
+        for foreign in ["https://evil.example.test/api/sync/v1/uploads/u1",
+                        "\(Fixtures.server.absoluteString.replacingOccurrences(of: "https:", with: "http:"))/api/sync/v1/uploads/u1"] {
+            await assertThrows(.invalidResponse("tus: upload URL on another origin")) {
+                _ = try await tus.head(URL(string: foreign)!)
+            }
+        }
+        XCTAssertEqual(MockURLProtocol.requests.count, 1, "only the POST went out")
+        XCTAssertTrue(tus.isSameOrigin(Fixtures.server.appending(path: "api/sync/v1/uploads/u2")))
+    }
+
     func testPatchHeadAndTerminate() async throws {
         let server = FakeTusServer()
         let tus = TusUploader(api: FakeServerProtocol.client())

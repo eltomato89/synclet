@@ -280,6 +280,83 @@ final class ParentMapTests: XCTestCase {
         XCTAssertEqual(ParentMap.shared(at: url).parent(of: "d_y"), "root")
     }
 
+    /// M2: a flush after the account directory was removed (sign-out) does not recreate it,
+    /// and a cached map does not survive the directory being created again (new sign-in).
+    func testSharedMapNeverRecreatesARemovedDirectoryAndReloadsAReplacedOne() throws {
+        let base = Fixtures.tempDirectory()
+        defer { try? FileManager.default.removeItem(at: base) }
+        let dir = base.appending(path: "accounts/0123456789abcdef", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appending(path: "pinned-content.json")
+        let ledger = PinnedContentLedger(fileURL: url)
+        let queue = PinWorkQueue(fileURL: dir.appending(path: "pin-queue.json"))
+        ledger.update(id: "f_1", version: "v3")
+        ledger.flush()
+        XCTAssertEqual(ledger.version(of: "f_1"), "v3")
+
+        try FileManager.default.removeItem(at: dir)          // sign-out
+        ledger.update(id: "f_2", version: "v1")              // operation still in flight
+        ledger.flush()
+        _ = queue.enqueue(PinTask(kind: .walk, id: "d_1", spaceId: "personal", announce: true))
+        queue.flush()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.path), "not recreated")
+
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) // new sign-in
+        XCTAssertNil(ledger.version(of: "f_1"), "stale cache dropped")
+        XCTAssertNil(ledger.version(of: "f_2"))
+        XCTAssertTrue(queue.isEmpty)
+    }
+
+    /// M6: bounded – beyond ``ParentMap/maxEntries`` the map starts over.
+    func testParentMapIsBounded() {
+        let map = ParentMap(fileURL: nil)
+        let many = (0..<ParentMap.maxEntries).map { Fixtures.item(id: "d_\($0)", parentId: "root", type: "folder") }
+        map.record(many)
+        XCTAssertEqual(map.count, ParentMap.maxEntries)
+        map.record([Fixtures.item(id: "d_new", parentId: "d_1", type: "folder")])
+        XCTAssertEqual(map.count, 1)
+        XCTAssertEqual(map.parent(of: "d_new"), "d_1")
+        map.removeAll()
+        XCTAssertEqual(map.count, 0)
+    }
+
+    /// M11: the app-group JSON files carry `"v": 1`; files of earlier builds (no version,
+    /// bare map / array) are still read.
+    func testStateFilesAreVersionedAndUnversionedFilesStillRead() throws {
+        let dir = Fixtures.tempDirectory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // Earlier builds: bare map and bare array.
+        try Data(#"{"f_1":"v3"}"#.utf8).write(to: dir.appending(path: "pinned-content.json"))
+        try Data(#"[{"kind":"walk","id":"d_1","announce":true}]"#.utf8).write(to: dir.appending(path: "pin-queue.json"))
+        try Data(#"{"wholeSpace":true}"#.utf8).write(to: dir.appending(path: "pins.json"))
+        let ledger = PinnedContentLedger(fileURL: dir.appending(path: "pinned-content.json"))
+        let queue = PinWorkQueue(fileURL: dir.appending(path: "pin-queue.json"))
+        XCTAssertEqual(ledger.version(of: "f_1"), "v3")
+        XCTAssertFalse(queue.isEmpty)
+        XCTAssertFalse(queue.takeCorruption())
+        XCTAssertEqual(try JSONDecoder().decode(PinSet.self, from: Data(contentsOf: dir.appending(path: "pins.json"))),
+                       PinSet(wholeSpace: true))
+
+        // Written back versioned.
+        ledger.update(id: "f_2", version: "v1")
+        ledger.flush()
+        _ = queue.enqueue(PinTask(kind: .walk, id: "d_2", announce: true))
+        queue.flush()
+        for name in ["pinned-content.json", "pin-queue.json"] {
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: dir.appending(path: name))) as? [String: Any])
+            XCTAssertEqual(json["v"] as? Int, StateFormat.version, name)
+        }
+        XCTAssertEqual(PinnedContentLedger(fileURL: dir.appending(path: "pinned-content.json")).version(of: "f_1"), "v3")
+        XCTAssertEqual(PinWorkQueue(fileURL: dir.appending(path: "pin-queue.json")).tasks.count, 2)
+        let pinJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(PinSet())) as? [String: Any])
+        XCTAssertEqual(pinJSON["v"] as? Int, 1)
+        let account = StoredAccount(key: "k", serverURL: Fixtures.server, userId: "u", username: "j", displayName: "J", spaces: [])
+        let accountJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(account)) as? [String: Any])
+        XCTAssertEqual(accountJSON["v"] as? Int, 1)
+        let batch = try JSONDecoder().decode(PinnedDownloadQueue.Batch.self, from: Data(#"{"ids":["a"],"overflow":false}"#.utf8))
+        XCTAssertEqual(batch.ids, ["a"])
+    }
+
     func testNotePolicyReportsFlipsOnly() {
         let map = ParentMap(fileURL: nil)
         XCTAssertFalse(map.notePolicy("d_unknown", kept: true))
@@ -767,6 +844,24 @@ final class PinnedEnumerationTests: XCTestCase {
         pin.queue.roundStarted()
         FileProviderEnumerator.finishPinning(pin, announce: [], workingSet: false)
         XCTAssertEqual(rounds.next(), 4)
+    }
+
+    /// M6: without pins the parent map is not grown (and an old one is cleared).
+    func testWithoutPinsTheParentMapStaysEmpty() async throws {
+        let pin = pinning()
+        pin.parentMap.record([Fixtures.item(id: "d_old", parentId: "root", type: "folder")])
+        let resolver = pin.resolver(layout: Fixtures.layout, client: Fixtures.client())
+        _ = try await resolver.items([Fixtures.item(id: "d_a", parentId: "root", type: "folder"),
+                                      Fixtures.item(id: "d_b", parentId: "d_a", type: "folder")])
+        XCTAssertEqual(pin.parentMap.count, 0)
+
+        try pin.store.setFolder("d_a", pinned: true, space: "personal")
+        MockURLProtocol.reset { request in
+            request.path == "/api/sync/v1/items/d_a" ? .json(200, Fixtures.folderJSON(id: "d_a", name: "a")) : .empty(500)
+        }
+        _ = try await pin.resolver(layout: Fixtures.layout, client: Fixtures.client())
+            .items([Fixtures.item(id: "d_b", parentId: "d_a", type: "folder")])
+        XCTAssertEqual(pin.parentMap.parent(of: "d_b"), "d_a", "recorded again once something is pinned")
     }
 
     func testWithoutPinsNothingIsResolved() async throws {
