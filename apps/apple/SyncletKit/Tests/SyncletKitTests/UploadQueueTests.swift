@@ -165,7 +165,7 @@ final class UploadQueueTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: f.path))
     }
 
-    func testEnqueueDoesNotHoldLockDuringCopy() throws {
+    func testEnqueueMovesStagedCopyIntoFiles() throws {
         // A source that is a FIFO-less large file is impractical; assert instead that after enqueue
         // nothing remains in staging and the copy ended up in files/.
         let dir = Fixtures.tempDirectory(); let q = UploadQueue(directory: dir)
