@@ -86,9 +86,9 @@ const FOLDER_THUMB_CANDIDATES = 4 * FOLDER_THUMB_MAX;
  * The children each folder's thumbnail is made of: among the FOLDER_THUMB_SCAN most recently
  * modified live files directly in the folder (same space), up to four with a finished thumbnail,
  * one per distinct content, most recently modified first. Folders without any are missing from
- * the map. One query for all `folderIds`; per folder it reads the mtime of its FOLDER_THUMB_SCAN-th
- * newest file (index-only), then walks the newest files down to it and stops after
- * FOLDER_THUMB_CANDIDATES with a thumbnail – bounded by the scan window however large the folder.
+ * the map. One query for all `folderIds`; per folder it reads at most FOLDER_THUMB_SCAN of the
+ * newest files (`Item_children_mtime_idx`, bounded by construction even when many share an mtime)
+ * and stops after FOLDER_THUMB_CANDIDATES with a thumbnail.
  */
 export async function chooseFolderThumbs(prisma: PrismaService, spaceId: string, folderIds: string[]): Promise<Map<string, FolderThumbChoice>> {
   const out = new Map<string, FolderThumbChoice>();
@@ -97,16 +97,16 @@ export async function chooseFolderThumbs(prisma: PrismaService, spaceId: string,
     SELECT f.id::text AS "folderId", c.sha
     FROM unnest(${folderIds}::uuid[]) AS f(id)
     CROSS JOIN LATERAL (
-      SELECT i."contentHash" AS sha, i.mtime, i.id
-      FROM "Item" i
-      WHERE i."spaceId" = ${spaceId}::uuid AND i."parentId" = f.id AND i."deletedAt" IS NULL AND i.type = 'file'
-        AND i.mtime >= coalesce((
-          SELECT k.mtime FROM "Item" k
-          WHERE k."spaceId" = ${spaceId}::uuid AND k."parentId" = f.id AND k."deletedAt" IS NULL AND k.type = 'file'
-          ORDER BY k.mtime DESC, k.id
-          OFFSET ${Prisma.raw(String(FOLDER_THUMB_SCAN - 1))} LIMIT 1), '-infinity')
-        AND i."contentHash" IS NOT NULL
-        AND EXISTS (SELECT 1 FROM "DerivativeJob" j WHERE j.sha = i."contentHash" AND j.kind = 'thumb' AND j.status = 'done')
+      SELECT i.sha, i.mtime, i.id
+      FROM (
+        SELECT n."contentHash" AS sha, n.mtime, n.id
+        FROM "Item" n
+        WHERE n."spaceId" = ${spaceId}::uuid AND n."parentId" = f.id AND n."deletedAt" IS NULL AND n.type = 'file'
+        ORDER BY n.mtime DESC, n.id
+        LIMIT ${Prisma.raw(String(FOLDER_THUMB_SCAN))}
+      ) i
+      WHERE i.sha IS NOT NULL
+        AND EXISTS (SELECT 1 FROM "DerivativeJob" j WHERE j.sha = i.sha AND j.kind = 'thumb' AND j.status = 'done')
       ORDER BY i.mtime DESC, i.id
       LIMIT ${Prisma.raw(String(FOLDER_THUMB_CANDIDATES))}
     ) c
@@ -146,7 +146,7 @@ export class FolderThumbnails {
 
   /**
    * Like `thumbnail`, but opened (no symlinks). A mosaic removed by the GC between being found
-   * and being opened is rebuilt once.
+   * and being opened is rebuilt once; null (→ 404) when it still cannot be opened.
    */
   async open(spaceId: string, folderId: string, size: 256 | 1024): Promise<{ fh: FileHandle; key: string } | null> {
     for (let attempt = 0; ; attempt++) {
@@ -155,7 +155,11 @@ export class FolderThumbnails {
       try {
         return { fh: await open(found.path, constants.O_RDONLY | constants.O_NOFOLLOW), key: found.key };
       } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== 'ENOENT' || attempt >= 1) throw e;
+        // Removed meanwhile (GC): rebuild once. Anything else (a second ENOENT, ELOOP …): no mosaic → 404.
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT' || attempt >= 1) {
+          this.log.warn(`folder thumbnail ${found.key.slice(0, 12)} not readable: ${(e as Error).message}`);
+          return null;
+        }
       }
     }
   }

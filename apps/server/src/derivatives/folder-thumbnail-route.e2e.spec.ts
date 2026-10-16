@@ -1,4 +1,4 @@
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import sharp from 'sharp';
 import { createTestApp, createTestSpace, createTestUser, TestContext } from '../../test/context';
@@ -193,6 +193,40 @@ describe('folder thumbnails (mosaic of the children)', () => {
     // One of them fewer: the picture is within reach again.
     await ctx.prisma.item.deleteMany({ where: { parentId: folderRow.id, name: 'n0.txt' } });
     expect((await item(f.id)).preview).toMatchObject({ thumbnail: true });
+  });
+
+  it(`more than ${FOLDER_THUMB_SCAN} files with the same mtime: still only ${FOLDER_THUMB_SCAN} considered`, async () => {
+    const f = await mkdir('Same');
+    const pic = await upload(f.id, 'zz.png', await png(RED), 60);
+    await drain();
+    const folderRow = await ctx.prisma.item.findUniqueOrThrow({ where: { id: f.id.slice(2) } });
+    const picRow = await ctx.prisma.item.findUniqueOrThrow({ where: { id: pic.id.slice(2) } });
+    const at = new Date(Date.now() - 3600_000);
+    await ctx.prisma.item.createMany({
+      data: Array.from({ length: FOLDER_THUMB_SCAN + 50 }, (_, i) => ({
+        spaceId: folderRow.spaceId, parentId: folderRow.id, type: 'file' as const, name: `s${i}.txt`, nameKey: `s${i}.txt`,
+        path: `${folderRow.path}/s${i}.txt`, size: 1n, mtime: at,
+        // ids sort before the picture's: it is behind 250 files of the same mtime
+        id: `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`,
+      })),
+    });
+    await ctx.prisma.item.update({ where: { id: picRow.id }, data: { mtime: at } });
+    expect((await item(f.id)).preview).toBeUndefined();
+    expect((await thumb(f.id)).statusCode).toBe(404);
+  });
+
+  it('a mosaic that cannot be opened (replaced by a symlink: ELOOP) → 404, not 500', async () => {
+    const f = await mkdir('Loop');
+    const pic = await upload(f.id, 'a.png', await png(RED));
+    await drain();
+    expect((await thumb(f.id)).statusCode).toBe(200);
+    const store = ctx.app.get(DerivedStore);
+    const file = store.folderThumbPath((await item(f.id)).preview.thumbnailKey, 256);
+    await rm(file);
+    await symlink(store.pathFor(pic.sha256, 'thumb', 256), file); // a symlink: ELOOP with O_NOFOLLOW
+    const res = await thumb(f.id);
+    expect(res.statusCode).toBe(404);
+    expect(res.json().code).toBe('not_found');
   });
 
   it('a child thumbnail that cannot be decoded → 404 and that child requeued; fine after the worker', async () => {
