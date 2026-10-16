@@ -4,7 +4,7 @@ import { FormError } from '@/components/auth/FormError';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { adminErrorKey, validateSpaceName } from './forms';
+import { nameConflictKey, validateSpaceName } from './forms';
 import { notify } from './parts';
 import { useAdminUsers, useGroupMutations } from './queries';
 import type { GroupWire } from './types';
@@ -20,10 +20,10 @@ export function GroupDialog({ open, onOpenChange, group }: { open: boolean; onOp
   const [memberIds, setMemberIds] = useState<string[]>(() => group?.members.map((x) => x.id) ?? []);
   const [submitted, setSubmitted] = useState(false);
   const [pending, setPending] = useState(false);
-  const [server, setServer] = useState<string | null>(null);
+  const [server, setServer] = useState<{ field: 'name' | null; message: string } | null>(null);
 
   const nameError = validateSpaceName(name);
-  const shownName = submitted && nameError ? t(`admin.spaces.form.errors.${nameError}`) : server ?? undefined;
+  const shownName = submitted && nameError ? t(`admin.spaces.form.errors.${nameError}`) : server?.field === 'name' ? server.message : undefined;
   const toggle = (id: string, on: boolean) => setMemberIds((c) => (on ? [...c, id] : c.filter((x) => x !== id)));
 
   async function onSubmit(e: FormEvent) {
@@ -38,7 +38,8 @@ export function GroupDialog({ open, onOpenChange, group }: { open: boolean; onOp
       notify.success(t(group ? 'admin.groups.toast.updated' : 'admin.groups.toast.created', { name: name.trim() }));
       onOpenChange(false);
     } catch (err) {
-      setServer(t(adminErrorKey(err)));
+      const { key, field } = nameConflictKey(err);
+      setServer({ field, message: t(key) });
     } finally {
       setPending(false);
     }
@@ -75,7 +76,7 @@ export function GroupDialog({ open, onOpenChange, group }: { open: boolean; onOp
               ))}
             </div>
           </fieldset>
-          <FormError>{null}</FormError>
+          <FormError>{server && !server.field ? server.message : null}</FormError>
           <DialogFooter className="mt-1">
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>{t('common.cancel')}</Button>
             <Button type="submit" disabled={pending}>

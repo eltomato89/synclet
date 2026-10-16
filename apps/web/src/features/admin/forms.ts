@@ -65,7 +65,7 @@ export function adminErrorKey(err: unknown): string {
     const known = MESSAGES[err.message];
     if (known) return `admin.errors.${known}`;
     if (err.message.startsWith('data folder not writable')) return 'admin.errors.dataNotWritable';
-    if (err.status === 409 || err.code === 'name_conflict') return 'admin.errors.nameTaken';
+    if (err.code === 'name_conflict') return 'admin.errors.nameTaken';
     if (err.code === 'invalid_request') return 'admin.errors.invalid';
   }
   return errorKey(err);
@@ -235,3 +235,9 @@ export function addMember(rows: MemberRow[], row: MemberRow): MemberRow[] {
 export const removeMember = (rows: MemberRow[], key: string): MemberRow[] => rows.filter((r) => memberKey(r) !== key);
 export const setMemberRole = (rows: MemberRow[], key: string, role: SpaceRole): MemberRow[] =>
   rows.map((r) => (memberKey(r) === key ? { ...r, role } : r));
+
+/** Group and space dialogs: a 409 means the name is taken; anything else uses the shared mapping. */
+export function nameConflictKey(err: unknown): { key: string; field: 'name' | null } {
+  if (err instanceof ApiError && err.status === 409) return { key: 'admin.errors.nameTaken', field: 'name' };
+  return { key: adminErrorKey(err), field: null };
+}

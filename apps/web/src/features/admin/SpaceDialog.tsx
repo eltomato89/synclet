@@ -4,7 +4,7 @@ import { FormError } from '@/components/auth/FormError';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { adminErrorKey, type MemberRow, validateSpaceName } from './forms';
+import { type MemberRow, nameConflictKey, validateSpaceName } from './forms';
 import { MembersEditor, SELECT_CLASS } from './MembersEditor';
 import { notify } from './parts';
 import { useAdminGroups, useAdminUsers, useSpaceMutations } from './queries';
@@ -43,17 +43,21 @@ export function SpaceDialog({ open, onOpenChange, space }: { open: boolean; onOp
     setServer(null);
     try {
       if (!space) {
-        const created = await m.create.mutateAsync({ name: name.trim() });
-        if (members.length) await m.update.mutateAsync({ id: created.id, patch: { members: wireMembers(members) } });
+        await m.create.mutateAsync({ name: name.trim(), members: wireMembers(members) });
         notify.success(t('admin.spaces.toast.created', { name: name.trim() }));
       } else {
-        const patch: SpacePatch = external ? { watch, scanIntervalSec: intervalNum } : name.trim() !== space.name ? { name: name.trim() } : {};
+        const patch: SpacePatch = {};
+        if (external) {
+          if (watch !== (space.watch ?? 'auto')) patch.watch = watch;
+          if (intervalNum !== space.scanIntervalSec) patch.scanIntervalSec = intervalNum;
+        } else if (name.trim() !== space.name) patch.name = name.trim();
         await m.update.mutateAsync({ id: space.id, patch: { ...patch, members: wireMembers(members) } });
         notify.success(t('admin.spaces.toast.updated', { name: space.name }));
       }
       onOpenChange(false);
     } catch (err) {
-      setServer({ field: external ? null : 'name', message: t(adminErrorKey(err)) });
+      const { key, field } = nameConflictKey(err);
+      setServer({ field: external ? null : field, message: t(key) });
     } finally {
       setPending(false);
     }

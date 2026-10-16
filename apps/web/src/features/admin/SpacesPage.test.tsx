@@ -3,6 +3,7 @@ import { MemoryRouter } from 'react-router';
 import { Topbar, TopbarProvider } from '@/components/app-shell/Topbar';
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import * as apiMod from '@/lib/api';
+import { ApiError } from '@/lib/api';
 import i18n from '@/lib/i18n';
 import { testQueryClient } from '@/test/query';
 import { GroupsPage } from './GroupsPage';
@@ -27,6 +28,7 @@ const ext: SpaceWire = {
   scanIntervalSec: 600, sizeBytes: 0, itemCount: 0, members: [],
 };
 
+let postError: unknown = null;
 let calls: { path: string; init?: RequestInit & { json?: unknown } }[] = [];
 beforeAll(async () => {
   globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as never;
@@ -34,12 +36,14 @@ beforeAll(async () => {
 });
 beforeEach(() => {
   calls = [];
+  postError = null;
   vi.spyOn(apiMod, 'api').mockImplementation(async (path, init) => {
     calls.push({ path, init: init as never });
     const method = init?.method ?? 'GET';
     if (path === '/admin/users') return users;
     if (path === '/admin/groups' && method === 'GET') return [group];
     if (path === '/admin/spaces' && method === 'GET') return [team, ext];
+    if (postError && method === 'POST') throw postError;
     return {};
   });
 });
@@ -153,4 +157,33 @@ it('creates a team folder', async () => {
   fireEvent.click(within(dialog).getByRole('button', { name: 'Create team folder' }));
   await waitFor(() => expect(sent('POST')).toBeDefined());
   expect(sent('POST')).toMatchObject({ path: '/admin/spaces', init: { json: { name: 'Buchhaltung' } } });
+});
+
+it('creates a team folder with its members in one POST; a failed POST can be retried', async () => {
+  postError = new ApiError(409, 'conflict', 'exists');
+  renderPage(<SpacesPage />);
+  fireEvent.click(await screen.findByRole('button', { name: 'New team folder' }));
+  const dialog = await screen.findByRole('dialog');
+  fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Neu' } });
+  await within(dialog).findByRole('option', { name: 'Marketing' });
+  fireEvent.change(within(dialog).getByLabelText('Add member'), { target: { value: 'group:g1' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Create team folder' }));
+  expect(await within(dialog).findByText('That name is already in use.')).toBeInTheDocument();
+  postError = null;
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Create team folder' }));
+  await waitFor(() => expect(calls.filter((c) => c.init?.method === 'POST')).toHaveLength(2));
+  const posts = calls.filter((c) => c.init?.method === 'POST');
+  for (const p of posts) expect(p.init?.json).toEqual({ name: 'Neu', members: [{ kind: 'group', id: 'g1', role: 'read' }] });
+  expect(sent('PATCH')).toBeUndefined();
+});
+
+it('sends only the changed external settings', async () => {
+  renderPage(<SpacesPage />);
+  fireEvent.keyDown(await screen.findByRole('button', { name: 'Actions for nas' }), { key: 'Enter' });
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit' }));
+  const dialog = await screen.findByRole('dialog');
+  fireEvent.change(within(dialog).getByLabelText('Scan interval (seconds)'), { target: { value: '30' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+  await waitFor(() => expect(sent('PATCH')).toBeDefined());
+  expect(sent('PATCH')?.init?.json).toEqual({ scanIntervalSec: 30, members: [] });
 });
