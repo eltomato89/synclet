@@ -83,6 +83,8 @@ final class AccountsModel {
     /// Builds an account's monitor; set by ``startMonitoring(factory:)``, `nil` in the background.
     @ObservationIgnored private var makeMonitor: ((StoredAccount) -> ForegroundMonitor)?
     @ObservationIgnored private var subscribers: [UUID: AsyncStream<String>.Continuation] = [:]
+    /// Called with the key after an account was signed out (the upload center drops its uploads).
+    @ObservationIgnored var onSignOut: ((String) async -> Void)?
 
     init(manager: AccountManager, resolver: FileProviderResolving = SystemFileProviderResolver(),
          defaults: UserDefaults = .standard) {
@@ -159,6 +161,7 @@ final class AccountsModel {
         if wasSelected, let index, !entries.isEmpty {
             selectedKey = entries[min(index, entries.count - 1)].id
         }
+        await onSignOut?(key)
     }
 
     // MARK: - Foreground monitors
@@ -222,6 +225,11 @@ final class AccountsModel {
 
     /// Number of live ``changeEvents`` subscribers (tests).
     var subscriberCount: Int { subscribers.count }
+
+    /// A change made by the app itself (a finished upload): visible folders of the account reload.
+    func notifyChange(_ key: String) {
+        publishChange(key)
+    }
 
     private func publishChange(_ key: String) {
         for continuation in subscribers.values { continuation.yield(key) }

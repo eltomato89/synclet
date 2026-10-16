@@ -413,3 +413,16 @@ final class SignalRecorder {
         { [weak self] key in self?.keys.append(key) }
     }
 }
+
+// MARK: - Uploads
+
+/// Records what ``UploadCenter`` asks of the uploader.
+@MainActor
+final class FakeUploadDriver: UploadDriving {
+    private(set) var pumps = 0
+    private(set) var cancelled: [String] = []
+
+    func pump() async { pumps += 1 }
+    func cancel(id: String) async { cancelled.append(id) }
+    func handleBackgroundEvents(completion: @escaping @Sendable () -> Void) { completion() }
+}

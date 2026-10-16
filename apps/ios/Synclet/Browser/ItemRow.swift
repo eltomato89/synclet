@@ -48,7 +48,8 @@ struct ItemThumbnail: View {
             }
         }
         .frame(width: side, height: side)
-        .task(id: item.contentEtag ?? item.etag) {
+        // The thumbnail flag is part of the id: it turns true after an upload once the server rendered it.
+        .task(id: "\(item.contentEtag ?? item.etag)|\(item.preview?.thumbnail == true)") {
             guard item.preview?.thumbnail == true else {
                 image = nil
                 return

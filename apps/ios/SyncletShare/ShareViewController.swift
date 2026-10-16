@@ -1,43 +1,19 @@
 import SwiftUI
 import UIKit
 
-/// Placeholder of the share extension; Task 9 replaces it with account and folder choice and
-/// the upload queue.
+/// Principal class of the Share extension: hosts ``ShareRootView`` for the shared attachments.
 final class ShareViewController: UIViewController {
+    private var model: ShareModel?
+
     override func viewDidLoad() {
         super.viewDidLoad()
-        let host = UIHostingController(rootView: PlaceholderView { [weak self] in self?.close() })
+        let model = ShareModel(context: extensionContext)
+        self.model = model
+        let host = UIHostingController(rootView: ShareRootView(model: model))
         addChild(host)
         host.view.frame = view.bounds
         host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         view.addSubview(host.view)
         host.didMove(toParent: self)
-    }
-
-    private func close() {
-        extensionContext?.completeRequest(returningItems: nil)
-    }
-}
-
-private struct PlaceholderView: View {
-    let close: () -> Void
-
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 12) {
-                Image(systemName: "square.and.arrow.up")
-                    .font(.largeTitle)
-                    .foregroundStyle(.secondary)
-                #if DEBUG
-                Text(verbatim: "Kommt in Task 9")
-                #endif
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", action: close)
-                }
-            }
-        }
     }
 }

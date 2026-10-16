@@ -32,6 +32,8 @@ struct FolderView: View {
     @State private var deleteCandidates: [SyncItem] = []
     @State private var moveCandidates: [SyncItem] = []
     @State private var opening: SyncItem?
+    @State private var showsPhotoPicker = false
+    @State private var showsFileImporter = false
 
     init(environment: AppEnvironment, accountKey: String, api: SyncAPIClient, folder: FolderRoute, root: FolderRoute) {
         self.environment = environment
@@ -69,6 +71,9 @@ struct FolderView: View {
                 if !editing { selection = [] }
             }
             .overlay(alignment: .bottom) { noticeBanner }
+            .uploadPickers(photos: $showsPhotoPicker, files: $showsFileImporter,
+                           target: UploadTarget(accountKey: model.accountKey, parentId: model.folderId,
+                                                parentName: model.title))
             .sheet(item: $nameRequest) { request in
                 nameSheet(request)
             }
@@ -264,9 +269,10 @@ struct FolderView: View {
         }
     }
 
-    /// The „+“ menu. Task 9 adds the upload entries (photos, files) here.
+    /// The „+“ menu: uploads (photos, files) and „Neuer Ordner“.
     private var addMenu: some View {
         Menu {
+            UploadMenu(showsPhotos: $showsPhotoPicker, showsFiles: $showsFileImporter)
             Button("New Folder", systemImage: "folder.badge.plus") {
                 model.fieldError = nil
                 nameRequest = .newFolder
