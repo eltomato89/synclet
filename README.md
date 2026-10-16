@@ -460,7 +460,7 @@ Admins get an "Admin" entry in the web app with:
 ## Known limitations
 
 - **macOS (Docker Desktop):** renames and moves made in Finder or other host apps show up inside the container with new inode numbers. Synclet then sees a delete plus a create instead of a move: the item gets a new ID and clients download it again. Linux hosts keep IDs across host-side renames and moves.
-- **NFS/SMB sources** do not deliver change events reliably: set `SYNCLET_WATCH=off` to scan periodically instead (every 2 minutes). Inode numbers may not be stable there either, so item IDs may change when files are moved externally.
+- **NFS/SMB sources** do not deliver change events reliably (inotify on the mount only sees changes made through this host, not on the NAS itself), and setting up the watcher on a big share can take very long: set the space to **Watch for changes: Off (scan only)**, or `SYNCLET_WATCH=off` for all spaces, to scan periodically instead. Inode numbers may not be stable there either, so item IDs may change when files are moved externally.
 - **Deletes on the host bypass the trash.** Only deletes made through Synclet go to the trash in `SYNCLET_META`. A file you delete on the host is gone, and the delete is synced to all clients.
 - inotify: on large folders raise `fs.inotify.max_user_watches` (for example `sysctl fs.inotify.max_user_watches=524288`).
 

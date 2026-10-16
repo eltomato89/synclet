@@ -143,37 +143,62 @@ describe('WatcherService subscriptions', () => {
 
   type Sub = Awaited<ReturnType<typeof import('@parcel/watcher').subscribe>>;
   type Gate = { resolve: (s: Sub) => void; reject: (e: Error) => void };
-  /** Subscribe stub: dirs in `hang` wait for their gate, all others succeed at once. */
+  /**
+   * Subscribe stub: dirs in `hang` wait for their gate, all others succeed at once. Records the
+   * call order and the highest number of subscribes in flight; `hangUnsubscribe` makes
+   * unsubscribes never resolve (as while the inotify backend mutex is held by a tree walk).
+   */
   function stubSubscribe(watcher: WatcherService, hang: string[]) {
-    const gates = new Map<string, Gate>();
-    const unsubscribed: string[] = [];
-    const sub = (dir: string): Sub => ({ unsubscribe: async () => { unsubscribed.push(dir); } }) as Sub;
-    const spy = jest.spyOn(watcher as unknown as { subscribe: (dir: string) => Promise<Sub> }, 'subscribe')
-      .mockImplementation((dir: string) => hang.includes(dir)
-        ? new Promise<Sub>((resolve, reject) => gates.set(dir, { resolve, reject }))
-        : Promise.resolve(sub(dir)));
-    return { gates, unsubscribed, sub, spy };
+    const st = { gates: new Map<string, Gate>(), calls: [] as string[], unsubscribed: [] as string[], inFlight: 0, maxInFlight: 0, hangUnsubscribe: false };
+    const sub = (dir: string): Sub => ({
+      unsubscribe: () => st.hangUnsubscribe ? new Promise<void>(() => {}) : (st.unsubscribed.push(dir), Promise.resolve()),
+    }) as Sub;
+    jest.spyOn(watcher as unknown as { subscribe: (dir: string) => Promise<Sub> }, 'subscribe').mockImplementation((dir: string) => {
+      st.calls.push(dir);
+      st.maxInFlight = Math.max(st.maxInFlight, ++st.inFlight);
+      const p = hang.includes(dir) ? new Promise<Sub>((resolve, reject) => st.gates.set(dir, { resolve, reject })) : Promise.resolve(sub(dir));
+      return p.finally(() => { st.inFlight--; });
+    });
+    return { ...st, st, sub };
   }
   const blocked = (p: Promise<unknown>) => Promise.race([p.then(() => false), new Promise<boolean>((r) => setTimeout(() => r(true), 500))]);
+  const tick = () => new Promise((r) => setImmediate(r));
 
-  it('start does not wait for subscriptions; a hanging storage holds back neither the others nor the data root', async () => {
-    const slow = await createTestSpace(ctx, 'SMB', 'external');
-    const fast = await createTestSpace(ctx, 'Lokal', 'external');
+  it('subscribes one directory at a time: data root, teams root, then storages; a hanging walk delays only those queued after it', async () => {
+    const a = await createTestSpace(ctx, 'A-SMB', 'external');
+    const b = await createTestSpace(ctx, 'B-Lokal', 'external');
     const watcher = ctx.app.get(WatcherService);
-    const { gates, spy } = stubSubscribe(watcher, [slow.rootPath]);
+    const { st, sub } = stubSubscribe(watcher, [a.rootPath]);
     ctx.config.background = true;
     await watcher.refresh();
     expect(await blocked(watcher.start())).toBe(false);
-    await new Promise((r) => setImmediate(r));
+    await tick();
     expect(watcher.mode).toBe('active');
-    expect(watcher.watchModeOf(fast.id)).toBe('active');
-    expect(watcher.watchModeOf(slow.id)).toBe('scan-only');
+    expect(st.calls).toEqual([ctx.config.dataRoot, ctx.config.teamsRoot, a.rootPath]);
+    expect(watcher.watchModeOf(a.id)).toBe('scan-only');
+    expect(watcher.watchModeOf(b.id)).toBe('scan-only'); // queued behind A
     // A refresh (every scan cycle) neither waits for nor duplicates the pending subscription.
     expect(await blocked(watcher.refresh())).toBe(false);
-    expect(spy.mock.calls.filter(([d]) => d === slow.rootPath)).toHaveLength(1);
-    gates.get(slow.rootPath)!.resolve({ unsubscribe: async () => {} } as Sub);
+    st.gates.get(a.rootPath)!.resolve(sub(a.rootPath));
     await watcher.whenSettled();
-    expect(watcher.watchModeOf(slow.id)).toBe('active');
+    expect(st.calls).toEqual([ctx.config.dataRoot, ctx.config.teamsRoot, a.rootPath, b.rootPath]);
+    expect(st.maxInFlight).toBe(1);
+    expect(watcher.watchModeOf(a.id)).toBe('active');
+    expect(watcher.watchModeOf(b.id)).toBe('active');
+  });
+
+  it('a queued storage dropped before its turn is never subscribed', async () => {
+    const nas = await createTestSpace(ctx, 'NAS', 'external');
+    const watcher = ctx.app.get(WatcherService);
+    const { st, sub } = stubSubscribe(watcher, [ctx.config.teamsRoot]);
+    ctx.config.background = true;
+    await watcher.refresh();
+    await watcher.start();
+    await ctx.prisma.space.update({ where: { id: nas.id }, data: { watch: 'off' } });
+    await watcher.refresh();
+    st.gates.get(ctx.config.teamsRoot)!.resolve(sub(ctx.config.teamsRoot));
+    await watcher.whenSettled();
+    expect(st.calls).toEqual([ctx.config.dataRoot, ctx.config.teamsRoot]);
   });
 
   it('application bootstrap and the first scan complete while every subscription hangs', async () => {
@@ -193,6 +218,36 @@ describe('WatcherService subscriptions', () => {
     }
   });
 
+  it('refresh and scans are not held up by an unsubscribe that never returns', async () => {
+    const nas = await createTestSpace(ctx, 'NAS', 'external');
+    const watcher = ctx.app.get(WatcherService);
+    const { st } = stubSubscribe(watcher, []);
+    const scheduler = ctx.app.get(SchedulerService);
+    watcher.shutdownUnsubscribeMs = 50; // afterEach closes the app
+    ctx.config.background = true;
+    await watcher.refresh();
+    await watcher.start();
+    await watcher.whenSettled();
+    expect(watcher.watchModeOf(nas.id)).toBe('active');
+    st.hangUnsubscribe = true;
+    await ctx.prisma.space.update({ where: { id: nas.id }, data: { watch: 'off' } });
+    expect(await blocked(watcher.refresh())).toBe(false);
+    expect(watcher.watchModeOf(nas.id)).toBe('scan-only');
+    expect(await blocked(scheduler.scanAll())).toBe(false);
+  });
+
+  it('shutdown gives up on unsubscribes that never return after its timeout', async () => {
+    const watcher = ctx.app.get(WatcherService);
+    const { st } = stubSubscribe(watcher, []);
+    watcher.shutdownUnsubscribeMs = 50;
+    ctx.config.background = true;
+    await watcher.refresh();
+    await watcher.start();
+    await watcher.whenSettled();
+    st.hangUnsubscribe = true;
+    expect(await blocked(watcher.onModuleDestroy())).toBe(false);
+  });
+
   it('the data root reports starting, scan-only after the timeout, and active when the subscription completes late', async () => {
     const watcher = ctx.app.get(WatcherService);
     const { gates } = stubSubscribe(watcher, [ctx.config.dataRoot]);
@@ -208,6 +263,22 @@ describe('WatcherService subscriptions', () => {
     expect(watcher.mode).toBe('active');
   });
 
+  it('a timed-out storage subscription completing late is used', async () => {
+    const nas = await createTestSpace(ctx, 'NAS', 'external');
+    const watcher = ctx.app.get(WatcherService);
+    const { st, sub } = stubSubscribe(watcher, [nas.rootPath]);
+    watcher.subscribeTimeoutMs = 50;
+    ctx.config.background = true;
+    await watcher.refresh();
+    await watcher.start();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(watcher.watchModeOf(nas.id)).toBe('scan-only');
+    st.gates.get(nas.rootPath)!.resolve(sub(nas.rootPath));
+    await watcher.whenSettled();
+    expect(watcher.watchModeOf(nas.id)).toBe('active');
+    expect(st.unsubscribed).toEqual([]);
+  });
+
   it('a rejecting subscribe leaves the data root scan-only', async () => {
     const watcher = ctx.app.get(WatcherService);
     const { gates } = stubSubscribe(watcher, [ctx.config.dataRoot]);
@@ -219,25 +290,52 @@ describe('WatcherService subscriptions', () => {
     expect(watcher.mode).toBe('scan-only');
   });
 
-  it('a subscription completing after shutdown or after its storage was dropped is unsubscribed', async () => {
+  it('watch toggled off and on again while the subscribe runs keeps the one subscription', async () => {
     const nas = await createTestSpace(ctx, 'NAS', 'external');
     const watcher = ctx.app.get(WatcherService);
-    const { gates, unsubscribed, sub } = stubSubscribe(watcher, [ctx.config.dataRoot, nas.rootPath]);
+    const { st, sub } = stubSubscribe(watcher, [nas.rootPath]);
     ctx.config.background = true;
     await watcher.refresh();
     await watcher.start();
+    await tick();
+    for (const watch of ['off', 'auto'] as const) {
+      await ctx.prisma.space.update({ where: { id: nas.id }, data: { watch } });
+      await watcher.refresh();
+    }
+    st.gates.get(nas.rootPath)!.resolve(sub(nas.rootPath));
+    await watcher.whenSettled();
+    expect(st.calls.filter((d) => d === nas.rootPath)).toHaveLength(1);
+    expect(st.unsubscribed).toEqual([]);
+    expect(watcher.watchModeOf(nas.id)).toBe('active');
+  });
+
+  it('a subscription completing after its storage was dropped is unsubscribed', async () => {
+    const nas = await createTestSpace(ctx, 'NAS', 'external');
+    const watcher = ctx.app.get(WatcherService);
+    const { st, sub } = stubSubscribe(watcher, [nas.rootPath]);
+    ctx.config.background = true;
+    await watcher.refresh();
+    await watcher.start();
+    await tick();
     await ctx.prisma.space.update({ where: { id: nas.id }, data: { watch: 'off' } });
     await watcher.refresh();
-    gates.get(nas.rootPath)!.resolve(sub(nas.rootPath));
-    await new Promise((r) => setImmediate(r));
-    expect(unsubscribed).toEqual([nas.rootPath]);
+    st.gates.get(nas.rootPath)!.resolve(sub(nas.rootPath));
+    await watcher.whenSettled();
+    expect(st.unsubscribed).toEqual([nas.rootPath]);
     expect(watcher.watchModeOf(nas.id)).toBe('scan-only');
-    // Shutdown does not wait for the pending data root subscription.
+  });
+
+  it('shutdown does not wait for a running subscribe; it is unsubscribed when it completes, queued ones are skipped', async () => {
+    const watcher = ctx.app.get(WatcherService);
+    const { st, sub } = stubSubscribe(watcher, [ctx.config.dataRoot]);
+    ctx.config.background = true;
+    await watcher.refresh();
+    await watcher.start();
     expect(await blocked(watcher.onModuleDestroy())).toBe(false);
-    gates.get(ctx.config.dataRoot)!.resolve(sub(ctx.config.dataRoot));
-    await new Promise((r) => setImmediate(r));
-    // The active teams root subscription is released by the shutdown, the late data root one when it settles.
-    expect(unsubscribed).toEqual([nas.rootPath, ctx.config.teamsRoot, ctx.config.dataRoot]);
+    st.gates.get(ctx.config.dataRoot)!.resolve(sub(ctx.config.dataRoot));
+    await tick(); await tick();
+    expect(st.unsubscribed).toEqual([ctx.config.dataRoot]);
+    expect(st.calls).toEqual([ctx.config.dataRoot]);
     expect(watcher.mode).not.toBe('active');
   });
 });
