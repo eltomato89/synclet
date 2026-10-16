@@ -128,17 +128,24 @@ public final class UploadQueue: Sendable {
         readEntries().first { $0.id == id }
     }
 
+    /// Applies `change` under the exclusive lock and returns the stored entry; `nil` when the
+    /// entry is gone or the queue could not be read or written (then nothing changed; logged).
     @discardableResult
     public func update(id: String, _ change: (inout UploadEntry) -> Void) -> UploadEntry? {
-        try? locked(exclusive: true) { () -> UploadEntry? in
-            var entries = try loadSettingAside()
-            guard let i = entries.firstIndex(where: { $0.id == id }) else { return nil }
-            let before = entries[i]
-            change(&entries[i])
-            entries[i].id = id
-            if entries[i] != before { try write(entries) }
-            return entries[i]
-        } ?? nil
+        do {
+            return try locked(exclusive: true) { () -> UploadEntry? in
+                var entries = try loadSettingAside()
+                guard let i = entries.firstIndex(where: { $0.id == id }) else { return nil }
+                let before = entries[i]
+                change(&entries[i])
+                entries[i].id = id
+                if entries[i] != before { try write(entries) }
+                return entries[i]
+            }
+        } catch {
+            Log.transfer.error("upload queue not updated: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
     }
 
     public func runnable() -> [UploadEntry] {
@@ -184,7 +191,13 @@ public final class UploadQueue: Sendable {
             let entries = try loadSettingAside()
             let (gone, kept) = (entries.filter(match), entries.filter { !match($0) })
             guard !gone.isEmpty else { return }
-            try? write(kept)
+            // Copies go only once the entries are gone from the file (never an entry without its copy).
+            do {
+                try write(kept)
+            } catch {
+                Log.transfer.error("upload queue not written; entries kept: \(error.localizedDescription, privacy: .public)")
+                return
+            }
             for e in gone { try? FileManager.default.removeItem(at: fileURL(for: e.id)) }
         }
     }
