@@ -41,7 +41,7 @@ final class TrashModel {
         } catch {
             guard generation == self.generation else { return }
             Self.log.error("trash failed: \(String(describing: error), privacy: .public)")
-            state = FolderModel.isOffline(error) ? .offline : .failed(FolderModel.describe(error))
+            state = FolderModel.loadState(for: error)
         }
     }
 

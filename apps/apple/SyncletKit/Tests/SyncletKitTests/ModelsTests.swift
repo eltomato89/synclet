@@ -103,6 +103,27 @@ final class ModelsTests: XCTestCase {
         XCTAssertEqual(again, account)
     }
 
+    func testSpaceStatusIsOptionalAndMissingMeansUnavailable() throws {
+        let spaces = #"[{"id":"personal","kind":"personal","name":"Meine Dateien","rootId":"root","canWrite":true},{"id":"u1","kind":"external","name":"Archiv","rootId":"r_u1","canWrite":false,"status":"missing"},{"id":"u2","kind":"shared","name":"Team","rootId":"r_u2","canWrite":true,"status":"available"}]"#
+        let account = try JSONDecoder().decode(SyncAccount.self, from: Data(Fixtures.accountJSON(spaces: spaces).utf8))
+        XCTAssertNil(account.spaces[0].status)
+        XCTAssertTrue(account.spaces[0].isAvailable, "no status (older server) = available")
+        XCTAssertEqual(account.spaces[1].status, "missing")
+        XCTAssertFalse(account.spaces[1].isAvailable)
+        XCTAssertEqual(account.spaces[2].status, "available")
+        XCTAssertTrue(account.spaces[2].isAvailable)
+        let again = try JSONDecoder().decode(SyncAccount.self, from: JSONEncoder().encode(account))
+        XCTAssertEqual(again, account)
+    }
+
+    func testSpaceUnavailableError() {
+        let error = SyncAPIError.from(status: 503, body: SyncErrorBody(statusCode: 503, message: "m",
+                                                                       code: "space_unavailable", item: nil))
+        XCTAssertTrue(error.isSpaceUnavailable)
+        XCTAssertFalse(SyncAPIError.http(status: 503, code: nil, message: nil).isSpaceUnavailable)
+        XCTAssertFalse(SyncAPIError.notFound.isSpaceUnavailable)
+    }
+
     func testDecodesRegistration() throws {
         let registration = try JSONDecoder().decode(DeviceRegistration.self, from: Data(Fixtures.registrationJSON().utf8))
         XCTAssertTrue(registration.token.hasPrefix("syd_"))

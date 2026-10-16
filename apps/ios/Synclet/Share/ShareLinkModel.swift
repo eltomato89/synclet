@@ -64,7 +64,7 @@ final class ShareLinkModel {
             if state == .loading { state = .idle }
         } catch {
             Self.log.error("share links failed: \(String(describing: error), privacy: .public)")
-            state = FolderModel.isOffline(error) ? .offline : .failed(FolderModel.describe(error))
+            state = FolderModel.loadState(for: error)
         }
     }
 

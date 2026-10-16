@@ -291,16 +291,24 @@ public struct SyncSpace: Codable, Sendable, Hashable, Identifiable {
     /// Item id of the space's root folder (`personal` → `root`).
     public var rootId: String
     public var canWrite: Bool
+    /// `available` or `missing` (mount gone, Phase 4); absent on older servers.
+    public var status: String?
 
-    public init(id: String, kind: SyncSpaceKind, name: String, rootId: String, canWrite: Bool) {
+    public init(id: String, kind: SyncSpaceKind, name: String, rootId: String, canWrite: Bool,
+                status: String? = nil) {
         self.id = id
         self.kind = kind
         self.name = name
         self.rootId = rootId
         self.canWrite = canWrite
+        self.status = status
     }
 
-    private enum CodingKeys: String, CodingKey { case id, kind, name, rootId, canWrite }
+    /// `false` while the server reports the space `missing` (its content answers
+    /// `503 space_unavailable`); clients show „Nicht verfügbar“.
+    public var isAvailable: Bool { status != "missing" }
+
+    private enum CodingKeys: String, CodingKey { case id, kind, name, rootId, canWrite, status }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -309,6 +317,7 @@ public struct SyncSpace: Codable, Sendable, Hashable, Identifiable {
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? id
         rootId = try c.decode(String.self, forKey: .rootId)
         canWrite = try c.decodeIfPresent(Bool.self, forKey: .canWrite) ?? false
+        status = try c.decodeIfPresent(String.self, forKey: .status)
     }
 
     /// The space a server without `spaces` (Phase 1c) implies: the user's folder.

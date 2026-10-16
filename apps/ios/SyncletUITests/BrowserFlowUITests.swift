@@ -19,8 +19,8 @@ final class BrowserFlowUITests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: upload.deletingLastPathComponent()) }
         let app = UITestSupport.launchApp(live, extraArguments: ["-SyncletTestUpload", upload.path])
 
-        // 1. „Meine Dateien“
-        require(app.navigationBars["Meine Dateien"], "„Meine Dateien“", timeout: 30, in: app)
+        // 1. „Meine Dateien“ (with a team folder the „Dateien“ tab starts at the list of spaces)
+        openMyFiles(in: app)
 
         // 2. New folder „UITest“
         createFolder("UITest", in: app)
@@ -108,7 +108,61 @@ final class BrowserFlowUITests: XCTestCase {
         print("UITEST: share URL \(url)")
     }
 
+    /// Phase 4: the „Dateien“ tab lists „Meine Dateien“ and the section „Bereiche“; a file
+    /// uploaded into the team folder appears there. Skipped when the server has no team folder.
+    @MainActor
+    func testUploadIntoTeamSpace() throws {
+        guard let live = UITestSupport.live else {
+            throw XCTSkip("SYNCLET_UITEST_SERVER / SYNCLET_UITEST_TOKEN not set (scripts/ios-live-tests.sh)")
+        }
+        guard let team = live.team else {
+            throw XCTSkip("SYNCLET_UITEST_TEAM not set: the server lists no team space")
+        }
+        let fileName = "team-uitest.txt"
+        let upload = try UITestSupport.makeTextFile(named: fileName,
+                                                    contents: "Synclet team UI test \(UUID().uuidString)\n")
+        defer { try? FileManager.default.removeItem(at: upload.deletingLastPathComponent()) }
+        let app = UITestSupport.launchApp(live, extraArguments: ["-SyncletTestUpload", upload.path])
+
+        // The space list: „Meine Dateien“, then „Bereiche“ with the team folder.
+        let teamRow = app.element("spaces.\(team)")
+        require(teamRow, "team folder \(team) in „Bereiche“", timeout: 30, in: app)
+        XCTAssertTrue(app.element("spaces.Meine Dateien").exists, "„Meine Dateien“ above the spaces")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label ==[c] %@", "Bereiche")).firstMatch.exists,
+                      "section „Bereiche“")
+        teamRow.tap()
+        require(app.navigationBars[team], "team folder opened", in: app)
+
+        // Upload into the team folder („Dateien“ → DEBUG hook -SyncletTestUpload).
+        app.buttons["browser.addMenu"].tap()
+        let files = app.buttons["upload.files"]
+        require(files, "„Dateien“ in the + menu", timeout: 5, in: app)
+        files.tap()
+        let fileRow = app.element("browser.item.\(fileName)")
+        require(fileRow, "uploaded file row in the team folder", timeout: 60, in: app)
+
+        // Clean up for reruns: move it to the (team folder's) trash.
+        contextAction("item.delete", on: fileRow, in: app)
+        let confirm = app.buttons.matching(identifier: "item.confirmDelete").firstMatch
+        require(confirm, "delete confirmation", timeout: 5, in: app)
+        confirm.tap()
+        XCTAssertTrue(fileRow.waitForDisappearance(timeout: 15), "deleted item leaves the team folder")
+    }
+
     // MARK: - Steps
+
+    /// „Meine Dateien“ in the „Dateien“ tab: directly, or through the list of spaces.
+    @MainActor
+    private func openMyFiles(in app: XCUIApplication) {
+        let myFiles = app.navigationBars["Meine Dateien"]
+        let spaceRow = app.element("spaces.Meine Dateien")
+        let deadline = Date().addingTimeInterval(30)
+        while Date() < deadline, !myFiles.exists, !spaceRow.exists {
+            _ = myFiles.waitForExistence(timeout: 1)
+        }
+        if !myFiles.exists, spaceRow.exists { spaceRow.tap() }
+        require(myFiles, "„Meine Dateien“", timeout: 10, in: app)
+    }
 
     @MainActor
     private func openNameSheetForNewFolder(in app: XCUIApplication) {

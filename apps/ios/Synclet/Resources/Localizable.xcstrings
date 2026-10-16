@@ -691,6 +691,16 @@
         }
       }
     },
+    "Not Available" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nicht verfügbar"
+          }
+        }
+      }
+    },
     "OK" : {
       "localizations" : {
         "de" : {
@@ -777,6 +787,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Bitte gib eine gültige Serveradresse ein, z. B. files.example.com."
+          }
+        }
+      }
+    },
+    "Read Only" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nur lesen"
           }
         }
       }
@@ -1071,6 +1091,26 @@
         }
       }
     },
+    "Space Not Available" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bereich nicht verfügbar"
+          }
+        }
+      }
+    },
+    "Spaces" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bereiche"
+          }
+        }
+      }
+    },
     "Storage Full" : {
       "localizations" : {
         "de" : {
@@ -1137,6 +1177,16 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Die Anmeldung wurde abgelehnt (%@)."
+          }
+        }
+      }
+    },
+    "The storage of this space can’t be reached on the server right now." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Speicher dieses Bereichs ist auf dem Server gerade nicht erreichbar."
           }
         }
       }

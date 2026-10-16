@@ -11,7 +11,7 @@ struct RecentView: View {
     var body: some View {
         DestinationStack(environment: environment, entry: entry, accountMenu: accountMenu, embedded: embedded,
                          title: "Recent") { api, open in
-            RecentList(environment: environment, accountKey: entry.id, api: api, open: open)
+            RecentList(environment: environment, accountKey: entry.id, spaces: entry.spaces, api: api, open: open)
         }
     }
 }
@@ -19,15 +19,18 @@ struct RecentView: View {
 private struct RecentList: View {
     let environment: AppEnvironment
     let accountKey: String
+    let spaces: SpaceDirectory
     let open: (FolderRoute) -> Void
     @State private var model: RecentModel
     @State private var opening: SyncItem?
     @State private var sharing: SyncItem?
     @Environment(\.scenePhase) private var scenePhase
 
-    init(environment: AppEnvironment, accountKey: String, api: SyncAPIClient, open: @escaping (FolderRoute) -> Void) {
+    init(environment: AppEnvironment, accountKey: String, spaces: SpaceDirectory, api: SyncAPIClient,
+         open: @escaping (FolderRoute) -> Void) {
         self.environment = environment
         self.accountKey = accountKey
+        self.spaces = spaces
         self.open = open
         _model = State(initialValue: RecentModel(api: api))
     }
@@ -57,9 +60,9 @@ private struct RecentList: View {
         if model.state == .loaded {
             List(model.items) { item in
                 Button {
-                    if item.isFolder { open(FolderRoute(id: item.id, title: item.name)) } else { opening = item }
+                    if item.isFolder { open(FolderRoute(item: item)) } else { opening = item }
                 } label: {
-                    ItemRow(item: item, api: model.api)
+                    ItemRow(item: item, api: model.api, space: spaces.label(for: item.spaceId))
                 }
                 .foregroundStyle(.primary)
                 .accessibilityIdentifier("recent.item.\(item.name)")

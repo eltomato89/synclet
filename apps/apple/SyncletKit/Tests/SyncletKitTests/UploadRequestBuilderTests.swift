@@ -90,7 +90,9 @@ final class UploadRequestBuilderTests: XCTestCase {
             XCTAssertEqual(interpret(400, [:], errorBody(400, "invalid_request"), step),
                            .fail(.other, message: "invalid_request message"), "\(step)")
             XCTAssertEqual(interpret(403, [:], errorBody(403, "forbidden"), step),
-                           .fail(.other, message: "forbidden message"), "\(step)")
+                           .fail(.readOnly, message: "forbidden message"), "\(step)")
+            XCTAssertEqual(interpret(503, [:], errorBody(503, "space_unavailable"), step),
+                           .fail(.spaceUnavailable, message: "space_unavailable message"), "\(step)")
             XCTAssertEqual(interpret(503, [:], "", step), .retry, "\(step)")
             XCTAssertEqual(interpret(500, [:], "", step), .retry, "\(step)")
             XCTAssertEqual(interpret(423, [:], "", step), .retry, "\(step)")
@@ -145,6 +147,13 @@ final class UploadRequestBuilderTests: XCTestCase {
         // Body lost (proxy): the header still identifies the item; the name stays unknown ("").
         XCTAssertEqual(interpret(200, ["X-Synclet-Item": "f_9"], "", step), .finished(itemId: "f_9", name: ""))
         XCTAssertEqual(interpret(200, [:], "", step), .fail(.other, message: "tus: completed upload without item"))
+    }
+
+    func testUploadFailureDecodingToleratesUnknownValues() throws {
+        let decoded = try JSONDecoder().decode([UploadFailure].self,
+                                               from: Data(#"["readOnly","spaceUnavailable","targetGone","fromTheFuture"]"#.utf8))
+        XCTAssertEqual(decoded, [.readOnly, .spaceUnavailable, .targetGone, .other])
+        XCTAssertEqual(String(data: try JSONEncoder().encode(UploadFailure.readOnly), encoding: .utf8), #""readOnly""#)
     }
 
     func testStepCodableRoundTrip() throws {

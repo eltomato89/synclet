@@ -24,6 +24,7 @@ enum MutationErrors {
         guard let apiError = error as? SyncAPIError else {
             return .failed(error.localizedDescription)
         }
+        if apiError.isSpaceUnavailable { return .failed(String(localized: "Not Available")) }
         switch apiError {
         case .conflict: return .conflictReloaded
         case .nameConflict: return .nameTaken

@@ -11,13 +11,17 @@ enum UITestSupport {
     struct Live {
         let server: String
         let token: String
+        /// Name of a team folder the user may write to (`SYNCLET_UITEST_TEAM`); `nil` when the
+        /// server has no spaces (the team space flow skips).
+        let team: String?
     }
 
     static var live: Live? {
         let env = ProcessInfo.processInfo.environment
         guard let server = env["SYNCLET_UITEST_SERVER"], !server.isEmpty,
               let token = env["SYNCLET_UITEST_TOKEN"], !token.isEmpty else { return nil }
-        return Live(server: server, token: token)
+        let team = env["SYNCLET_UITEST_TEAM"].flatMap { $0.isEmpty ? nil : $0 }
+        return Live(server: server, token: token, team: team)
     }
 
     /// The app signed in to the live server, in German (the product terms are asserted).

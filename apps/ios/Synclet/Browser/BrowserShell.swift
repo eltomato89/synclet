@@ -66,6 +66,15 @@ enum BrowserDestination: String, Hashable, Identifiable, CaseIterable {
 struct SidebarSelection: Hashable {
     let accountKey: String
     let destination: BrowserDestination
+    /// A team folder or storage (destination `.files`); `nil` = „Meine Dateien“.
+    var spaceId: String?
+
+    /// The selection while its space still exists; otherwise the account's „Meine Dateien“
+    /// (access removed, space deleted).
+    func validated(spaces: [SyncSpace]) -> SidebarSelection {
+        guard let spaceId, !spaces.contains(where: { $0.id == spaceId && $0.kind != .personal }) else { return self }
+        return SidebarSelection(accountKey: accountKey, destination: .files, spaceId: nil)
+    }
 }
 
 /// The browser around the destinations: iPhone (compact width) a `TabView` with one
@@ -160,6 +169,15 @@ struct BrowserShell: View {
                                 .badge(destination.badge(accountKey: entry.id))
                                 .tag(SidebarSelection(accountKey: entry.id, destination: destination))
                                 .accessibilityIdentifier("sidebar.\(destination.rawValue).\(entry.account.username)")
+                            if destination == .files {
+                                // The account's team folders and storages right below „Meine Dateien“.
+                                ForEach(SpaceDirectory(spaces: entry.account.spaces).others) { space in
+                                    SpaceLabel(entry: space)
+                                        .padding(.leading, 12)
+                                        .tag(SidebarSelection(accountKey: entry.id, destination: .files, spaceId: space.id))
+                                        .accessibilityIdentifier("sidebar.space.\(space.title).\(entry.account.username)")
+                                }
+                            }
                         }
                     } header: {
                         HStack {
@@ -192,7 +210,8 @@ struct BrowserShell: View {
             }
         } detail: {
             if let selection = sidebarSelection, let entry = accounts.entry(key: selection.accountKey) {
-                DestinationView(environment: environment, entry: entry, destination: selection.destination)
+                DestinationView(environment: environment, entry: entry, destination: selection.destination,
+                                spaceId: selection.spaceId)
                     .id(selection)
             } else {
                 ContentUnavailableView("Choose a Place", systemImage: "sidebar.left")
@@ -206,7 +225,8 @@ struct BrowserShell: View {
         }
     }
 
-    /// Keeps the sidebar on the selected account (after a sign-in or sign-out).
+    /// Keeps the sidebar on the selected account (after a sign-in or sign-out) and on a space
+    /// that still exists.
     private func syncSidebar() {
         guard let key = accounts.selectedKey else {
             sidebarSelection = nil
@@ -214,6 +234,9 @@ struct BrowserShell: View {
         }
         if sidebarSelection?.accountKey != key || accounts.entry(key: key) == nil {
             sidebarSelection = SidebarSelection(accountKey: key, destination: sidebarSelection?.destination ?? .files)
+        } else if let selection = sidebarSelection, let entry = accounts.entry(key: key) {
+            let valid = selection.validated(spaces: entry.account.spaces)
+            if valid != selection { sidebarSelection = valid }
         }
     }
 }
@@ -227,11 +250,14 @@ struct DestinationView: View {
     var accountMenu: AccountMenu?
     /// Pushed inside another `NavigationStack` (iPhone „Mehr“): no stack of its own.
     var embedded = false
+    /// `.files` of a team folder or storage (iPad sidebar).
+    var spaceId: String?
 
     var body: some View {
         switch destination {
         case .files:
-            FolderStack(environment: environment, entry: entry, accountMenu: accountMenu)
+            FolderStack(environment: environment, entry: entry, accountMenu: accountMenu,
+                        space: spaceId.flatMap { id in entry.account.spaces.first { $0.id == id } })
         case .uploads:
             if embedded {
                 UploadsView(accountKey: entry.id)
@@ -248,32 +274,48 @@ struct DestinationView: View {
     }
 }
 
-/// „Meine Dateien“ of an account with its folder navigation.
+/// The files of an account with their folder navigation. iPhone: an account with team
+/// folders or storages starts at the list of its spaces (``SpaceList``), otherwise at „Meine
+/// Dateien“. iPad: the sidebar lists the spaces, so this shows one space (`space`, `nil` =
+/// „Meine Dateien“).
 struct FolderStack: View {
     let environment: AppEnvironment
     let entry: AccountEntry
     var accountMenu: AccountMenu?
+    var space: SyncSpace?
     @State private var path: [FolderRoute] = []
     @Environment(\.horizontalSizeClass) private var sizeClass
     /// Search inside the folders (iPad; Task 8).
     @State private var search: SearchModel?
 
-    /// Root of the `personal` space.
+    private var directory: SpaceDirectory { SpaceDirectory(spaces: entry.account.spaces) }
+
+    /// The space list instead of a folder at the root (iPhone with spaces).
+    private var showsSpaceList: Bool { space == nil && sizeClass == .compact && directory.hasSpaces }
+
+    /// Root folder of the space shown.
     private var root: FolderRoute {
-        let rootId = entry.account.spaces.first { $0.kind == .personal }?.rootId ?? SyncItem.rootID
-        return FolderRoute(id: rootId, title: String(localized: "My Files"))
+        space.map { SpaceEntry(space: $0).route } ?? directory.personal.route
     }
 
     var body: some View {
         NavigationStack(path: $path) {
             Group {
                 if let api = environment.client(for: entry.id) {
-                    FolderView(environment: environment, accountKey: entry.id, api: api, folder: root, root: root)
-                        .folderSearch(search, folder: root) { path.append($0) }
-                        .navigationDestination(for: FolderRoute.self) { route in
-                            FolderView(environment: environment, accountKey: entry.id, api: api, folder: route, root: root)
-                                .folderSearch(search, folder: route) { path.append($0) }
+                    Group {
+                        if showsSpaceList {
+                            SpaceList(directory: directory)
+                        } else {
+                            FolderView(environment: environment, accountKey: entry.id, api: api, folder: root,
+                                       spaces: directory)
+                                .folderSearch(search, folder: root, spaces: directory) { path.append($0) }
                         }
+                    }
+                    .navigationDestination(for: FolderRoute.self) { route in
+                        FolderView(environment: environment, accountKey: entry.id, api: api, folder: route,
+                                   spaces: directory)
+                            .folderSearch(search, folder: route, spaces: directory) { path.append($0) }
+                    }
                 } else {
                     ContentUnavailableView("Sign-in required", systemImage: "person.crop.circle.badge.exclamationmark")
                         .navigationTitle(Text(verbatim: root.title))
@@ -289,6 +331,11 @@ struct FolderStack: View {
             if sizeClass != .compact, search == nil, let api = environment.client(for: entry.id) {
                 search = SearchModel(api: api)
             }
+        }
+        .onChange(of: entry.account.spaces) {
+            // A space was removed (or lost its access) while it was open: back to the start.
+            let ids = Set(entry.account.spaces.map(\.id))
+            if path.contains(where: { $0.spaceId.map { !ids.contains($0) } ?? false }) { path = [] }
         }
     }
 }

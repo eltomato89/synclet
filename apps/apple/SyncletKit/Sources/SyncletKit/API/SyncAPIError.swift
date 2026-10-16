@@ -91,6 +91,12 @@ public enum SyncAPIError: Error, Sendable, Equatable {
         }
     }
 
+    /// `503 space_unavailable`: the space's storage is missing (Phase 4); shown as „Nicht verfügbar“.
+    public var isSpaceUnavailable: Bool {
+        if case .http(503, "space_unavailable", _) = self { return true }
+        return false
+    }
+
     /// Temporary error – try again later.
     public var isTransient: Bool {
         switch self {
