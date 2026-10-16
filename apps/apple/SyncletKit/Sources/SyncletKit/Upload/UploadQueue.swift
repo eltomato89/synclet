@@ -80,33 +80,37 @@ public final class UploadQueue: Sendable {
 
     @discardableResult
     public func enqueue(source: URL, name: String, accountKey: String, parentId: String, parentName: String) throws -> UploadEntry {
-        // The copy happens under the lock so a concurrent prune never sees it as an orphan.
-        try locked(exclusive: true) {
-            let id = UUID().uuidString
-            let dest = fileURL(for: id)
-            let fm = FileManager.default
-            try fm.createDirectory(at: filesDirectory, withIntermediateDirectories: true)
-            do {
-                try fm.copyItem(at: source, to: dest)
-                let size = (try fm.attributesOfItem(atPath: dest.path)[.size] as? NSNumber)?.int64Value ?? 0
+        let fm = FileManager.default
+        let id = UUID().uuidString
+        let staged = stagingDirectory.appending(path: AccountStore.safeComponent(id), directoryHint: .notDirectory)
+        let dest = fileURL(for: id)
+        // The (possibly multi-GB, cross-volume) copy runs outside the lock into staging, which
+        // prune only touches when stale; just the cheap move + append happens under the lock.
+        do {
+            try fm.createDirectory(at: stagingDirectory, withIntermediateDirectories: true)
+            try fm.copyItem(at: source, to: staged)
+            let size = (try fm.attributesOfItem(atPath: staged.path)[.size] as? NSNumber)?.int64Value ?? 0
+            return try locked(exclusive: true) {
+                var entries = try loadSettingAside()
+                try fm.createDirectory(at: filesDirectory, withIntermediateDirectories: true)
+                try fm.moveItem(at: staged, to: dest)
                 let entry = UploadEntry(id: id, accountKey: accountKey, parentId: parentId, parentName: parentName,
                                         name: name, size: size,
                                         createdAt: Date(timeIntervalSince1970: (now().timeIntervalSince1970 * 1000).rounded() / 1000))
-                var entries = loadSettingAside()
                 entries.append(entry)
-                try write(entries)
+                do { try write(entries) } catch { try? fm.removeItem(at: dest); throw error }
                 return entry
-            } catch {
-                try? fm.removeItem(at: dest)
-                throw error
             }
+        } catch {
+            try? fm.removeItem(at: staged)
+            throw error
         }
     }
 
     /// Newest first, after pruning.
     public func all() -> [UploadEntry] {
         let entries = (try? locked(exclusive: true) { () -> [UploadEntry] in
-            var entries = loadSettingAside()
+            var entries = try loadSettingAside()
             pruneLocked(&entries)
             return entries
         }) ?? []
@@ -120,7 +124,7 @@ public final class UploadQueue: Sendable {
     @discardableResult
     public func update(id: String, _ change: (inout UploadEntry) -> Void) -> UploadEntry? {
         try? locked(exclusive: true) { () -> UploadEntry? in
-            var entries = loadSettingAside()
+            var entries = try loadSettingAside()
             guard let i = entries.firstIndex(where: { $0.id == id }) else { return nil }
             let before = entries[i]
             change(&entries[i])
@@ -155,18 +159,21 @@ public final class UploadQueue: Sendable {
 
     public func prune() {
         _ = try? locked(exclusive: true) {
-            var entries = loadSettingAside()
+            var entries = try loadSettingAside()
             pruneLocked(&entries)
         }
     }
 
     // MARK: Internals
 
+    private var stagingDirectory: URL { directory.appending(path: "staging", directoryHint: .isDirectory) }
+    static let stagingMaxAge: TimeInterval = 24 * 3600
+
     private var queueURL: URL { directory.appending(path: "queue.json", directoryHint: .notDirectory) }
 
     private func removeWhere(_ match: (UploadEntry) -> Bool) {
         _ = try? locked(exclusive: true) {
-            let entries = loadSettingAside()
+            let entries = try loadSettingAside()
             let (gone, kept) = (entries.filter(match), entries.filter { !match($0) })
             guard !gone.isEmpty else { return }
             try? write(kept)
@@ -181,31 +188,42 @@ public final class UploadQueue: Sendable {
         let before = entries.count
         entries.removeAll { $0.status == .done && ($0.finishedAt ?? $0.createdAt) < cutoff }
         if entries.count != before { try? write(entries) }
+        let staleBefore = now().addingTimeInterval(-Self.stagingMaxAge)
+        for name in (try? fm.contentsOfDirectory(atPath: stagingDirectory.path)) ?? [] {
+            let url = stagingDirectory.appending(path: name, directoryHint: .notDirectory)
+            let modified = (try? fm.attributesOfItem(atPath: url.path)[.modificationDate] as? Date) ?? .distantPast
+            if modified < staleBefore { try? fm.removeItem(at: url) }
+        }
         let keep = Set(entries.filter { $0.status != .done }.map { AccountStore.safeComponent($0.id) })
         for name in (try? fm.contentsOfDirectory(atPath: filesDirectory.path)) ?? [] where !keep.contains(name) {
             try? fm.removeItem(at: filesDirectory.appending(path: name, directoryHint: .notDirectory))
         }
     }
 
-    private enum Loaded { case entries([UploadEntry]), corrupt }
+    private enum Loaded { case entries([UploadEntry]), corrupt, unavailable }
+
+    private struct QueueUnavailable: Error {}
 
     private func load() -> Loaded {
-        guard let data = try? Data(contentsOf: queueURL) else {
-            return FileManager.default.fileExists(atPath: queueURL.path) ? .corrupt : .entries([])
-        }
+        guard FileManager.default.fileExists(atPath: queueURL.path) else { return .entries([]) }
+        // A read error (permissions, data protection, EMFILE, EIO) is transient: never treat it as corruption.
+        guard let data = try? Data(contentsOf: queueURL) else { return .unavailable }
         guard let file = try? Self.decoder.decode(QueueFile.self, from: data), file.v == Self.currentVersion else { return .corrupt }
         return .entries(file.entries)
     }
 
-    /// Caller holds the exclusive lock.
-    private func loadSettingAside() -> [UploadEntry] {
+    /// Caller holds the exclusive lock. Throws when the file exists but cannot be read right now.
+    private func loadSettingAside() throws -> [UploadEntry] {
         switch load() {
         case .entries(let e): return e
+        case .unavailable:
+            Log.transfer.error("upload queue unreadable right now; left untouched")
+            throw QueueUnavailable()
         case .corrupt:
             let stamp = ISO8601DateFormatter().string(from: now()).replacingOccurrences(of: ":", with: "-")
             let target = directory.appending(path: "queue.json.corrupt-\(stamp)-\(UUID().uuidString.prefix(8))")
             try? FileManager.default.moveItem(at: queueURL, to: target)
-            Log.transfer.error("upload queue unreadable; set aside")
+            Log.transfer.error("upload queue corrupt; set aside")
             return []
         }
     }
@@ -214,8 +232,8 @@ public final class UploadQueue: Sendable {
         let shared = try? locked(exclusive: false) { load() }
         switch shared {
         case .entries(let e): return e
-        case .corrupt: return (try? locked(exclusive: true) { loadSettingAside() }) ?? []
-        case nil: return []
+        case .corrupt: return (try? locked(exclusive: true) { try loadSettingAside() }) ?? []
+        case .unavailable, nil: return []
         }
     }
 

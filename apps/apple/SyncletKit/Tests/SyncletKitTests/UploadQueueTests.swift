@@ -149,4 +149,47 @@ final class UploadQueueTests: XCTestCase {
         let files = (try? FileManager.default.contentsOfDirectory(atPath: q.filesDirectory.path)) ?? []
         XCTAssertTrue(files.isEmpty)
     }
+
+    func testStagingFileIsNotPrunedWhileYoungButWhenStale() throws {
+        let clock = Clock(Date())
+        let dir = Fixtures.tempDirectory()
+        let q = UploadQueue(directory: dir, now: { clock.now })
+        let staging = dir.appending(path: "staging", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        let f = staging.appending(path: "inflight")
+        try Data("partial".utf8).write(to: f)
+        _ = q.all(); q.prune()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: f.path))
+        clock.advance(25 * 3600)
+        q.prune()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: f.path))
+    }
+
+    func testEnqueueDoesNotHoldLockDuringCopy() throws {
+        // A source that is a FIFO-less large file is impractical; assert instead that after enqueue
+        // nothing remains in staging and the copy ended up in files/.
+        let dir = Fixtures.tempDirectory(); let q = UploadQueue(directory: dir)
+        let e = try enqueue(q)
+        let staged = (try? FileManager.default.contentsOfDirectory(atPath: dir.appending(path: "staging").path)) ?? []
+        XCTAssertTrue(staged.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: q.fileURL(for: e.id).path))
+    }
+
+    func testUnreadableQueueFileKeepsCopiesAndCreatesNoCorruptFile() throws {
+        let dir = Fixtures.tempDirectory(); let q = UploadQueue(directory: dir)
+        let e = try enqueue(q)
+        let qf = dir.appending(path: "queue.json").path
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: qf)
+        addTeardownBlock { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: qf) }
+        if geteuid() == 0 { throw XCTSkip("root ignores file modes") }
+        XCTAssertEqual(q.all(), [])
+        q.prune()
+        XCTAssertNil(q.update(id: e.id) { $0.name = "x" })
+        XCTAssertThrowsError(try enqueue(q))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: q.fileURL(for: e.id).path))
+        XCTAssertEqual(try corruptFiles(dir).count, 0)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: qf)
+        XCTAssertEqual(q.all().map(\.id), [e.id])
+        XCTAssertEqual(q.entry(id: e.id)?.name, "a.txt")
+    }
 }
