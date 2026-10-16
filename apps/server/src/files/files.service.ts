@@ -2,7 +2,7 @@ import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import type { Item, VersionSource } from '@prisma/client';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { lstat, mkdir, open, readdir, readFile, rm, rmdir, unlink, utimes } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, readFile, rename, rm, rmdir, unlink, utimes } from 'node:fs/promises';
 import path from 'node:path';
 import { Transform, type Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -77,6 +77,8 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
   private readonly log = new Logger(FilesService.name);
   /** Serialized background moves of committed deletes from their staging entry to /meta/trash. */
   private trashQueue: Promise<void> = Promise.resolve();
+  /** Same-file-system move used by moves between spaces (replaceable in tests to simulate EXDEV). */
+  readonly moveOps: { moveNoReplace: (src: string, dst: string) => Promise<void> } = { moveNoReplace };
 
   constructor(
     private readonly prisma: PrismaService,
@@ -483,8 +485,15 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
     }
   }
 
-  async update(space: IndexSpace, itemId: string, patch: { name?: string; parentId?: string | null }, opts: { ifMatchEtag?: string } = {}): Promise<Item> {
+  /**
+   * Renames and/or moves an item. With `targetSpace` other than `space`, `parentId` (null = its root)
+   * is in that space and the item moves there (moveToSpace); the caller checked write on both.
+   */
+  async update(space: IndexSpace, itemId: string, patch: { name?: string; parentId?: string | null; targetSpace?: IndexSpace }, opts: { ifMatchEtag?: string } = {}): Promise<Item> {
     const newName = patch.name === undefined ? undefined : this.checkName(patch.name);
+    if (patch.targetSpace && patch.targetSpace.id !== space.id) {
+      return this.moveToSpace(space, patch.targetSpace, itemId, patch.parentId ?? null, newName, opts);
+    }
     let moved: { from: string; to: string } | null = null;
     try {
       return await this.prisma.$transaction(async (tx) => {
@@ -523,6 +532,92 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
       const m = moved as { from: string; to: string } | null;
       if (m) await moveNoReplace(m.to, m.from).catch((err) => this.log.error(`cannot undo move ${m.to} -> ${m.from}: ${String(err)}`));
       throw e;
+    }
+  }
+
+  /**
+   * Moves an item (with its subtree) into another space, keeping its id. Both spaces are locked in
+   * ascending id order (no deadlock with a concurrent move the other way). On disk: rename, or copy +
+   * remove across file systems (EXDEV). Rows get the new spaceId and paths, versions and share links
+   * follow the items; the source journal records a `delete`, the target journal an `upsert` of the
+   * subtree. A rollback after the disk move puts the entry (and version folders) back.
+   */
+  private async moveToSpace(src: IndexSpace, dst: IndexSpace, itemId: string, targetParent: string | null, newName: string | undefined, opts: { ifMatchEtag?: string }): Promise<Item> {
+    let moved: { from: string; to: string } | null = null;
+    const versionDirs: { from: string; to: string }[] = [];
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        for (const id of [src.id, dst.id].sort()) await this.journal.lockSpace(tx, id);
+        const item = await this.store.getLive(tx, src.id, itemId);
+        if (!item) throw new SyncError('not_found');
+        if (opts.ifMatchEtag && opts.ifMatchEtag !== itemEtag(item)) throw new SyncError('conflict', 'etag mismatch', item);
+        const name = newName ?? item.name;
+        const parentRel = await this.parentPath(tx, dst, targetParent);
+        const { sibs, keys } = await this.takenKeys(tx, dst, targetParent);
+        if (keys.has(nameKey(name))) throw new SyncError('name_conflict', 'name already exists', sibs.find((s) => s.nameKey === nameKey(name)));
+        if ((await this.entryOnDisk(src, item)) === 'missing') throw new SyncError('not_found', 'entry missing on disk');
+        await this.assertRealDir(dst, parentRel);
+        const rel = joinRel(parentRel, name);
+        const from = this.abs(src, item.path);
+        const to = this.abs(dst, rel);
+        try {
+          await moveAcrossFs(from, to, this.moveOps.moveNoReplace);
+          moved = { from, to };
+        } catch (e) {
+          if (isEexist(e)) throw new SyncError('name_conflict', 'exists on disk');
+          throw mapMissing(e, 'item or target folder');
+        }
+        const subtree = item.type === 'folder' ? [item, ...(await this.store.liveDescendants(tx, src.id, item.path))] : [item];
+        const updated = await tx.item.update({ where: { id: item.id }, data: { spaceId: dst.id, parentId: targetParent, name, nameKey: nameKey(name), path: rel } });
+        if (item.type === 'folder') {
+          await tx.$executeRaw`
+            UPDATE "Item" SET "spaceId" = ${dst.id}::uuid, path = ${rel} || substring(path FROM char_length(${item.path}) + 1), "updatedAt" = now()
+            WHERE "spaceId" = ${src.id}::uuid AND "deletedAt" IS NULL
+            AND left(path, char_length(${item.path}) + 1) = ${item.path} || '/'`;
+        }
+        const ids = subtree.map((i) => i.id);
+        await tx.shareLink.updateMany({ where: { itemId: { in: ids }, spaceId: src.id }, data: { spaceId: dst.id } });
+        await this.moveVersions(tx, src, dst, subtree.filter((i) => i.type === 'file').map((i) => i.id), versionDirs);
+        // Source: the subtree is gone (+ same-key siblings whose display names may change).
+        await this.journal.record(tx, src.id, subtree, 'delete');
+        await this.journal.record(tx, src.id, await this.store.sameKeySiblings(tx, src.id, item.parentId, [item.nameKey], new Set([item.id])), 'upsert');
+        // Target: the whole subtree is new.
+        const arrived = item.type === 'folder' ? [updated, ...(await this.store.liveDescendants(tx, dst.id, rel))] : [updated];
+        await this.announce(tx, dst, arrived);
+        return updated;
+      }, TX_OPTS);
+    } catch (e) {
+      for (const d of versionDirs.reverse()) {
+        await rename(d.to, d.from).catch((err) => this.log.error(`cannot undo version move ${d.to} -> ${d.from}: ${String(err)}`));
+      }
+      const m = moved as { from: string; to: string } | null;
+      if (m) await moveAcrossFs(m.to, m.from, this.moveOps.moveNoReplace).catch((err) => this.log.error(`cannot undo move ${m.to} -> ${m.from}: ${String(err)}`));
+      throw e;
+    }
+  }
+
+  /**
+   * Moves the stored versions of `fileIds` from `<meta>/versions/<src>/<item>` to `<dst>/<item>`
+   * (same file system) and updates their rows. Done folders are pushed to `done` for an undo.
+   */
+  private async moveVersions(tx: Tx, src: IndexSpace, dst: IndexSpace, fileIds: string[], done: { from: string; to: string }[]): Promise<void> {
+    if (fileIds.length === 0) return;
+    const rows = await tx.fileVersion.findMany({ where: { spaceId: src.id, itemId: { in: fileIds } }, select: { id: true, itemId: true, storePath: true } });
+    if (rows.length === 0) return;
+    const store = path.resolve(this.config.metaRoot, 'versions');
+    for (const itemId of [...new Set(rows.map((r) => r.itemId))]) {
+      const from = path.join(store, src.id, itemId);
+      const to = path.join(store, dst.id, itemId);
+      if (await lstat(from).then(() => true, () => false)) {
+        await mkdir(path.dirname(to), { recursive: true });
+        await rename(from, to); // an existing non-empty `to` fails (ENOTEMPTY): the move rolls back
+        done.push({ from, to });
+      }
+      for (const r of rows.filter((x) => x.itemId === itemId)) {
+        const abs = path.resolve(r.storePath);
+        const storePath = abs.startsWith(from + path.sep) ? path.join(to, abs.slice(from.length + 1)) : r.storePath;
+        await tx.fileVersion.update({ where: { id: r.id }, data: { spaceId: dst.id, storePath } });
+      }
     }
   }
 

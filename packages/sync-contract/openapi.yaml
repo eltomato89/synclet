@@ -328,6 +328,8 @@ paths:
       tags: [changes]
       operationId: getCursor
       summary: Current change cursor
+      parameters:
+        - $ref: '#/components/parameters/Space'
       responses:
         '200':
           description: Cursor.
@@ -335,6 +337,8 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/CursorResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
   /sync/v1/changes:
     get:
       tags: [changes]
@@ -343,6 +347,7 @@ paths:
       parameters:
         - { name: cursor, in: query, required: true, schema: { $ref: '#/components/schemas/Cursor' } }
         - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Space'
       responses:
         '200':
           description: A page of changes. Call again with `cursor` while `hasMore` is true.
@@ -351,6 +356,7 @@ paths:
               schema: { $ref: '#/components/schemas/ChangesPage' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
         '410':
           description: '`cursor_expired` – re-enumerate from scratch.'
           content:
@@ -367,8 +373,10 @@ paths:
         on `hello` (after every (re)connect) and on `changes`, drain `GET /sync/v1/changes`.
 
         - `event: hello` – first event, `data` = `EventHello`.
-        - `event: changes` – the journal advanced, `data` = `EventChanges` (coalesced, at most one
-          per 250 ms).
+        - `event: changes` – the journal of a readable space advanced, `data` = `EventChanges`
+          (coalesced per space, at most one per 250 ms).
+        - `event: account` – the user's space list or rights changed, `data` = `EventAccount`
+          (`{}`): reload `GET /sync/v1/account`.
         - `event: bye` – the server ends the stream, `data` = `EventBye`.
         - `: ping` comment every 25 s; the token is re-checked before each ping and the stream
           ends (`bye`, `unauthorized`) when it is no longer valid. A change the server did not
@@ -1029,13 +1037,19 @@ components:
       name: id
       in: path
       required: true
-      description: '`root`, `d_<uuid>` (folder) or `f_<uuid>` (file).'
+      description: '`root`, `r_<uuid>` (root of a team/external space), `d_<uuid>` (folder) or `f_<uuid>` (file).'
       schema: { $ref: '#/components/schemas/ItemId' }
     VersionId:
       name: versionId
       in: path
       required: true
       schema: { type: string, format: uuid }
+    Space:
+      name: space
+      in: query
+      required: false
+      description: 'API space id: `personal` (default) or a space uuid from `GET /sync/v1/account`. No access → `404`.'
+      schema: { type: string }
     Limit:
       name: limit
       in: query
@@ -1106,6 +1120,11 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
+    SpaceUnavailable:
+      description: '`space_unavailable` – the space''s storage is not mounted (`status: missing` in `/account`). Retry later.'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
     RangeNotSatisfiable:
       description: '`range_not_satisfiable`.'
       content:
@@ -1127,7 +1146,7 @@ components:
   schemas:
     ItemId:
       type: string
-      pattern: '^(root|[df]_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$'
+      pattern: '^(root|[dfr]_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$'
     Cursor:
       type: string
       description: Opaque; compare only for equality, never parse or do arithmetic on it.
@@ -1160,6 +1179,7 @@ components:
         - sso_not_allowed
         - password_login_disabled
         - insufficient_storage
+        - space_unavailable
     Error:
       type: object
       required: [statusCode, message, code]
@@ -1194,7 +1214,7 @@ components:
       properties:
         id: { $ref: '#/components/schemas/ItemId' }
         parentId:
-          description: '`null` only for `root`; top-level items have `root`.'
+          description: '`null` only for space roots; top-level items have their space''s `rootId` (`root` or `r_<uuid>`).'
           oneOf:
             - { $ref: '#/components/schemas/ItemId' }
             - { type: 'null' }
@@ -1212,6 +1232,7 @@ components:
         documentId: { type: [string, 'null'], description: Files - equals `id` (Buro compatibility); null for folders. }
         capabilities: { $ref: '#/components/schemas/Capabilities' }
         preview: { $ref: '#/components/schemas/PreviewInfo' }
+        spaceId: { type: string, description: 'API id of the item''s space (`personal` or the space uuid); absent from older servers = personal.' }
     SyncAccount:
       type: object
       required: [userId, email, displayName, organizationId, organizationName, slug, canWrite, spaces, areas, quotaBytes, usedBytes, maxUploadBytes, cursor]
@@ -1248,6 +1269,10 @@ components:
         name: { type: string }
         rootId: { type: string, description: The space's root folder id (`root` for the personal space). }
         canWrite: { type: boolean }
+        status:
+          type: string
+          enum: [available, missing]
+          description: '`missing`: the storage is not mounted; its content answers `503 space_unavailable`. Absent from older servers = available.'
     ServerCapabilities:
       type: object
       required: [versions, office]
@@ -1310,6 +1335,13 @@ components:
       required: [cursor]
       properties:
         cursor: { $ref: '#/components/schemas/Cursor' }
+        cursors:
+          type: object
+          description: Current cursor per readable space, keyed by API space id (`personal`, uuid).
+          additionalProperties: { $ref: '#/components/schemas/Cursor' }
+    EventAccount:
+      description: '`data` of `event: account` (`GET /sync/v1/events`): always `{}`.'
+      type: object
     EventChanges:
       description: '`data` of `event: changes` (`GET /sync/v1/events`).'
       type: object
@@ -1317,7 +1349,7 @@ components:
       properties:
         space:
           type: string
-          description: The space whose journal advanced; currently always `personal`.
+          description: API id of the space whose journal advanced (`personal` or the space uuid).
         cursor: { $ref: '#/components/schemas/Cursor' }
     EventBye:
       description: '`data` of `event: bye` (`GET /sync/v1/events`); the server closes the stream next.'

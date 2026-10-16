@@ -128,10 +128,11 @@ export async function moveNoReplace(src: string, dst: string): Promise<void> {
  * (`.synclet-tmp-<hex>`) next to `dst` and is published only when complete – no-replace (link for
  * files, checked rename for folders) – so an existing `dst` always means "fully copied" (crash
  * recovery relies on that) and a host-created `dst` is never overwritten. The source is removed last.
+ * `move` replaces the same-file-system step (a test seam).
  */
-export async function moveAcrossFs(src: string, dst: string): Promise<void> {
+export async function moveAcrossFs(src: string, dst: string, move: (src: string, dst: string) => Promise<void> = moveNoReplace): Promise<void> {
   try {
-    await moveNoReplace(src, dst);
+    await move(src, dst);
     return;
   } catch (e) {
     if (code(e) !== 'EXDEV') throw e;
