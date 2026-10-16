@@ -29,7 +29,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import java.io.File
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -39,7 +44,7 @@ import tech.jensk.synclet.ui.components.syncErrorMessage
 
 private class PdfDoc(file: File) {
     private val fd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
-    private val renderer = PdfRenderer(fd)
+    private val renderer = try { PdfRenderer(fd) } catch (e: Throwable) { runCatching { fd.close() }; throw e }
     private val lock = Mutex()
     val pageCount: Int get() = renderer.pageCount
 
@@ -60,7 +65,10 @@ private class PdfDoc(file: File) {
         withContext(Dispatchers.IO) { renderer.openPage(index).use { it.width to it.height } }
     }
 
-    fun close() { runCatching { renderer.close() }; runCatching { fd.close() } }
+    /** Closes under the render lock so an in-flight render never races the native renderer. */
+    suspend fun close() = withContext(NonCancellable) {
+        lock.withLock { runCatching { renderer.close() }; runCatching { fd.close() } }
+    }
 }
 
 @Composable
@@ -70,16 +78,25 @@ fun PdfPage(vm: PreviewViewModel, item: SyncItem, modifier: Modifier = Modifier)
     var error by remember(item.id) { mutableStateOf<Throwable?>(null) }
     val state by vm.state.collectAsStateWithLifecycle()
     LaunchedEffect(item.id) {
+        var created: PdfDoc? = null
         try {
             val file = vm.original(item)
-            doc = withContext(Dispatchers.IO) { PdfDoc(file) }
+            created = withContext(Dispatchers.IO) { PdfDoc(file) }
+            // A cancellation between creation and assignment would leak the native renderer.
+            currentCoroutineContext().ensureActive()
+            doc = created
+            created = null
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
             error = e
+        } finally {
+            created?.close()
         }
     }
-    DisposableEffect(item.id) { onDispose { doc?.close() } }
+    DisposableEffect(item.id) {
+        onDispose { doc?.let { d -> CoroutineScope(Dispatchers.IO + NonCancellable).launch { d.close() } } }
+    }
 
     val current = doc
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

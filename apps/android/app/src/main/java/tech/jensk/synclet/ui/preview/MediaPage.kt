@@ -14,6 +14,16 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.res.stringResource
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.CancellationException
+import tech.jensk.synclet.R
+import tech.jensk.synclet.ui.components.syncErrorMessage
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -30,16 +40,33 @@ import tech.jensk.synclet.ui.components.iconFor
 @Composable
 fun MediaPage(vm: PreviewViewModel, item: SyncItem, isCurrent: Boolean, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val url by produceState<String?>(null, item.id) { value = runCatching { vm.mediaUrl(item) }.getOrNull() }
+    var attempt by remember(item.id) { mutableIntStateOf(0) }
+    val urlResult by produceState<Result<String>?>(null, item.id, attempt) {
+        value = null
+        value = try { Result.success(vm.mediaUrl(item)) } catch (e: CancellationException) { throw e } catch (e: Exception) { Result.failure(e) }
+    }
+    val url = urlResult?.getOrNull()
+    val owner = LocalLifecycleOwner.current
     val exo = remember(item.id) { ExoPlayer.Builder(context).build() }
     DisposableEffect(exo) { onDispose { exo.release() } }
     LaunchedEffect(url) {
         url?.let { exo.setMediaItem(MediaItem.fromUri(it)); exo.prepare() }
     }
+    DisposableEffect(owner, exo) {
+        val observer = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_STOP) exo.pause() }
+        owner.lifecycle.addObserver(observer)
+        onDispose { owner.lifecycle.removeObserver(observer) }
+    }
     LaunchedEffect(isCurrent) { if (!isCurrent) exo.pause() }
 
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        if (url == null) {
+        val failure = urlResult?.exceptionOrNull()
+        if (failure != null) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(context.syncErrorMessage(failure))
+                TextButton(onClick = { attempt++ }) { Text(stringResource(R.string.preview_retry)) }
+            }
+        } else if (url == null) {
             CircularProgressIndicator()
         } else {
             AndroidView(

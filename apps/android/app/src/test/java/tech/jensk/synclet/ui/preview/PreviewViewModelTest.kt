@@ -80,6 +80,24 @@ class PreviewViewModelTest {
         assertEquals(0, s.index)
     }
 
+    @Test fun failingSiblingListingDegradesToTheSingleItem() {
+        val b = fileItem(F1, "b.txt", parentId = D1)
+        listing.putItem(key, b)
+        server.json("{\"statusCode\":500,\"message\":\"x\"}", 500)
+        val s = vm(D1, F1).settle()
+        assertEquals(listOf(b), s.siblings)
+        assertEquals(null, s.error)
+    }
+
+    @Test fun itemMissingFromTheListingShowsOnlyTheItem() {
+        val b = fileItem(F1, "b.txt", parentId = D1)
+        listing.put(key, D1, listOf(fileItem(F2, "a.jpg", parentId = D1)))
+        listing.putItem(key, b)
+        val s = vm(D1, F1).settle()
+        assertEquals(listOf(b), s.siblings)
+        assertEquals(0, s.index)
+    }
+
     @Test fun mediaUrlResolvesThePathOnlyTokenUrl() = runBlocking {
         val b = fileItem(F1, "b.mp4", parentId = D1)
         listing.putItem(key, b)
