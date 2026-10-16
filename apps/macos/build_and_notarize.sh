@@ -8,7 +8,8 @@
 #   - a "Developer ID Application" certificate of team JC32M95WLZ in the login keychain
 #   - xcrun notarytool store-credentials synclet-notary --apple-id <id> --team-id JC32M95WLZ
 #
-# Env: SYNCLET_SKIP_NOTARIZE=1 builds build/Synclet-<version>-unnotarized.dmg without the notary
+# Env: SYNCLET_NOTARY_PROFILE=<name> uses another notarytool keychain profile of the same team
+# (e.g. buro-notary). SYNCLET_SKIP_NOTARIZE=1 builds build/Synclet-<version>-unnotarized.dmg without the notary
 # steps (local testing only: Gatekeeper rejects it on other Macs). The DMG window layout uses
 # Finder via AppleScript (needs an unlocked GUI session); without it the DMG still works, the
 # script warns that the background could not be applied.
@@ -16,7 +17,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 HERE=$(pwd)
 TEAM=JC32M95WLZ
-PROFILE=synclet-notary
+PROFILE=${SYNCLET_NOTARY_PROFILE:-synclet-notary}
 BUILD="$HERE/build"
 ARCHIVE="$BUILD/Synclet.xcarchive"
 EXPORT="$BUILD/export"
