@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="browser_empty">Dieser Ordner ist leer.</string>
+    <string name="browser_read_only">Nur lesen</string>
+    <string name="browser_unavailable">Nicht verfügbar</string>
+    <string name="browser_new_folder">Neuer Ordner</string>
+    <string name="browser_upload_media">Fotos &amp; Videos</string>
+    <string name="browser_upload_files">Dateien</string>
+    <string name="browser_rename">Umbenennen</string>
+    <string name="browser_move">Verschieben</string>
+    <string name="browser_delete">Löschen</string>
+    <string name="browser_share_link">Link teilen</string>
+    <string name="browser_create">Anlegen</string>
+    <string name="browser_move_title">Verschieben nach</string>
+    <string name="browser_move_here">Hierher verschieben</string>
+    <string name="browser_delete_title">In den Papierkorb legen?</string>
+    <string name="browser_sort">Sortieren</string>
+    <string name="browser_sort_name">Name</string>
+    <string name="browser_sort_date">Datum</string>
+    <string name="browser_sort_size">Größe</string>
+    <string name="browser_view_list">Liste</string>
+    <string name="browser_view_grid">Raster</string>
+    <string name="browser_select_file">Wähle eine Datei für die Vorschau.</string>
+    <string name="browser_selected">%1$d ausgewählt</string>
+    <string name="browser_clear_selection">Auswahl aufheben</string>
+    <string name="browser_search">Suche</string>
+    <string name="browser_back">Zurück</string>
+    <string name="browser_more_actions">Weitere Aktionen</string>
+    <string name="browser_add">Hinzufügen</string>
+    <string name="browser_sign_in_again">Neu anmelden</string>
+    <string name="browser_sign_in_again_text">Dieses Konto muss neu angemeldet werden.</string>
+    <plurals name="browser_delete_text">
+        <item quantity="one">%d Element wird in den Papierkorb gelegt.</item>
+        <item quantity="other">%d Elemente werden in den Papierkorb gelegt.</item>
+    </plurals>
+    <plurals name="browser_deleted">
+        <item quantity="one">%d Element im Papierkorb</item>
+        <item quantity="other">%d Elemente im Papierkorb</item>
+    </plurals>
+    <plurals name="browser_uploads_queued">
+        <item quantity="one">%d Upload eingereiht</item>
+        <item quantity="other">%d Uploads eingereiht</item>
+    </plurals>
+</resources>
