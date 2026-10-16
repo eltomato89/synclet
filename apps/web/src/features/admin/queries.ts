@@ -100,8 +100,8 @@ export const UPDATE_HINT_PENDING_MS = 60_000;
 /** ... but only this many times (GitHub may be unreachable for longer; the server retries hourly). */
 const UPDATE_HINT_PENDING_TRIES = 5;
 
-/** No successful check yet: the server answered while its first GitHub request was still running. */
-const pending = (s: AdminStatusWire | undefined) => s?.version?.status === 'unavailable' && !s.version.checkedAt;
+/** The server answered while its first GitHub request was still running. */
+const pending = (s: AdminStatusWire | undefined) => s?.version?.status === 'checking';
 
 /**
  * True when the server reports a newer release. Shares the status query (and its cache) with the

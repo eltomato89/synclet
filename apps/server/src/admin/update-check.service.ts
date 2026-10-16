@@ -98,8 +98,8 @@ export class UpdateCheckService {
     if (!parseVersion(installed)) return { ...base, status: 'development' };
     if (!updateCheck) return { ...base, status: 'disabled' };
     if (this.due()) void this.refresh();
-    // Not checked successfully yet (or only failures so far). A failed retry keeps showing the last known release.
-    if (!this.latest) return { ...base, status: 'unavailable' };
+    // No successful check yet: still running (or not started), or failed. A failed retry keeps showing the last known release.
+    if (!this.latest) return { ...base, status: this.attempt && !this.attempt.ok && !this.inflight ? 'unavailable' : 'checking' };
     const checkedAt = new Date(this.latest.at).toISOString();
     const status: UpdateStatus = (compareVersions(this.latest.version, installed) ?? 0) > 0 ? 'update-available' : 'up-to-date';
     return { ...base, latest: this.latest.version, latestUrl: this.latest.url, checkedAt, status };

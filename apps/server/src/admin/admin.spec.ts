@@ -268,7 +268,7 @@ describe('admin backend', () => {
       ));
       try {
         // The first request does not wait for GitHub; the check runs in the background.
-        expect((await call('GET', '/admin/status')).json().version).toMatchObject({ installed: '0.1.2', status: 'unavailable', checkedAt: null });
+        expect((await call('GET', '/admin/status')).json().version).toMatchObject({ installed: '0.1.2', status: 'checking', checkedAt: null });
         await ctx.app.get(UpdateCheckService).idle();
         const s = (await call('GET', '/admin/status')).json();
         expect(s.version).toMatchObject({

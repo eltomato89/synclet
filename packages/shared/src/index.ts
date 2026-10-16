@@ -191,10 +191,11 @@ export interface AdminShareWire extends ShareLinkWire {
 export interface DiskUsage { totalBytes: number; freeBytes: number }
 /**
  * - `development`: not a release build (`edge`, `dev`, `sha-...`); no update hint.
- * - `unavailable`: GitHub could not be asked (network, rate limit, no release yet).
+ * - `checking`: no result yet; the first check (or its retry) is still running.
+ * - `unavailable`: the last check failed (network, rate limit, no release yet) and none succeeded before.
  * - `disabled`: SYNCLET_UPDATE_CHECK=off; no outbound request is made.
  */
-export type UpdateStatus = 'up-to-date' | 'update-available' | 'development' | 'unavailable' | 'disabled';
+export type UpdateStatus = 'up-to-date' | 'update-available' | 'checking' | 'development' | 'unavailable' | 'disabled';
 export interface VersionInfoWire {
   /** Release version without `v` (`1.2.3`), or `edge` / `dev` / ... for non-release builds. */
   installed: string;

@@ -903,6 +903,7 @@
       "update": {
         "up-to-date": "Aktuell",
         "update-available": "Update verfügbar: {{latest}}",
+        "checking": "Suche nach Updates …",
         "development": "Entwicklungsversion",
         "unavailable": "Updateprüfung fehlgeschlagen",
         "disabled": "Updateprüfung deaktiviert"

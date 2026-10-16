@@ -42,13 +42,13 @@ describe('UpdateCheckService', () => {
   });
   afterEach(() => jest.restoreAllMocks());
 
-  it('never waits for GitHub: the first answer is unavailable, the check runs in the background', async () => {
+  it('never waits for GitHub: the first answer is "checking", the check runs in the background', async () => {
     let answer!: (r: Response) => void;
     fetchMock.mockReturnValue(new Promise<Response>((r) => { answer = r; }));
     const svc = make();
-    expect(svc.info()).toEqual({ installed: '0.1.2', revision: 'abcdef0123', latest: null, latestUrl: null, checkedAt: null, status: 'unavailable' });
+    expect(svc.info()).toEqual({ installed: '0.1.2', revision: 'abcdef0123', latest: null, latestUrl: null, checkedAt: null, status: 'checking' });
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(svc.info().status).toBe('unavailable'); // still running: no second request
+    expect(svc.info().status).toBe('checking'); // still running: no second request
     expect(fetchMock).toHaveBeenCalledTimes(1);
     answer(release('v0.1.10'));
     await svc.idle();
@@ -88,11 +88,14 @@ describe('UpdateCheckService', () => {
   it('retries a failure after 1 hour, keeping the last known release (and its checkedAt) meanwhile', async () => {
     fetchMock.mockResolvedValueOnce(new Response('rate limited', { status: 403 })).mockResolvedValueOnce(release('v0.1.3'));
     const svc = make();
-    expect(await check(svc)).toMatchObject({ status: 'unavailable', latest: null, latestUrl: null, checkedAt: null });
+    expect(svc.info().status).toBe('checking');
+    await svc.idle();
+    expect(svc.info()).toMatchObject({ status: 'unavailable', latest: null, latestUrl: null, checkedAt: null });
     now += UPDATE_RETRY_MS - 1;
     expect((await check(svc)).status).toBe('unavailable');
     expect(fetchMock).toHaveBeenCalledTimes(1);
     now += 1;
+    expect(svc.info().status).toBe('checking'); // the retry is running
     const success = new Date(now).toISOString();
     expect(await check(svc)).toMatchObject({ status: 'update-available', checkedAt: success });
     // A later failure still shows the release found before, with the time it was found.
@@ -127,7 +130,7 @@ describe('UpdateCheckService', () => {
       init.signal!.addEventListener('abort', () => reject(init.signal!.reason));
     }));
     const svc = make();
-    expect(svc.info().status).toBe('unavailable');
+    expect(svc.info().status).toBe('checking');
     expect(timeout).toHaveBeenCalledWith(UPDATE_TIMEOUT_MS);
     ctl.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError'));
     await svc.idle();

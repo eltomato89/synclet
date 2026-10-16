@@ -114,7 +114,7 @@ it('asks again soon while the server has no update result yet', async () => {
       if (path !== '/admin/status') return { usedBytes: 0, quotaBytes: 0 };
       n += 1;
       return n === 1
-        ? { version: { installed: '0.1.2', revision: null, latest: null, latestUrl: null, checkedAt: null, status: 'unavailable' } }
+        ? { version: { installed: '0.1.2', revision: null, latest: null, latestUrl: null, checkedAt: null, status: 'checking' } }
         : { version: { installed: '0.1.2', revision: null, latest: '0.1.3', latestUrl: null, checkedAt: '2026-10-16T10:00:00Z', status: 'update-available' } };
     });
     const { wrapper: Wrapper } = testQueryClient();

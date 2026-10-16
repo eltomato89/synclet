@@ -54,10 +54,11 @@ it('shows a development build without a known commit', () => {
 });
 
 it.each([
+  ['checking', 'Checking for updates…'],
   ['unavailable', 'Could not check for updates'],
   ['disabled', 'Update check disabled'],
 ] as const)('shows %s', (status, text) => {
-  const row = show({ status, checkedAt: status === 'disabled' ? null : base.checkedAt });
+  const row = show({ status, checkedAt: status === 'unavailable' ? base.checkedAt : null });
   expect(row).toHaveTextContent('0.1.2');
   expect(row).toHaveTextContent(text);
   expect(screen.queryByRole('link')).toBeNull();
