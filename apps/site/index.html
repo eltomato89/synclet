@@ -194,7 +194,7 @@
               <ul class="mt-2 space-y-1 text-muted-foreground">
                 <li>Edit Word, Excel and PowerPoint files (and ODF) in the browser</li>
                 <li>Powered by the Euro-Office Document Server</li>
-                <li>Optional extra container on its own subdomain</li>
+                <li>Optional extra container on your Synclet domain, no second DNS name</li>
                 <li>Concurrent changes are kept as a conflict copy</li>
               </ul>
             </li>
@@ -330,7 +330,7 @@ SYNCLET_VERSION=…</code></pre>
             <li>
               <h3 class="text-lg font-semibold">4. Put it on the internet</h3>
               <p class="mt-2 text-muted-foreground"><strong class="font-medium text-foreground">Automatic HTTPS:</strong> set <code class="inline-code">SYNCLET_SITE_ADDRESS</code> to your domain, <code class="inline-code">SYNCLET_PORT=80</code>, <code class="inline-code">SYNCLET_TLS_PORT=443</code> and <code class="inline-code">SYNCLET_PUBLIC_URL</code>; the bundled Caddy fetches a Let's Encrypt certificate.</p>
-              <p class="mt-2 text-muted-foreground"><strong class="font-medium text-foreground">Behind your own reverse proxy</strong> (nginx, Traefik, Nginx Proxy Manager): keep the defaults, set <code class="inline-code">SYNCLET_PUBLIC_URL</code> and put the proxy's address into <code class="inline-code">SYNCLET_TRUSTED_PROXIES</code>. Its read timeout must be longer than 25 seconds for live updates.</p>
+              <p class="mt-2 text-muted-foreground"><strong class="font-medium text-foreground">Behind your own reverse proxy</strong> (nginx, Traefik, Nginx Proxy Manager): keep the defaults, set <code class="inline-code">SYNCLET_PUBLIC_URL</code> and put the proxy's address into <code class="inline-code">SYNCLET_TRUSTED_PROXIES</code>. Its read timeout must be longer than 25 seconds for live updates. With Office it must also pass WebSockets and allow long timeouts.</p>
             </li>
             <li class="lg:col-span-2">
               <h3 class="text-lg font-semibold">NAS and other disks</h3>
@@ -384,6 +384,10 @@ SYNCLET_VERSION=…</code></pre>
             <details>
               <summary>Multiple users and shared folders?</summary>
               <div><p>Yes. Every user gets a personal folder. Admins create team folders and groups and grant read or write access per user or group. Public share links work for files and folders.</p></div>
+            </details>
+            <details>
+              <summary>How do I turn on Office editing?</summary>
+              <div><p>Add <code class="inline-code">COMPOSE_PROFILES=office</code> and <code class="inline-code">OFFICE_JWT_SECRET</code> (from <code class="inline-code">openssl rand -hex 32</code>) to <code class="inline-code">.env</code> and run <code class="inline-code">docker compose up -d</code>. The Euro-Office Document Server then starts as an extra container (it needs about 4 GB of RAM) and is served below <code class="inline-code">/documentserver</code> on your Synclet domain. Running it on its own subdomain is also possible; the <a class="prose-link" href="https://github.com/eltomato89/synclet#office-euro-office-editing">README</a> explains both setups.</p></div>
             </details>
             <details>
               <summary>Is there an app for Windows or Android?</summary>
