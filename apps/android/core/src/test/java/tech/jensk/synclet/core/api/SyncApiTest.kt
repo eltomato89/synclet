@@ -98,6 +98,28 @@ class SyncApiTest {
         assertEquals("fresh", target.readText())
     }
 
+    @Test fun resumedDownloadWithAnotherStartIsDiscardedAndRestarted() = runBlocking {
+        val target = Files.createTempFile("dl", ".part").toFile().apply { writeText("hel") }
+        // The server answers a range that does not continue the local file: appending would corrupt it.
+        server.enqueue(MockResponse().setResponseCode(206).setHeader("Content-Range", "bytes 0-4/5").setBody("hello"))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("hello"))
+        assertEquals(5L, api.download(F1, target, ifRange = "v1"))
+        assertEquals("hello", target.readText())
+        assertEquals("bytes=3-", server.takeRequest().getHeader("Range"))
+        val retry = server.takeRequest()
+        assertNull(retry.getHeader("Range"))
+        assertNull(retry.getHeader("If-Range"))
+    }
+
+    @Test fun resumedDownloadWithoutContentRangeIsRestarted() = runBlocking {
+        val target = Files.createTempFile("dl", ".part").toFile().apply { writeText("hel") }
+        server.enqueue(MockResponse().setResponseCode(206).setBody("lo"))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("hello"))
+        assertEquals(5L, api.download(F1, target, ifRange = "v1"))
+        assertEquals("hello", target.readText())
+        assertEquals(2, server.requestCount)
+    }
+
     @Test fun deleteSendsIfMatch() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(204))
         api.deleteItem(D1, ifMatch = "t00000000000000a1")

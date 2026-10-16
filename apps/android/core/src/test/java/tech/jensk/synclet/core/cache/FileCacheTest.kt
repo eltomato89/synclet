@@ -8,10 +8,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import tech.jensk.synclet.core.api.SyncError
 import tech.jensk.synclet.core.api.SyncItem
 import tech.jensk.synclet.core.api.SyncJson
 import tech.jensk.synclet.core.testing.F1
@@ -41,6 +43,19 @@ class FileCacheTest {
         assertEquals("HELLO", f2.readText())
         assertFalse(f1.exists())
         assertEquals(f2, cache.latestAny("srv:u1", F1))
+    }
+
+    @Test fun shortDownloadIsRejectedAndNotCached() = runBlocking {
+        val cache = FileCache(tmp.root)
+        server.enqueue(MockResponse().setBody("hel"))              // item.size is 5
+        assertThrows(SyncError.InvalidResponse::class.java) { runBlocking { cache.fetch(server.api(), "srv:u1", item(F1, 1)) } }
+        assertNull(cache.cached("srv:u1", item(F1, 1)))
+        assertNull(cache.latestAny("srv:u1", F1))
+        // Nothing partial is left to be resumed from either: the next fetch downloads from the start.
+        server.enqueue(MockResponse().setBody("hello"))
+        assertEquals("hello", cache.fetch(server.api(), "srv:u1", item(F1, 1)).readText())
+        server.takeRequest()
+        assertNull(server.takeRequest().getHeader("Range"))
     }
 
     @Test fun evictsLeastRecentlyUsedAboveTheLimit() = runBlocking {

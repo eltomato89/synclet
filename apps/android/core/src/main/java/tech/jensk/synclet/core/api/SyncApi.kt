@@ -180,6 +180,12 @@ class SyncApi(val origin: HttpUrl, val client: OkHttpClient, val tokens: TokenSo
             }
             throw e
         }
+        if (response.code == 206 && start > 0 && contentRangeStart(response.header("Content-Range")) != start) {
+            // Not the continuation of the local part (or no usable Content-Range): appending would corrupt the file.
+            response.close()
+            destination.delete()
+            return@withContext download(id, destination, ifRange = null, onProgress = onProgress)
+        }
         response.use { r ->
             val append = r.code == 206
             val total = if (append) r.header("Content-Range")?.substringAfterLast('/')?.toLongOrNull()
@@ -237,6 +243,12 @@ class SyncApi(val origin: HttpUrl, val client: OkHttpClient, val tokens: TokenSo
     }
 
     companion object {
+        /** First byte of `Content-Range: bytes <start>-<end>/<total>`, or null when the header is missing or malformed. */
+        internal fun contentRangeStart(header: String?): Long? {
+            val match = CONTENT_RANGE.matchEntire(header?.trim() ?: return null) ?: return null
+            return match.groupValues[1].toLongOrNull()
+        }
+        private val CONTENT_RANGE = Regex("""bytes\s+(\d+)-(\d+)/(\d+|\*)""", RegexOption.IGNORE_CASE)
         private val JSON = "application/json; charset=utf-8".toMediaType()
         val OCTET_STREAM = "application/octet-stream".toMediaType()
 
