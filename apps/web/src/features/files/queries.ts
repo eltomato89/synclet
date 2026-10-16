@@ -94,6 +94,11 @@ export function useFileMutations() {
     }
     void qc.invalidateQueries({ queryKey: ['account'] });
     void qc.invalidateQueries({ queryKey: ['ancestors'] });
+    // Deleting fills the trash and hides the item's share links; moves and renames change link names.
+    void qc.invalidateQueries({ queryKey: ['trash'] });
+    void qc.invalidateQueries({ queryKey: ['shares'] });
+    void qc.invalidateQueries({ queryKey: ['recent'] });
+    void qc.invalidateQueries({ queryKey: ['search'] });
   };
   /** A renamed or moved folder changes the breadcrumb of everything below it. */
   const forget = (item: SyncItem) => { if (item.type === 'folder') qc.removeQueries({ queryKey: ['item', item.id] }); };

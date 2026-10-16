@@ -3,6 +3,7 @@ import { createContext, type ReactNode, useCallback, useContext, useEffect, useS
 import {
   api, broadcastLogout, broadcastSession, getSession, isTransientError, onAuthChange, refreshSession, setAccessToken,
 } from './api';
+import { clearUploadFingerprints } from '@/features/files/uploads';
 
 /** `error`: the server could not be reached (or failed) while checking the session; offer a retry. */
 type Status = 'loading' | 'anonymous' | 'authenticated' | 'needs-setup' | 'error';
@@ -71,6 +72,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     login: async (login, password) => establish(await api<AuthResponse>('/auth/login', { method: 'POST', json: { login, password } })),
     logout: async () => {
       await api('/auth/logout', { method: 'POST' }).catch(() => {});
+      clearUploadFingerprints();
       accept(null);
       broadcastLogout();
     },

@@ -32,8 +32,16 @@ test('setup, upload, rename, move, delete, download', async ({ page }) => {
   await expect(row('notiz-neu.txt')).toBeVisible();
   await expect(row('notiz.txt')).toBeHidden();
 
-  const downloadPromise = page.waitForEvent('download');
+  // Double-click on a previewable file opens QuickLook (Phase 1b); downloads go through the menu.
   await row('notiz-neu.txt').dblclick();
+  const quickLook = page.getByRole('dialog', { name: 'notiz-neu.txt' });
+  await expect(quickLook.getByText('hallo')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(quickLook).toBeHidden();
+
+  const downloadPromise = page.waitForEvent('download');
+  await row('notiz-neu.txt').click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Herunterladen' }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe('notiz-neu.txt');
   expect(await readFile(await download.path(), 'utf8')).toBe('hallo');

@@ -1,15 +1,19 @@
 import { Inject, Injectable, Logger, OnApplicationBootstrap, OnModuleDestroy } from '@nestjs/common';
+import type { Dirent } from 'node:fs';
 import { lstat, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { APP_CONFIG, AppConfig } from '../config';
 import { AppEvents } from '../common/events';
 import { isTempName } from '../common/names';
+import { DerivativesGc } from '../derivatives/derivatives-gc';
 import { userRoot } from '../common/paths';
 import type { IndexUser } from '../common/types';
 import { FilesService } from '../files/files.service';
 import { ItemStore } from '../journal/item-store';
 import { JournalService } from '../journal/journal.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { TrashService } from '../trash/trash.service';
+import { TusService } from '../uploads/tus';
 import { IndexerService } from './indexer.service';
 import { WatcherService } from './watcher.service';
 
@@ -30,6 +34,9 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     private readonly store: ItemStore,
     private readonly watcher: WatcherService,
     private readonly files: FilesService,
+    private readonly trash: TrashService,
+    private readonly uploads: TusService,
+    private readonly derivativesGc: DerivativesGc,
     events: AppEvents,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {
@@ -73,23 +80,31 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     await this.files.recoverStagedTrash().catch((e) => this.log.error(`trash recovery failed: ${(e as Error).message}`));
   }
 
-  /** At startup no upload is in flight, so every temp file is a leftover of a crash. */
+  /**
+   * Removes `.synclet-tmp-*` files and directories (any depth) left by crashes; at boot nothing is
+   * in flight, so no age gate applies. Symlinks are never followed; `.synclet-trash-*` is never touched.
+   */
   async startupCleanup(): Promise<number> {
     let removed = 0;
-    for (const u of await this.users().catch(() => [])) {
-      const root = userRoot(this.config.dataRoot, u.username);
-      const names = await readdir(root).catch(() => [] as string[]);
-      for (const n of names.filter(isTempName)) {
+    const walk = async (dir: string, owner: string): Promise<void> => {
+      let entries: Dirent[];
+      try { entries = await readdir(dir, { withFileTypes: true }); } catch { return; }
+      for (const e of entries) {
+        const abs = path.join(dir, e.name);
         try {
-          const abs = path.join(root, n);
-          if (!(await lstat(abs)).isFile()) continue; // never touch directories or symlinks
-          await rm(abs, { force: true });
-          removed++;
-        } catch (e) {
-          this.log.warn(`startup cleanup: cannot remove ${n} in ${u.username}: ${(e as Error).message}`);
+          if (isTempName(e.name)) {
+            const st = await lstat(abs);
+            if (st.isSymbolicLink()) continue;
+            if (st.isDirectory() || st.isFile()) { await rm(abs, { recursive: true, force: true }); removed++; }
+          } else if (e.isDirectory() && !e.name.startsWith('.synclet-trash-')) {
+            await walk(abs, owner); // Dirent from readdir never follows symlinks
+          }
+        } catch (err) {
+          this.log.warn(`startup cleanup: cannot remove ${abs} (${owner}): ${(err as Error).message}`);
         }
       }
-    }
+    };
+    for (const u of await this.users().catch(() => [])) await walk(userRoot(this.config.dataRoot, u.username), u.username);
     return removed;
   }
 
@@ -125,5 +140,14 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     // Expired or revoked web sessions are kept for a while (refresh-token reuse detection), then dropped.
     const sessionCutoff = new Date(Date.now() - SESSION_RETENTION_DAYS * DAY);
     await this.prisma.session.deleteMany({ where: { OR: [{ expiresAt: { lt: sessionCutoff } }, { revokedAt: { lt: sessionCutoff } }] } });
+    // Trash entries past their retention (files in /meta/trash + rows).
+    await this.trash.expire();
+    // Abandoned resumable uploads (tus parts in /meta/uploads older than 24 h).
+    const expired = await this.uploads.expire().catch((e) => { this.log.warn(`upload expiry failed: ${(e as Error).message}`); return 0; });
+    if (expired) this.log.log(`removed ${expired} abandoned upload(s)`);
+    // Last: tombstones purged above no longer keep their derivatives alive.
+    const gc = await this.derivativesGc.run();
+    if (gc.dirs || gc.jobs || gc.texts) this.log.log(`derivatives gc: ${gc.dirs} dirs, ${gc.jobs} job rows, ${gc.texts} extracted texts removed`);
+    if (gc.requeued) this.log.log(`derivatives gc: ${gc.requeued} thumbnail job(s) with missing files requeued`);
   }
 }

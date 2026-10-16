@@ -4,7 +4,8 @@
 export type SyncErrorCode =
   | 'unauthorized' | 'device_revoked' | 'forbidden' | 'not_found' | 'name_conflict'
   | 'invalid_move' | 'invalid_name' | 'invalid_request' | 'cursor_expired' | 'conflict'
-  | 'precondition_required' | 'too_large' | 'range_not_satisfiable' | 'setup_done';
+  | 'precondition_required' | 'too_large' | 'range_not_satisfiable' | 'setup_done'
+  | 'share_password_required' | 'share_expired' | 'rate_limited' | 'upload_not_allowed';
 
 export interface SyncCapabilities {
   read: true; write: boolean; rename: boolean; move: boolean; delete: boolean; addChildren: boolean;
@@ -26,6 +27,8 @@ export interface SyncItem {
   modifiedAt: string;
   documentId: string | null;
   capabilities: SyncCapabilities;
+  /** Preview state derived from DerivativeJob; absent = unknown. */
+  preview?: PreviewInfo;
 }
 
 export interface SyncAccount {
@@ -56,4 +59,48 @@ export interface ServerStatus {
   watch: 'active' | 'scan-only' | 'off';
   lastFullScanAt: string | null;
   users: number;
+}
+
+export interface TrashEntryWire {
+  id: string; itemId: string; type: 'folder' | 'file'; name: string;
+  originalPath: string; size: number; deletedAt: string; expiresAt: string | null;
+  itemCount: number;
+}
+export interface RestoreResult { item: SyncItem; restoredTo: string; renamed: boolean }
+
+export interface ShareLinkWire {
+  id: string; itemId: string; itemName: string; itemType: 'folder' | 'file';
+  // Full link: absolute if SYNCLET_PUBLIC_URL is set, else "/s/<token>". Always present for the owner
+  // (token stored encrypted, see Task 4 ruling 1b-3).
+  url: string;
+  hasPassword: boolean; expiresAt: string | null; allowDownload: boolean; allowUpload: boolean;
+  createdAt: string; revokedAt: string | null; hits: number;
+  /**
+   * The shared item is in the trash: the link answers 404 until the item is restored, and
+   * restoring re-activates it. Only revoking is possible meanwhile (itemName/itemType from the trash).
+   */
+  itemTrashed: boolean;
+}
+export interface CreateShareInput {
+  itemId: string; password?: string | null; expiresAt?: string | null;
+  allowDownload?: boolean; allowUpload?: boolean;
+}
+export interface PublicShareInfo {
+  /** Sync id of the shared item (`f_…` / `d_…`): the `:itemId` of a file share's content/thumbnail. */
+  id: string;
+  name: string; type: 'folder' | 'file'; size: number; mime: string | null;
+  ownerDisplayName: string; allowDownload: boolean; allowUpload: boolean; expiresAt: string | null;
+}
+export interface PublicShareEntry {
+  id: string; name: string; type: 'folder' | 'file'; size: number; mime: string | null;
+  modifiedAt: string; hasThumbnail: boolean;
+}
+
+export interface SearchHit { item: SyncItem; path: string; snippet: string | null; matched: 'name' | 'content' | 'both' }
+export interface SearchResponse { hits: SearchHit[]; total: number }
+
+export interface PreviewInfo {
+  kind: 'image' | 'pdf' | 'text' | 'markdown' | 'code' | 'video' | 'audio' | 'none';
+  thumbnail: boolean;     // a thumbnail exists now
+  language?: string;      // highlight.js language for kind === 'code'
 }

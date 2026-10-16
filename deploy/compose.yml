@@ -14,17 +14,40 @@ services:
       SYNCLET_TOMBSTONE_WINDOW: ${SYNCLET_TOMBSTONE_WINDOW:-}
       SYNCLET_JOURNAL_RETENTION_DAYS: ${SYNCLET_JOURNAL_RETENTION_DAYS:-}
       SYNCLET_SECURE_COOKIES: ${SYNCLET_SECURE_COOKIES:-}
+      SYNCLET_TRUST_PROXY: "true" # the server port is not published; only Caddy reaches it
+      SYNCLET_ROLE: server
+      SYNCLET_TRASH_RETENTION_DAYS: ${SYNCLET_TRASH_RETENTION_DAYS:-}
+      SYNCLET_SEARCH_LANGUAGE: ${SYNCLET_SEARCH_LANGUAGE:-}
     volumes:
       - ${SYNCLET_DATA:?set SYNCLET_DATA to your files folder}:/data
       - ${SYNCLET_META:?set SYNCLET_META to a folder outside SYNCLET_DATA}:/meta
     depends_on:
       postgres: { condition: service_healthy }
     restart: unless-stopped
+  worker:
+    # Same image, derivatives worker role: thumbnails, previews, text extraction. Never runs migrations.
+    image: synclet/server:dev
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      DATABASE_URL: postgresql://synclet:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/synclet
+      SYNCLET_ROLE: worker
+      SYNCLET_WORKER_CONCURRENCY: ${SYNCLET_WORKER_CONCURRENCY:-}
+      SYNCLET_PREVIEW_MAX_BYTES: ${SYNCLET_PREVIEW_MAX_BYTES:-}
+      SYNCLET_SEARCH_LANGUAGE: ${SYNCLET_SEARCH_LANGUAGE:-}
+    volumes:
+      - ${SYNCLET_DATA:?set SYNCLET_DATA to your files folder}:/data:ro
+      - ${SYNCLET_META:?set SYNCLET_META to a folder outside SYNCLET_DATA}:/meta
+    depends_on:
+      server: { condition: service_healthy }
+    healthcheck: { disable: true } # the worker has no HTTP port (the image healthcheck targets the server)
+    stop_grace_period: 150s # a running ffmpeg job may take up to 120 s
+    restart: unless-stopped
   caddy:
     build: { context: .., dockerfile: deploy/Dockerfile.caddy }
     image: synclet/caddy:dev
     environment:
       SYNCLET_SITE_ADDRESS: ${SYNCLET_SITE_ADDRESS:-:80}
+      SYNCLET_TRUSTED_PROXIES: ${SYNCLET_TRUSTED_PROXIES:-}
     ports:
       - "${SYNCLET_PORT:-8080}:80"
       - "${SYNCLET_TLS_PORT:-8443}:443"

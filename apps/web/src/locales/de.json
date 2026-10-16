@@ -158,8 +158,10 @@
       "too_large": "Die Datei ist größer, als der Server erlaubt.",
       "forbidden": "Dafür fehlt dir die Berechtigung.",
       "unauthorized": "Deine Sitzung ist abgelaufen. Melde dich erneut an.",
+      "server_error": "Der Server hat unerwartet geantwortet.",
       "network": "Keine Verbindung zum Server.",
-      "unknown": "Das hat nicht geklappt. Versuch es noch einmal."
+      "unknown": "Das hat nicht geklappt. Versuch es noch einmal.",
+      "upload_expired": "Der unterbrochene Upload ist abgelaufen. Lade die Datei noch einmal hoch."
     },
     "uploads": {
       "region": "Uploads",
@@ -178,6 +180,337 @@
       "expand": "Uploads ausklappen",
       "close": "Uploads schließen",
       "dismiss": "Aus der Liste entfernen"
+    },
+    "preview": "Vorschau",
+    "shortcutPreview": "Leertaste"
+  },
+  "preview": {
+    "close": "Vorschau schließen",
+    "previous": "Vorherige Datei",
+    "next": "Nächste Datei",
+    "share": "Teilen",
+    "position": "{{index}} von {{total}}",
+    "meta": "{{size}}, geändert am {{date}}",
+    "loading": "Vorschau wird geladen …",
+    "zoomFit": "An Fenster anpassen",
+    "zoomActual": "Originalgröße",
+    "truncated": "Es wird nur der Anfang der Datei angezeigt. Lade sie herunter, um alles zu sehen.",
+    "none": {
+      "title": "Keine Vorschau verfügbar",
+      "body": "Lade die Datei herunter, um sie in einer passenden App zu öffnen.",
+      "failed": "Die Vorschau konnte nicht geladen werden. Lade die Datei herunter, um sie in einer App zu öffnen."
     }
+  },
+  "trash": {
+    "columns": {
+      "location": "Ursprünglicher Ort",
+      "deleted": "Gelöscht",
+      "expires": "Endgültig gelöscht"
+    },
+    "expiresIn_one": "in {{count}} Tag",
+    "expiresIn_other": "in {{count}} Tagen",
+    "expiresToday": "innerhalb eines Tages",
+    "keptForever": "Bleibt, bis du es löschst",
+    "restore": "Wiederherstellen",
+    "restoreItem": "{{name}} wiederherstellen",
+    "deleteItem": "{{name}} endgültig löschen",
+    "deleteForever": "Endgültig löschen",
+    "summary_one": "{{count}} Element im Papierkorb, {{size}}.",
+    "summary_other": "{{count}} Elemente im Papierkorb, {{size}}.",
+    "retention_one": "Elemente werden {{count}} Tag nach dem Löschen endgültig entfernt.",
+    "retention_other": "Elemente werden {{count}} Tage nach dem Löschen endgültig entfernt.",
+    "loadError": "Der Papierkorb konnte nicht geladen werden",
+    "emptyState": {
+      "title": "Der Papierkorb ist leer",
+      "body": "Gelöschte Dateien und Ordner landen hier. Du kannst sie wiederherstellen, bis sie endgültig entfernt werden."
+    },
+    "empty": {
+      "action": "Papierkorb leeren",
+      "title": "Papierkorb leeren?",
+      "body_one": "{{count}} Element wird endgültig gelöscht. Das lässt sich nicht rückgängig machen.",
+      "body_other": "Alle {{count}} Elemente werden endgültig gelöscht. Das lässt sich nicht rückgängig machen.",
+      "submitting": "Wird geleert …"
+    },
+    "deleteDialog": {
+      "title": "„{{name}}“ endgültig löschen?",
+      "fileBody": "Die Datei wird vom Server entfernt. Das lässt sich nicht rückgängig machen.",
+      "folderBody": "Der Ordner und alles darin wird vom Server entfernt. Das lässt sich nicht rückgängig machen.",
+      "submitting": "Wird gelöscht …"
+    },
+    "toast": {
+      "restored": "„{{name}}“ wiederhergestellt",
+      "restoredAs": "„{{name}}“ als „{{newName}}“ wiederhergestellt",
+      "location": "In {{location}}",
+      "renamedHint": "Der ursprüngliche Name war in {{location}} schon vergeben.",
+      "show": "Anzeigen",
+      "deleted": "„{{name}}“ endgültig gelöscht",
+      "emptied_one": "{{count}} Element endgültig gelöscht",
+      "emptied_other": "{{count}} Elemente endgültig gelöscht"
+    },
+    "errors": {
+      "conflict": "Dieses Element wird noch in den Papierkorb verschoben. Versuch es gleich noch einmal.",
+      "not_found": "Dieses Element ist nicht mehr im Papierkorb."
+    }
+  },
+  "shares": {
+    "action": "Teilen …",
+    "share": "Teilen",
+    "shareItem": "„{{name}}“ teilen",
+    "copy": "Link kopieren",
+    "copied": "Kopiert",
+    "copyItem": "Link zu {{name}} kopieren",
+    "edit": "Link bearbeiten",
+    "linkActions": "Link-Aktionen",
+    "linkActionsFor": "Link-Aktionen für {{name}}",
+    "createdOn": "Erstellt am {{date}}",
+    "expiry": {
+      "never": "Kein Ablaufdatum",
+      "until": "Gültig bis {{date}}",
+      "expiredOn": "Abgelaufen am {{date}}"
+    },
+    "badges": {
+      "password": "Passwort",
+      "upload": "Upload",
+      "noDownload": "Kein Download",
+      "trashed": "Im Papierkorb"
+    },
+    "trashed": {
+      "hint": "Inaktiv, solange das Element im Papierkorb liegt; Wiederherstellen aktiviert den Link wieder"
+    },
+    "dialog": {
+      "title": "„{{name}}“ teilen",
+      "editTitle": "Link bearbeiten",
+      "editDescription": "Die Änderungen gelten für den bestehenden Link zu „{{name}}“. Die Adresse bleibt gleich.",
+      "fileDescription": "Alle mit dem Link können diese Datei öffnen, ganz ohne Konto.",
+      "folderDescription": "Alle mit dem Link können diesen Ordner und alles darin durchsehen, ganz ohne Konto.",
+      "links": "Links",
+      "createAnother": "Weiteren Link erstellen",
+      "showAll": "Alle Links anzeigen",
+      "done": "Fertig",
+      "back": "Zurück"
+    },
+    "form": {
+      "password": "Passwort",
+      "passwordHint": "Empfänger müssen es eingeben, bevor sie etwas sehen.",
+      "passwordLabel": "Passwort für den Link",
+      "passwordPlaceholder": "Mindestens {{count}} Zeichen",
+      "passwordKeep": "Leer lassen, um das bisherige Passwort zu behalten",
+      "expiry": "Ablaufdatum",
+      "expiryHint": "Danach funktioniert der Link nicht mehr.",
+      "expiryCurrent": "{{text}}. Wähle ein neues Datum, um es zu ändern.",
+      "expiryNone": "Nie",
+      "expiry1d": "1 Tag",
+      "expiry7d": "7 Tage",
+      "expiry30d": "30 Tage",
+      "expiryCustom": "Datum",
+      "expiryDate": "Ablaufdatum",
+      "allowDownload": "Download erlauben",
+      "allowDownloadHint": "Ohne Download können Empfänger die Datei nur im Browser ansehen.",
+      "allowDownloadFolderHint": "Ohne Download können Empfänger Dateien nur im Browser ansehen.",
+      "allowUpload": "Upload erlauben",
+      "allowUploadHint": "Empfänger können Dateien in diesen Ordner hochladen. Vorhandene Dateien werden nie ersetzt.",
+      "create": "Link erstellen",
+      "creating": "Wird erstellt …",
+      "save": "Änderungen speichern",
+      "saving": "Wird gespeichert …",
+      "errors": {
+        "password_required": "Gib ein Passwort ein oder schalte das Passwort aus.",
+        "password_too_short": "Das Passwort braucht mindestens {{count}} Zeichen.",
+        "expiry_required": "Wähle ein Datum.",
+        "expiry_past": "Das Datum liegt in der Vergangenheit. Wähle ein Datum ab heute."
+      }
+    },
+    "created": {
+      "title": "Link erstellt",
+      "body": "Kopiere ihn und schick ihn an alle, mit denen du teilen möchtest.",
+      "rotatedTitle": "Neuer Link erstellt",
+      "rotatedBody": "Der bisherige Link funktioniert nicht mehr. Verschicke stattdessen diesen.",
+      "urlLabel": "Link zum Teilen"
+    },
+    "rotate": {
+      "action": "Neuen Link erzeugen",
+      "title": "Neuen Link erzeugen?",
+      "body": "Der aktuelle Link zu „{{name}}“ funktioniert sofort nicht mehr. Wer weiter Zugriff haben soll, braucht den neuen Link.",
+      "submit": "Neuen Link erzeugen",
+      "submitting": "Wird erzeugt …"
+    },
+    "revoke": {
+      "action": "Link widerrufen",
+      "title": "Diesen Link widerrufen?",
+      "body": "Der Link zu „{{name}}“ funktioniert sofort nicht mehr. Das lässt sich nicht rückgängig machen.",
+      "submit": "Link widerrufen",
+      "submitting": "Wird widerrufen …"
+    },
+    "toast": {
+      "copied": "Link kopiert",
+      "updated": "Link aktualisiert",
+      "rotated": "Neuer Link erzeugt. Der alte funktioniert nicht mehr.",
+      "revoked": "Link widerrufen"
+    },
+    "errors": {
+      "invalid": "Der Server hat diese Einstellungen nicht akzeptiert. Prüfe das Ablaufdatum und versuch es noch einmal.",
+      "not_found": "Dieser Link oder das Element existiert nicht mehr.",
+      "copy": "Der Link konnte nicht kopiert werden. Markiere ihn und kopiere ihn von Hand.",
+      "noUrl": "Dieser Link kann nicht mehr angezeigt werden. Erzeuge einen neuen Link, um eine kopierbare Adresse zu bekommen.",
+      "noUrlShort": "Adresse nicht verfügbar",
+      "copyManual": "Der Link konnte nicht automatisch kopiert werden. Er ist markiert: Drück Strg+C (⌘C am Mac)."
+    },
+    "columns": {
+      "item": "Geteiltes Element",
+      "created": "Erstellt",
+      "expires": "Ablauf",
+      "hits": "Aufrufe"
+    },
+    "page": {
+      "title": "Geteilte Links",
+      "filter": "Links anzeigen",
+      "filters": {
+        "active": "Aktiv",
+        "expired": "Abgelaufen",
+        "all": "Alle"
+      },
+      "count_one": "{{count}} Link",
+      "count_other": "{{count}} Links",
+      "loadError": "Deine Links konnten nicht geladen werden",
+      "emptyTitle": "Noch keine geteilten Links",
+      "emptyBody": "Teile eine Datei oder einen Ordner aus „Meine Dateien“ und du bekommst einen Link, den alle öffnen können, auf Wunsch mit Passwort und Ablaufdatum.",
+      "goToFiles": "Zu meinen Dateien",
+      "noneTitle": {
+        "active": "Keine aktiven Links",
+        "expired": "Keine abgelaufenen Links",
+        "all": "Keine Links"
+      },
+      "noneBody": "Widerrufene Links werden nicht aufgeführt."
+    },
+    "manualCopy": {
+      "title": "Link kopieren",
+      "body": "Dein Browser erlaubt hier kein Kopieren. Der Link ist markiert: Drück Strg+C (⌘C am Mac)."
+    }
+  },
+  "publicShare": {
+    "region": "Geteilter Inhalt",
+    "sharedFolder": "<owner/> hat einen Ordner mit dir geteilt",
+    "sharedFile": "<owner/> hat eine Datei mit dir geteilt",
+    "expires": "Verfügbar bis {{date}}",
+    "viewOnly": "Nur ansehen",
+    "download": "Herunterladen",
+    "downloadNamed": "{{name}} herunterladen",
+    "downloadAll": "Alles als ZIP herunterladen",
+    "downloadFolder": "Ordner herunterladen",
+    "folder": "Ordner",
+    "contents": "Inhalt",
+    "breadcrumb": "Ort in dieser Freigabe",
+    "view": "Ansicht",
+    "viewList": "Liste",
+    "viewGrid": "Raster",
+    "empty": "Dieser Ordner ist leer",
+    "emptyUpload": "Über den Upload-Bereich unten kannst du Dateien hinzufügen.",
+    "folderGone": "Dieser Ordner ist nicht mehr Teil der Freigabe.",
+    "footer": "Geteilt mit Synclet. Die Dateien liegen auf dem eigenen Server des Besitzers, und diese Seite ist für Suchmaschinen gesperrt.",
+    "gate": {
+      "title": "Dieser Link ist passwortgeschützt",
+      "body": "Gib das Passwort ein, das du zusammen mit dem Link bekommen hast.",
+      "relock": "Dein Zugang ist abgelaufen. Gib das Passwort erneut ein, um weiterzumachen.",
+      "password": "Passwort",
+      "open": "Öffnen",
+      "opening": "Wird geöffnet …"
+    },
+    "gone": {
+      "notFoundTitle": "Dieser Link funktioniert nicht",
+      "notFoundBody": "Der Besitzer hat ihn vielleicht entfernt, oder die Adresse ist unvollständig. Bitte die Person, die ihn geschickt hat, um einen neuen Link.",
+      "expiredTitle": "Dieser Link ist abgelaufen",
+      "expiredBody": "Der Besitzer hat festgelegt, dass dieser Link nur bis zu einem bestimmten Datum gilt. Bitte ihn um einen neuen Link."
+    },
+    "failed": {
+      "title": "Link kann nicht geöffnet werden",
+      "rateLimitedTitle": "Zu viele Anfragen"
+    },
+    "errors": {
+      "wrong_password": "Das Passwort stimmt nicht.",
+      "rateLimited": "Zu viele Versuche. Warte kurz und versuch es dann erneut.",
+      "rateLimitedWait_one": "Zu viele Versuche. Versuch es in {{count}} Sekunde erneut.",
+      "rateLimitedWait_other": "Zu viele Versuche. Versuch es in {{count}} Sekunden erneut.",
+      "network": "Keine Verbindung zum Server. Prüfe deine Internetverbindung und versuch es erneut.",
+      "unknown": "Auf dem Server ist etwas schiefgegangen. Versuch es gleich noch einmal.",
+      "listing": "Dieser Ordner konnte nicht geladen werden."
+    },
+    "preview": {
+      "imageAlt": "Vorschau von {{name}}",
+      "none": "Für diese Datei gibt es keine Vorschau. Lade sie herunter, um sie auf deinem Gerät zu öffnen.",
+      "noneNoDownload": "Für diese Datei gibt es keine Vorschau, und der Besitzer hat Downloads für diesen Link deaktiviert."
+    },
+    "quickLook": {
+      "position": "{{index}} von {{count}}, {{size}}",
+      "previous": "Vorherige Datei",
+      "next": "Nächste Datei"
+    },
+    "upload": {
+      "title": "Dateien zu „{{folder}}“ hinzufügen",
+      "hint": "Zieh Dateien irgendwo auf diese Seite oder wähle sie auf deinem Gerät aus. Ist ein Name schon vergeben, wird die Datei unter einem neuen Namen gespeichert.",
+      "choose": "Dateien auswählen",
+      "listLabel": "Deine Uploads",
+      "queued": "Wartet",
+      "progress": "{{loaded}} von {{total}}",
+      "done": "Hochgeladen",
+      "renamed": "Als „{{name}}“ hochgeladen, der ursprüngliche Name war vergeben",
+      "cancel": "Upload abbrechen",
+      "clear": "Liste leeren",
+      "errors": {
+        "too_large": "Die Datei ist zu groß, oder das heutige Upload-Limit dieses Links ist erreicht.",
+        "rate_limited": "Zu viele Uploads von deiner Verbindung. Versuch es später erneut.",
+        "not_allowed": "Dieser Link nimmt keine Uploads mehr an.",
+        "invalid_name": "Dieser Dateiname ist nicht erlaubt. Benenne die Datei um und versuch es erneut.",
+        "network": "Die Verbindung ist während des Uploads abgebrochen.",
+        "unknown": "Der Upload hat nicht geklappt. Versuch es erneut."
+      }
+    },
+    "zipHint": "Falls der Download nicht startet, bitte später erneut versuchen.",
+    "downloadErrors": {
+      "forbidden": "Der Besitzer hat Downloads für diesen Link deaktiviert.",
+      "notFound": "Diese Datei ist nicht mehr verfügbar.",
+      "rateLimited": "Gerade laufen zu viele Downloads. Versuch es gleich noch einmal.",
+      "network": "Keine Verbindung zum Server. Prüfe deine Internetverbindung und versuch es erneut.",
+      "unknown": "Der Download hat nicht geklappt. Versuch es erneut."
+    }
+  },
+  "search": {
+    "open": "Suchen",
+    "title": "Suchen",
+    "placeholder": "Dateien und Inhalte durchsuchen",
+    "placeholderShort": "Suchen",
+    "placeholderIn": "In „{{name}}“ suchen",
+    "clear": "Suche leeren",
+    "results": "Suchergebnisse",
+    "scopeLabel": "Suchen in",
+    "scopeAll": "Allen Dateien",
+    "scopeFolder": "„{{name}}“",
+    "groupNames": "Namen",
+    "groupContents": "Inhalte",
+    "recentSearches": "Letzte Suchen",
+    "clearRecent": "Verlauf löschen",
+    "emptyTitle": "Wonach suchst du?",
+    "emptyBody": "Gib einen Dateinamen ein oder ein Wort, das in einem Dokument vorkommt.",
+    "noResultsTitle": "Nichts gefunden für „{{query}}“",
+    "noResultsBody": "Prüfe die Schreibweise oder versuch ein anderes Wort. Inhalte neuer Dateien sind nach kurzer Zeit durchsuchbar.",
+    "noResultsInFolder": "In „{{name}}“ und seinen Unterordnern gibt es keinen Treffer.",
+    "searchEverywhere": "In allen Dateien suchen",
+    "errorTitle": "Die Suche hat nicht geklappt",
+    "hintMove": "Auswählen",
+    "hintOpen": "Öffnen",
+    "hintClose": "Schließen",
+    "count_one": "{{count}} Treffer",
+    "count_other": "{{count}} Treffer",
+    "countOf_one": "{{count}} von {{total}} Treffern",
+    "countOf_other": "{{count}} von {{total}} Treffern"
+  },
+  "recent": {
+    "title": "Zuletzt geändert",
+    "reveal": "Im Ordner zeigen",
+    "revealItem": "„{{name}}“ im Ordner zeigen",
+    "loadError": "Die zuletzt geänderten Dateien konnten nicht geladen werden",
+    "emptyTitle": "Noch keine Dateien",
+    "emptyBody": "Was du hochlädst oder änderst, erscheint hier – über alle Ordner hinweg, das Neueste zuerst.",
+    "emptyAction": "Zu meinen Dateien",
+    "limitNote": "Die {{count}} zuletzt geänderten Dateien"
   }
 }

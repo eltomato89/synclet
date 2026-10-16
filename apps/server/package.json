@@ -5,6 +5,7 @@
   "scripts": {
     "build": "prisma generate && nest build -p tsconfig.build.json",
     "start": "node dist/main.js",
+    "start:worker": "node dist/main.worker.js",
     "dev": "nest start --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "NODE_OPTIONS=--experimental-vm-modules jest --runInBand",
@@ -19,22 +20,29 @@
     "@parcel/watcher": "^2.5.0",
     "@prisma/client": "^6.0.0",
     "@synclet/shared": "workspace:*",
+    "@tus/file-store": "^2.1.1",
+    "@tus/server": "^2.4.5",
+    "archiver": "^7.0.1",
     "argon2": "^0.41.1",
     "fastify": "^5.0.0",
     "mime-types": "^3.0.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
+    "sharp": "^0.34.5",
     "zod": "^3.25.0"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.0",
     "@nestjs/testing": "^11.0.0",
+    "@types/archiver": "^8.0.0",
     "@types/jest": "^29.5.0",
     "@types/mime-types": "^2.1.4",
     "@types/node": "^24.0.0",
+    "@types/yauzl": "^3.4.0",
     "jest": "^29.7.0",
     "prisma": "^6.0.0",
     "ts-jest": "^29.2.0",
-    "typescript": "^5.9.0"
+    "typescript": "^5.9.0",
+    "yauzl": "^3.4.0"
   }
 }

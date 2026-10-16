@@ -1,0 +1,148 @@
+import { chmod, mkdir, stat } from 'node:fs/promises';
+import path from 'node:path';
+import { createTestApp, TestContext } from '../../test/context';
+import { AuthService } from './auth.service';
+import { RateLimiter, RateLimits } from './rate-limit';
+
+describe('RateLimiter', () => {
+  it('allows a burst, refills over time and resets per key', () => {
+    let now = 0;
+    const rl = new RateLimiter({ capacity: 2, refillPerSec: 1 }, () => now);
+    expect([rl.take('a'), rl.take('a'), rl.take('a')]).toEqual([true, true, false]);
+    expect(rl.take('b')).toBe(true);
+    expect(rl.retryAfterSec('a')).toBe(1);
+    now = 1000;
+    expect(rl.take('a')).toBe(true);
+    expect(rl.take('a')).toBe(false);
+    rl.reset('a');
+    expect(rl.take('a')).toBe(true);
+  });
+
+  it('bounds the number of tracked keys (LRU)', () => {
+    const rl = new RateLimiter({ capacity: 1, refillPerSec: 0.001, maxKeys: 2 });
+    rl.take('a'); rl.take('b'); rl.take('c'); // 'a' evicted
+    expect(rl.take('a')).toBe(true);
+    expect(rl.take('c')).toBe(false);
+  });
+});
+
+describe('auth hardening', () => {
+  let ctx: TestContext;
+  let ipSeq = 0;
+  beforeEach(async () => { ctx = await createTestApp(); });
+  afterEach(async () => { await ctx.close(); });
+
+  const freshIp = () => `10.9.${Math.floor(ipSeq / 250)}.${(ipSeq++ % 250) + 1}`;
+  const setup = (body: object = {}, remoteAddress = freshIp()) =>
+    ctx.app.inject({ method: 'POST', url: '/api/setup', remoteAddress, payload: { username: 'jens', displayName: 'Jens', password: 'correct horse battery', ...body } });
+  const login = (l: string, remoteAddress = freshIp(), password = 'wrong password') =>
+    ctx.app.inject({ method: 'POST', url: '/api/auth/login', remoteAddress, payload: { login: l, password } });
+
+  it('rate-limits login attempts per IP (CPU guard) with 429 + Retry-After', async () => {
+    const ip = freshIp();
+    for (let i = 0; i < 10; i++) expect((await login(`user${i}`, ip)).statusCode).toBe(401);
+    const res = await login('user99', ip);
+    expect(res.statusCode).toBe(429);
+    expect(res.json().code).toBe('rate_limited');
+    expect(Number(res.headers['retry-after'])).toBeGreaterThan(0);
+    expect((await login('user99')).statusCode).toBe(401); // other IP unaffected
+  });
+
+  it('per-(ip+login) bucket: 10 failures block that pair only, before the password check; other IPs can still log in', async () => {
+    await setup();
+    const attacker = freshIp();
+    const argon = jest.spyOn(ctx.app.get(AuthService), 'login');
+    for (let i = 0; i < 10; i++) expect((await login(' JENS ', attacker)).statusCode).toBe(401);
+    ctx.app.get(RateLimits).ip.reset(attacker); // isolate the pair bucket from the per-IP CPU guard
+    argon.mockClear();
+    const blocked = await login('jens', attacker);
+    expect(blocked.statusCode).toBe(429);
+    expect(blocked.headers['retry-after']).toBeDefined();
+    expect(argon).not.toHaveBeenCalled();
+    argon.mockRestore();
+    expect((await login('jens', freshIp(), 'correct horse battery')).statusCode).toBe(200); // victim from elsewhere
+  });
+
+  it('successful logins do not consume the per-login bucket; success resets it', async () => {
+    await setup();
+    const ip = freshIp();
+    for (let i = 0; i < 9; i++) await login('jens', freshIp());
+    // 9 failures from distinct IPs never touch the pair bucket of `ip`
+    for (let i = 0; i < 6; i++) await login('jens', ip);
+    expect((await login('jens', ip, 'correct horse battery')).statusCode).toBe(200); // resets (ip, jens)
+    for (let i = 0; i < 9; i++) expect((await login('jens', freshIp())).statusCode).toBe(401);
+  });
+
+  it('keys login limits by IPv6 /64: rotating addresses inside one network shares the buckets', async () => {
+    await setup();
+    const net = `2001:db8:${(ipSeq++).toString(16)}:1`;
+    const argon = jest.spyOn(ctx.app.get(AuthService), 'login');
+    for (let i = 0; i < 10; i++) expect((await login('jens', `${net}::${(i + 1).toString(16)}`)).statusCode).toBe(401);
+    ctx.app.get(RateLimits).ip.reset(`${net}::/64`); // isolate the per-(ip+login) bucket
+    argon.mockClear();
+    expect((await login('jens', `${net}::ffff`)).statusCode).toBe(429); // new address, same /64
+    expect(argon).not.toHaveBeenCalled();
+    argon.mockRestore();
+    for (let i = 0; i < 9; i++) await login(`user${i}`, `${net}::${(100 + i).toString(16)}`);
+    expect((await login('other', `${net}::abcd`)).statusCode).toBe(429); // per-IP CPU guard by /64 too
+    expect((await login('jens', `2001:db8:ffff:2::1`)).statusCode).toBe(401); // another /64 unaffected
+  });
+
+  it('keys IPv4-mapped IPv6 like the plain IPv4 address', async () => {
+    const ip = freshIp();
+    for (let i = 0; i < 10; i++) expect((await login(`user${i}`, i % 2 ? ip : `::ffff:${ip}`)).statusCode).toBe(401);
+    expect((await login('user99', `::ffff:${ip}`)).statusCode).toBe(429);
+  });
+
+  it('rate-limits POST /api/setup per IPv6 /64', async () => {
+    for (let i = 0; i < 10; i++) expect((await setup({ username: '../x' }, `2001:db8:5e7:1::${i + 1}`)).statusCode).toBe(400);
+    expect((await setup({ username: '../x' }, '2001:db8:5e7:1:ffff:ffff:ffff:ffff')).statusCode).toBe(429);
+    expect((await setup({ username: '../x' }, '2001:db8:5e7:2::1')).statusCode).toBe(400);
+  });
+
+  it('rate-limits POST /api/setup per IP', async () => {
+    const ip = freshIp();
+    for (let i = 0; i < 10; i++) expect((await setup({ username: '../x' }, ip)).statusCode).toBe(400);
+    expect((await setup({ username: '../x' }, ip)).statusCode).toBe(429);
+  });
+
+  it('rejects bidi controls, zero-width characters and @ in usernames', async () => {
+    for (const username of ['a‮b', 'a‏b', 'a‎b', 'a⁦b', 'a⁩b', 'a​b', 'a‍b', 'a⁠b', 'a﻿b', 'a@b', 'a‪b']) {
+      expect([username, (await setup({ username })).statusCode]).toEqual([username, 400]);
+    }
+    expect((await setup()).statusCode).toBe(201);
+  });
+
+  const isRoot = () => process.getuid?.() === 0;
+
+  it('unwritable data root: 500 data folder not writable, no user, retry works', async () => {
+    await chmod(ctx.config.dataRoot, 0o500);
+    try {
+      if (!isRoot()) {
+        const res = await setup();
+        expect(res.statusCode).toBe(500);
+        expect(res.json()).toMatchObject({ code: 'invalid_request' });
+        expect(res.json().message).toContain('data folder not writable');
+        expect(await ctx.prisma.user.count()).toBe(0);
+      }
+    } finally {
+      await chmod(ctx.config.dataRoot, 0o700);
+    }
+    expect((await setup()).statusCode).toBe(201);
+    expect((await stat(path.join(ctx.config.dataRoot, 'jens'))).isDirectory()).toBe(true);
+  });
+
+  it('unwritable existing user folder: 500 and no user', async () => {
+    const dir = path.join(ctx.config.dataRoot, 'jens');
+    await mkdir(dir);
+    await chmod(dir, 0o500);
+    try {
+      if (!isRoot()) {
+        expect((await setup()).statusCode).toBe(500);
+        expect(await ctx.prisma.user.count()).toBe(0);
+      }
+    } finally {
+      await chmod(dir, 0o700);
+    }
+  });
+});

@@ -13,6 +13,10 @@ import { UsersService } from './users.service';
 export const REFRESH_COOKIE = 'synclet_refresh';
 export const REFRESH_TTL_MS = 30 * 24 * 3600 * 1000;
 const ACCESS_TTL = '15m';
+/** Lifetime of a download token (`Content-Disposition: attachment`, consumed at once). */
+export const DOWNLOAD_TOKEN_TTL_S = 60;
+/** Lifetime of a preview token: `<img>`/`<video>`/`<iframe>` URLs that stay on screen for a while. */
+export const PREVIEW_TOKEN_TTL_S = 6 * 3600;
 
 export interface AccessClaims { sub: string; username: string; role: 'admin' | 'user'; typ: 'access' }
 export interface DownloadClaims { sub: string; item: string; typ: 'dl' }
@@ -49,9 +53,10 @@ export class AuthService {
     }
   }
 
-  async signDownloadToken(userId: string, itemId: string): Promise<string> {
+  /** Item-bound token accepted as `?dt=` by routes marked `@AllowDownloadToken` (content, thumbnail). */
+  async signDownloadToken(userId: string, itemId: string, ttlSeconds: number = DOWNLOAD_TOKEN_TTL_S): Promise<string> {
     const claims: DownloadClaims = { sub: userId, item: itemId, typ: 'dl' };
-    return this.jwt.signAsync(claims, { secret: await this.secret(), expiresIn: '60s' });
+    return this.jwt.signAsync(claims, { secret: await this.secret(), expiresIn: ttlSeconds });
   }
 
   async issue(u: User, userAgent?: string): Promise<{ access: AuthResponse; refreshToken: string }> {

@@ -14,6 +14,17 @@ export interface AppConfig {
   maxUploadBytes: number;
   publicUrl: string | null;
   secureCookies: boolean;
+  /** Trust X-Forwarded-For (client IP for rate limiting). Only behind a reverse proxy that sets it. */
+  trustProxy: boolean;
+  /** Days a trashed item is kept before purge (0 = never). */
+  trashRetentionDays: number;
+  /** Postgres text search configuration for full-text search ('simple' = no stemming). */
+  searchLanguage: string;
+  workerConcurrency: number;
+  /** Files above this size get no derivative (thumbnail / extracted text). */
+  previewMaxBytes: number;
+  /** Process role; set by the entrypoint, not by the environment. */
+  role: 'server' | 'worker';
 }
 
 // Empty values (compose passes `${VAR:-}`) mean "use the default".
@@ -35,5 +46,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     maxUploadBytes: int(env.SYNCLET_MAX_UPLOAD_BYTES, 50 * 1024 ** 3),
     publicUrl,
     secureCookies: bool(env.SYNCLET_SECURE_COOKIES, publicUrl?.startsWith('https://') ?? false),
+    trustProxy: bool(env.SYNCLET_TRUST_PROXY, false),
+    trashRetentionDays: int(env.SYNCLET_TRASH_RETENTION_DAYS, 30),
+    searchLanguage: env.SYNCLET_SEARCH_LANGUAGE || 'simple',
+    workerConcurrency: int(env.SYNCLET_WORKER_CONCURRENCY, 2),
+    previewMaxBytes: int(env.SYNCLET_PREVIEW_MAX_BYTES, 2 * 1024 ** 3),
+    role: 'server',
   };
 }

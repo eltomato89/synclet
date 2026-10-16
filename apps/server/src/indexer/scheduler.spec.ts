@@ -1,10 +1,12 @@
 import { existsSync } from 'node:fs';
-import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import os from 'node:os';
 import { Readable } from 'node:stream';
 import path from 'node:path';
 import { createTestApp, createTestUser, TestContext } from '../../test/context';
 import { trashStagingName } from '../common/names';
 import { FilesService } from '../files/files.service';
+import { TrashService } from '../trash/trash.service';
 import { IndexerService } from './indexer.service';
 import { SchedulerService } from './scheduler.service';
 import { WatcherService } from './watcher.service';
@@ -42,13 +44,26 @@ describe('SchedulerService', () => {
     expect((await ctx.app.inject({ method: 'GET', url: '/api/admin/status' })).statusCode).toBe(401);
   });
 
-  it('startup cleanup skips directories named like temp files and does not throw', async () => {
+  it('startup cleanup sweeps old temp files and dirs at any depth, sparing trash and symlinked ones', async () => {
     const user = await createTestUser(ctx);
     const root = path.join(ctx.config.dataRoot, user.username);
-    await mkdir(path.join(root, '.synclet-tmp-dir'));
-    await writeFile(path.join(root, '.synclet-tmp-file'), 'x');
-    expect(await ctx.app.get(SchedulerService).startupCleanup()).toBe(1);
-    expect(await readdir(root)).toEqual(['.synclet-tmp-dir']);
+    const outside = await mkdtemp(path.join(os.tmpdir(), 'synclet-outside-'));
+    await writeFile(path.join(outside, '.synclet-tmp-keep'), 'x');
+    await mkdir(path.join(root, 'a', 'b'), { recursive: true });
+    await mkdir(path.join(root, '.synclet-tmp-dir', 'inner'), { recursive: true });
+    await writeFile(path.join(root, '.synclet-tmp-dir', 'inner', 'f'), 'x');
+    await writeFile(path.join(root, 'a', 'b', '.synclet-tmp-deep'), 'x');
+    await writeFile(path.join(root, 'a', '.synclet-tmp-fresh'), 'x');
+    await mkdir(path.join(root, '.synclet-trash-x'));
+    await writeFile(path.join(root, '.synclet-trash-x', '.synclet-tmp-intrash'), 'x');
+    await symlink(outside, path.join(root, 'a', 'link'));
+    await symlink(outside, path.join(root, '.synclet-tmp-link'));
+    expect(await ctx.app.get(SchedulerService).startupCleanup()).toBe(3);
+    expect((await readdir(root)).sort()).toEqual(['.synclet-tmp-link', '.synclet-trash-x', 'a']);
+    expect((await readdir(path.join(root, 'a'))).sort()).toEqual(['b', 'link']);
+    expect(await readdir(path.join(root, '.synclet-trash-x'))).toEqual(['.synclet-tmp-intrash']);
+    expect(await readdir(outside)).toEqual(['.synclet-tmp-keep']);
+    await rm(outside, { recursive: true, force: true });
   });
 
   it('scanAll refreshes the watcher user map (disabled users are dropped)', async () => {
@@ -172,6 +187,12 @@ describe('SchedulerService', () => {
       s.onModuleDestroy();
       ctx.config.background = false;
     }
+  });
+
+  it('maintenance expires old trash entries', async () => {
+    const expire = jest.spyOn(ctx.app.get(TrashService), 'expire').mockResolvedValue(0);
+    await ctx.app.get(SchedulerService).maintenance();
+    expect(expire).toHaveBeenCalledTimes(1);
   });
 
   it('maintenance purges sessions expired or revoked more than 30 days ago', async () => {

@@ -9,6 +9,6 @@ RUN pnpm install --frozen-lockfile --filter @synclet/web...
 COPY apps/web apps/web
 RUN pnpm --filter @synclet/shared build && pnpm --filter @synclet/web build
 
-FROM caddy:2-alpine
+FROM caddy:2.11-alpine
 COPY deploy/Caddyfile /etc/caddy/Caddyfile
 COPY --from=web /src/apps/web/dist /srv/web

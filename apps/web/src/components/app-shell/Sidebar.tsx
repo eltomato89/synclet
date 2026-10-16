@@ -17,13 +17,12 @@ import { formatBytes } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { ThemeToggle } from './ThemeToggle';
 
-interface NavEntry { to?: string; label: string; icon: LucideIcon }
+interface NavEntry { to: string; label: string; icon: LucideIcon }
 const NAV: NavEntry[] = [
   { to: '/files', label: 'shell.myFiles', icon: Folder },
-  // Phase 1b
-  { label: 'shell.recent', icon: Clock },
-  { label: 'shell.shared', icon: Share2 },
-  { label: 'shell.trash', icon: Trash2 },
+  { to: '/recent', label: 'shell.recent', icon: Clock },
+  { to: '/shared', label: 'shell.shared', icon: Share2 },
+  { to: '/trash', label: 'shell.trash', icon: Trash2 },
 ];
 
 const itemBase = 'flex h-8 items-center gap-2.5 rounded-md px-2.5 text-sm font-medium outline-none focus-visible:ring-3 focus-visible:ring-ring/50';
@@ -39,30 +38,20 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         <ul className="flex flex-col gap-0.5">
           {NAV.map(({ to, label, icon: Icon }) => (
             <li key={label}>
-              {to ? (
-                <NavLink
-                  to={to}
-                  onClick={onNavigate}
-                  className={({ isActive }) => cn(
-                    itemBase,
-                    'transition-colors duration-150',
-                    isActive
-                      ? 'bg-background text-foreground ring-1 ring-border [&_svg]:text-primary'
-                      : 'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
-                  )}
-                >
-                  <Icon className="size-4 shrink-0" />
-                  <span className="truncate">{t(label)}</span>
-                </NavLink>
-              ) : (
-                <span aria-disabled="true" className={cn(itemBase, 'cursor-default text-muted-foreground/80')}>
-                  <Icon className="size-4 shrink-0 opacity-70" />
-                  <span className="truncate">{t(label)}</span>
-                  <Badge variant="outline" className="ml-auto h-4.5 px-1.5 text-[11px] font-medium text-muted-foreground">
-                    {t('common.comingSoon')}
-                  </Badge>
-                </span>
-              )}
+              <NavLink
+                to={to}
+                onClick={onNavigate}
+                className={({ isActive }) => cn(
+                  itemBase,
+                  'transition-colors duration-150',
+                  isActive
+                    ? 'bg-background text-foreground ring-1 ring-border [&_svg]:text-primary'
+                    : 'hover:bg-sidebar-accent hover:text-sidebar-accent-foreground',
+                )}
+              >
+                <Icon className="size-4 shrink-0" />
+                <span className="truncate">{t(label)}</span>
+              </NavLink>
             </li>
           ))}
         </ul>

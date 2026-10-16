@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { UploadQueue } from './uploads';
+import { type UploadTransport, UploadQueue } from './uploads';
+
+/** These tests cover the raw-POST fallback used when tus is unsupported. */
+const RAW: UploadTransport = { Upload: class {} as unknown as UploadTransport['Upload'], supported: false };
 
 class FakeXHR {
   static instances: FakeXHR[] = [];
@@ -12,10 +15,10 @@ class FakeXHR {
   abort() {}
 }
 
-describe('UploadQueue', () => {
+describe('UploadQueue (raw POST fallback)', () => {
   it('uploads with raw body, progress and max 3 concurrent', async () => {
     vi.stubGlobal('XMLHttpRequest', FakeXHR as unknown as typeof XMLHttpRequest);
-    const q = new UploadQueue(() => 'tok', () => {});
+    const q = new UploadQueue(() => 'tok', () => {}, undefined, RAW);
     const files = Array.from({ length: 4 }, (_, i) => new File(['x'], `f${i}.txt`, { lastModified: 0 }));
     q.enqueue(files, 'root');
     expect(FakeXHR.instances).toHaveLength(3);
@@ -32,12 +35,12 @@ describe('UploadQueue', () => {
   });
 });
 
-describe('UploadQueue error handling', () => {
+describe('UploadQueue error handling (raw POST fallback)', () => {
   const setup = (refresh?: () => Promise<boolean>) => {
     FakeXHR.instances = [];
     vi.stubGlobal('XMLHttpRequest', FakeXHR as unknown as typeof XMLHttpRequest);
     const done = vi.fn();
-    return { q: new UploadQueue(() => 'tok', done, refresh), done };
+    return { q: new UploadQueue(() => 'tok', done, refresh, RAW), done };
   };
   const file = (name = 'a.txt', size = 1) => new File(['x'.repeat(size)], name, { lastModified: Date.UTC(2024, 0, 2) });
 
@@ -97,5 +100,24 @@ describe('UploadQueue error handling', () => {
     expect(q.snapshot().map((t) => t.file.name)).toEqual(['1', '3', '4']);
     q.retry(q.snapshot()[0].id);
     expect(FakeXHR.instances).toHaveLength(5);
+  });
+
+  it('a rejected session refresh fails the task with network and frees the slot', async () => {
+    const { q } = setup(vi.fn().mockRejectedValue(new Error('offline')));
+    q.enqueue([file('a.txt'), file('b.txt'), file('c.txt'), file('d.txt')], 'd_1');
+    const first = FakeXHR.instances[0];
+    first.status = 401; first.responseText = '{}'; first.onload?.();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(q.snapshot()[0]).toMatchObject({ status: 'error', error: 'network' });
+    expect(FakeXHR.instances).toHaveLength(4); // queued task took the freed slot
+  });
+
+  it('a 2xx response with an unparsable body fails the task with server_error', () => {
+    const { q, done } = setup();
+    q.enqueue([file()], 'd_1');
+    const x = FakeXHR.instances[0];
+    x.status = 201; x.responseText = '<html>proxy</html>'; x.onload?.();
+    expect(q.snapshot()[0]).toMatchObject({ status: 'error', error: 'server_error' });
+    expect(done).not.toHaveBeenCalled();
   });
 });

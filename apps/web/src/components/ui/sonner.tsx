@@ -37,6 +37,8 @@ const Toaster = ({ ...props }: ToasterProps) => {
       toastOptions={{
         classNames: {
           toast: "cn-toast",
+          // Toast actions ("Show", "Copy link") use the accent like every other primary action.
+          actionButton: "!bg-primary !text-primary-foreground !font-medium",
         },
       }}
       {...props}
