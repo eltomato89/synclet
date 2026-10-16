@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useUpdateAvailable } from '@/features/admin/queries';
 import { SpaceIcon } from '@/features/spaces/SpaceIcon';
 import {
   isUnavailable, PERSONAL, useCurrentSpaceId, useSpaces, useUnavailableSpaces,
@@ -44,7 +45,9 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { t } = useTranslation();
   const { user } = useAuth();
   const currentSpace = useCurrentSpaceId();
-  const entries = user?.role === 'admin' ? [...NAV, ADMIN_NAV] : NAV;
+  const isAdmin = user?.role === 'admin';
+  const entries = isAdmin ? [...NAV, ADMIN_NAV] : NAV;
+  const updateAvailable = useUpdateAvailable(isAdmin);
   return (
     <div className="flex h-full flex-col bg-sidebar text-sidebar-foreground">
       <div className="flex h-13 shrink-0 items-center px-4 md:mt-2">
@@ -68,7 +71,14 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
               ) : (
                 <NavLink to={to} onClick={onNavigate} className={({ isActive }) => itemState(isActive)}>
                   <Icon className="size-4 shrink-0" />
-                  <span className="truncate">{t(label)}</span>
+                  <span className="min-w-0 flex-1 truncate">{t(label)}</span>
+                  {to === ADMIN_NAV.to && updateAvailable && (
+                    <>
+                      {' '}
+                      <span aria-hidden title={t('shell.updateAvailable')} data-testid="update-dot" className="size-2 shrink-0 rounded-full bg-primary" />
+                      <span className="sr-only">{t('shell.updateAvailable')}</span>
+                    </>
+                  )}
                 </NavLink>
               )}
             </li>

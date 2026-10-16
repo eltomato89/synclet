@@ -86,12 +86,35 @@ export function useAccessMutations(userId: string) {
   };
 }
 
+const statusKey = [...ADMIN_KEY, 'status'] as const;
+const fetchStatus = () => api<AdminStatusWire>('/admin/status');
+
 export function useAdminStatus() {
-  return useQuery({
-    queryKey: [...ADMIN_KEY, 'status'],
-    queryFn: () => api<AdminStatusWire>('/admin/status'),
-    refetchInterval: STATUS_REFRESH_MS,
+  return useQuery({ queryKey: statusKey, queryFn: fetchStatus, refetchInterval: STATUS_REFRESH_MS });
+}
+
+/** How long the sidebar trusts a status answer before asking again (the server caches the GitHub check for 12 h). */
+export const UPDATE_HINT_STALE_MS = 6 * 3600_000;
+/** The server checks GitHub in the background: until a first result exists, ask again this often ... */
+export const UPDATE_HINT_PENDING_MS = 60_000;
+/** ... but only this many times (GitHub may be unreachable for longer; the server retries hourly). */
+const UPDATE_HINT_PENDING_TRIES = 5;
+
+/** The server answered while its first GitHub request was still running. */
+const pending = (s: AdminStatusWire | undefined) => s?.version?.status === 'checking';
+
+/**
+ * True when the server reports a newer release. Shares the status query (and its cache) with the
+ * status page; on its own it fetches once and then at most every 6 hours, never on window focus.
+ * While the first check is pending it polls every minute for a few minutes.
+ */
+export function useUpdateAvailable(enabled: boolean): boolean {
+  const { data } = useQuery({
+    queryKey: statusKey, queryFn: fetchStatus, enabled, retry: false, refetchOnWindowFocus: false,
+    staleTime: (q) => (pending(q.state.data) ? UPDATE_HINT_PENDING_MS : UPDATE_HINT_STALE_MS),
+    refetchInterval: (q) => (pending(q.state.data) && q.state.dataUpdateCount < UPDATE_HINT_PENDING_TRIES ? UPDATE_HINT_PENDING_MS : false),
   });
+  return enabled && data?.version?.status === 'update-available';
 }
 
 export function adminSharesPath(filter: { userId?: string; status: ShareStatusFilter }): string {

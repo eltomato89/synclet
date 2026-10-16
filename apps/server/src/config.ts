@@ -50,12 +50,23 @@ export interface AppConfig {
   ssoAllowHttpIssuer: boolean;
   /** Interval of the `: ping` comment on SSE event streams; the token is re-checked before each ping. */
   eventsPingSeconds: number;
+  /** Version baked into the image (`1.2.3`, `edge`, ...); `dev` for source builds. */
+  buildVersion: string;
+  /** Git commit the image was built from (null when unknown). */
+  buildRevision: string | null;
+  /** Ask GitHub for the latest release (admin status). Off = no outbound request at all. */
+  updateCheck: boolean;
+  /** `owner/repo` whose releases are checked (forks override it). */
+  updateRepo: string;
   /** Process role; set by the entrypoint, not by the environment. */
   role: 'server' | 'worker';
 }
 
 // Empty values (compose passes `${VAR:-}`) mean "use the default".
-const bool = (v: string | undefined, dflt: boolean) => (v === undefined || v === '' ? dflt : !['0', 'false', 'off', 'no'].includes(v.toLowerCase()));
+const bool = (v: string | undefined, dflt: boolean) => {
+  const t = v?.trim();
+  return t === undefined || t === '' ? dflt : !['0', 'false', 'off', 'no'].includes(t.toLowerCase());
+};
 const int = (v: string | undefined, dflt: number) => (v === undefined || v === '' ? dflt : Number.parseInt(v, 10));
 /**
  * A plain byte count (digits only). The bundled Caddy uses the same variable as a number in its
@@ -66,6 +77,12 @@ const byteCount = (name: string, v: string | undefined, dflt: number) => {
   if (v === undefined || v === '') return dflt;
   if (!/^\d+$/.test(v)) throw new Error(`${name} must be a plain number of bytes (digits only, e.g. 53687091200), got "${v}"`);
   return Number(v);
+};
+
+const repoSlug = (v: string | undefined) => {
+  if (v === undefined || v === '') return 'eltomato89/synclet';
+  if (!/^[\w.-]+\/[\w.-]+$/.test(v)) throw new Error(`SYNCLET_UPDATE_REPO must look like owner/repo, got "${v}"`);
+  return v;
 };
 
 /**
@@ -117,6 +134,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ssoEmergency: bool(env.SYNCLET_SSO_EMERGENCY, false),
     ssoAllowHttpIssuer: env.SYNCLET_SSO_ALLOW_HTTP_ISSUER === '1',
     eventsPingSeconds: pingSeconds(int(env.SYNCLET_EVENTS_PING_SECONDS, 25)),
+    buildVersion: env.SYNCLET_BUILD_VERSION?.trim() || 'dev',
+    buildRevision: env.SYNCLET_BUILD_REVISION?.trim() || null,
+    updateCheck: bool(env.SYNCLET_UPDATE_CHECK, true),
+    updateRepo: repoSlug(env.SYNCLET_UPDATE_REPO),
     role: 'server',
   };
 }

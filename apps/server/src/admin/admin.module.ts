@@ -9,6 +9,7 @@ import { AdminSpacesController } from './admin-spaces.controller';
 import { AdminStatusController } from './admin-status.controller';
 import { AdminStatusService } from './admin-status.service';
 import { AdminUsersController } from './admin-users.controller';
+import { UpdateCheckService } from './update-check.service';
 
 @Module({
   imports: [AuthModule, SharesModule, IndexerModule],
@@ -16,6 +17,6 @@ import { AdminUsersController } from './admin-users.controller';
     AdminUsersController, AdminSessionsController, AdminSharesController, AdminStatusController,
     AdminGroupsController, AdminSpacesController,
   ],
-  providers: [AdminStatusService],
+  providers: [AdminStatusService, UpdateCheckService],
 })
 export class AdminModule {}

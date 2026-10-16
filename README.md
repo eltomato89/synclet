@@ -155,6 +155,8 @@ All settings go into `.env` next to `compose.yml` (in a checkout: `deploy/.env`,
 | `SYNCLET_VERSIONS_MAX_BYTES` | `0` (unlimited) | Per-user cap for stored version bytes; the oldest versions are evicted first. |
 | `SYNCLET_SSO_EMERGENCY` | (empty) | `1` (or `true`, `on`, `yes`) ignores OIDC and forward-auth and allows password login for everyone; see [Locked out?](#locked-out-emergency-recovery). |
 | `SYNCLET_SSO_ALLOW_HTTP_ISSUER` | (empty) | `1` accepts an `http://` OIDC issuer on a loopback/private host (lab setups only; otherwise `https://` is required). |
+| `SYNCLET_UPDATE_CHECK` | `on` | The server asks `api.github.com` for the latest release (at most every 12 hours, only while an admin uses the web app). GitHub sees the server's public IP address and the installed version (in the User-Agent); nothing else is sent. The admin area then shows when an update is available. `off` makes no outbound request at all. Development builds (`edge`, source builds) are never checked. |
+| `SYNCLET_UPDATE_REPO` | `eltomato89/synclet` | Repository (`owner/repo`) whose GitHub releases the update check compares against, for forks. |
 | `COMPOSE_PROFILES` | (empty) | `office` starts the Euro-Office Document Server container; see [Office](#office-euro-office-editing). |
 | `OFFICE_JWT_SECRET` | (empty) | Shared JWT secret with the Document Server (`openssl rand -hex 32`). Set = office editing on (and `/documentserver` routed by Caddy); empty = off. |
 | `OFFICE_TAG` | `latest` | Image tag of `ghcr.io/euro-office/documentserver`; pin it in production. |
@@ -441,7 +443,9 @@ Admins get an "Admin" entry in the web app with:
 - **Single sign-on:** the OIDC and forward-auth settings described above, including discovery test and the password-login switch.
 - **Folders and storages (Spaces):** create team folders, see external storages, assign users and groups with read or write access, set watch mode and scan interval per space, scan now, hide ("Remove") and restore ("Restore"). Details: [deploy/README.md](deploy/README.md#team-folders-and-external-storage).
 - **Groups:** bundle users to grant access to spaces at once.
-- **Status:** version and uptime, file watcher state and last full scan, number of users, free and used space of the data and meta volumes, size of derivatives / trash / versions / uploads in `SYNCLET_META`, thumbnail and text-extraction job queues, whether versions are on and whether the Document Server is reachable.
+- **Status:** version and uptime (with an update hint, see below), file watcher state and last full scan, number of users, free and used space of the data and meta volumes, size of derivatives / trash / versions / uploads in `SYNCLET_META`, thumbnail and text-extraction job queues, whether versions are on and whether the Document Server is reachable.
+
+**Update check.** The status page shows the installed version (baked into the image at build time) and whether a newer release exists on GitHub; if so, "Administration" in the sidebar gets a dot and the status page links the release notes. Release images only: `edge` and source builds show "Development build" (with the commit) and never ask GitHub. The check runs in the background and never delays the page: right after a start the status shows "Checking for updates…" until the first answer arrives (usually seconds). If GitHub is unreachable (no internet access, rate limit), it stays like that and is retried after an hour; a release found earlier keeps being shown meanwhile. The request reveals the server's IP address and version to GitHub; turn the check off with `SYNCLET_UPDATE_CHECK=off`. Updating itself stays manual (see [Updating](#updating)).
 
 ## Known limitations
 

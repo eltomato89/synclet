@@ -1,5 +1,5 @@
-import type { AdminStatusWire, DiskUsage } from '@synclet/shared';
-import { RefreshCw } from 'lucide-react';
+import type { AdminStatusWire, DiskUsage, VersionInfoWire } from '@synclet/shared';
+import { ExternalLink, RefreshCw } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useTopbar } from '@/components/app-shell/Topbar';
@@ -154,14 +154,51 @@ function Overview({ s }: { s: AdminStatusWire }) {
       <Reading label={t('admin.status.versions')} detail={s.versions ? undefined : t('admin.status.versionsHint')}>
         {s.versions ? t('admin.status.on') : t('admin.status.off')}
       </Reading>
-      <Reading label={t('admin.status.server')} detail={t('admin.status.uptime', { time: formatUptime(s.uptimeSec, t) })}>
-        <span className="tabular-nums">{s.version}</span>
-      </Reading>
+      <VersionReading version={s.version} uptimeSec={s.uptimeSec} />
     </dl>
   );
 }
 
-function Reading({ label, children, detail, tone = 'neutral' }: { label: string; children: ReactNode; detail?: string; tone?: 'ok' | 'warn' | 'bad' | 'neutral' }) {
+/** Release notes are linked only on github.com (the server already pins them to the checked repository). */
+function safeReleaseUrl(url: string | null): string | undefined {
+  return url?.startsWith('https://github.com/') ? url : undefined;
+}
+
+/** Installed version, update state (link to the release notes if newer) and uptime. */
+export function VersionReading({ version: v, uptimeSec }: { version: VersionInfoWire; uptimeSec: number }) {
+  const { t, i18n } = useTranslation();
+  const dev = v.status === 'development';
+  const rev = v.revision ? v.revision.slice(0, 7) : null;
+  const checked = v.checkedAt ? t('admin.status.updateChecked', { time: formatDateTime(v.checkedAt, i18n.language) }) : undefined;
+  const state = dev
+    ? <span className="tabular-nums">{[v.installed, rev].filter(Boolean).join(' · ')}</span>
+    : v.status === 'update-available' && v.latest && safeReleaseUrl(v.latestUrl)
+      ? (
+        <a
+          href={safeReleaseUrl(v.latestUrl)}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={checked}
+          className="inline-flex items-center gap-1 rounded-sm font-medium text-primary underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50"
+        >
+          {t('admin.status.update.update-available', { latest: v.latest })}
+          <ExternalLink aria-hidden className="size-3 shrink-0" />
+          {' '}<span className="sr-only">{t('admin.status.newTab')}</span>
+        </a>
+      )
+      : <span title={checked}>{t(`admin.status.update.${v.status}`, { latest: v.latest })}</span>;
+  return (
+    <Reading
+      label={t('admin.status.server')}
+      tone={v.status === 'up-to-date' ? 'ok' : v.status === 'update-available' ? 'warn' : 'neutral'}
+      detail={<><span className="block truncate">{state}</span><span className="block">{t('admin.status.uptime', { time: formatUptime(uptimeSec, t) })}</span></>}
+    >
+      {dev ? t('admin.status.update.development') : <span className="tabular-nums">{v.installed}</span>}
+    </Reading>
+  );
+}
+
+function Reading({ label, children, detail, tone = 'neutral' }: { label: string; children: ReactNode; detail?: ReactNode; tone?: 'ok' | 'warn' | 'bad' | 'neutral' }) {
   return (
     <div className="min-w-0 px-4 py-3.5">
       <dt className="text-xs text-muted-foreground">{label}</dt>

@@ -2,11 +2,11 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { AdminStatusWire, DiskUsage } from '@synclet/shared';
 import { lstat, readdir, statfs } from 'node:fs/promises';
 import path from 'node:path';
-import { readFileSync } from 'node:fs';
 import { APP_CONFIG, AppConfig } from '../config';
 import { PrismaService } from '../prisma/prisma.service';
 import { SchedulerService } from '../indexer/scheduler.service';
 import { WatcherService } from '../indexer/watcher.service';
+import { UpdateCheckService } from './update-check.service';
 
 const SIZE_TTL_MS = 10 * 60_000;
 const OFFICE_TTL_MS = 60_000;
@@ -35,13 +35,6 @@ export async function dirSize(dir: string): Promise<number> {
 @Injectable()
 export class AdminStatusService {
   private readonly log = new Logger(AdminStatusService.name);
-  private readonly version: string = (() => {
-    try {
-      return (JSON.parse(readFileSync(path.join(__dirname, '../../package.json'), 'utf8')) as { version: string }).version;
-    } catch {
-      return 'unknown';
-    }
-  })();
   private sizes: { value: MetaSizes; at: number } | null = null;
   private walking: Promise<MetaSizes> | null = null;
   private office: { value: boolean; at: number } | null = null;
@@ -50,6 +43,7 @@ export class AdminStatusService {
     private readonly prisma: PrismaService,
     private readonly watcher: WatcherService,
     private readonly scheduler: SchedulerService,
+    private readonly updates: UpdateCheckService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -115,8 +109,9 @@ export class AdminStatusService {
       this.prisma.user.count(), this.prisma.user.count({ where: { disabledAt: { not: null } } }),
       this.disk(this.config.dataRoot), this.disk(this.config.metaRoot), this.metaSizes(), this.jobs(), this.officeReachable(),
     ]);
+    const version = this.updates.info();
     return {
-      version: this.version, uptimeSec: Math.round(process.uptime()),
+      version, uptimeSec: Math.round(process.uptime()),
       watch: this.watcher.mode, lastFullScanAt: this.scheduler.lastFullScanAt?.toISOString() ?? null,
       users: { total, disabled }, disk: { data: dataDisk, meta: metaDisk }, meta, jobs,
       office: { enabled: !!this.config.officeUrl, reachable }, versions: this.config.versions,

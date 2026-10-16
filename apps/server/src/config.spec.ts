@@ -92,4 +92,15 @@ describe('loadConfig', () => {
     expect(loadConfig({ SYNCLET_EVENTS_PING_SECONDS: '0' }).eventsPingSeconds).toBe(1);
     expect(loadConfig({ SYNCLET_EVENTS_PING_SECONDS: '-3' }).eventsPingSeconds).toBe(1);
   });
+  it('build version, revision and update check', () => {
+    expect(loadConfig({})).toMatchObject({ buildVersion: 'dev', buildRevision: null, updateCheck: true, updateRepo: 'eltomato89/synclet' });
+    expect(loadConfig({ SYNCLET_BUILD_VERSION: '', SYNCLET_BUILD_REVISION: '', SYNCLET_UPDATE_CHECK: '', SYNCLET_UPDATE_REPO: '' }))
+      .toMatchObject({ buildVersion: 'dev', buildRevision: null, updateCheck: true, updateRepo: 'eltomato89/synclet' });
+    expect(loadConfig({ SYNCLET_BUILD_VERSION: '1.2.3', SYNCLET_BUILD_REVISION: 'abc', SYNCLET_UPDATE_CHECK: 'off', SYNCLET_UPDATE_REPO: 'me/synclet-fork' }))
+      .toMatchObject({ buildVersion: '1.2.3', buildRevision: 'abc', updateCheck: false, updateRepo: 'me/synclet-fork' });
+    expect(() => loadConfig({ SYNCLET_UPDATE_REPO: 'https://github.com/x/y' })).toThrow(/owner\/repo/);
+    // Surrounding whitespace (e.g. "off " in .env) is ignored by every on/off setting.
+    expect(loadConfig({ SYNCLET_UPDATE_CHECK: ' off ', SYNCLET_VERSIONS: ' on\t' })).toMatchObject({ updateCheck: false, versions: true });
+    expect(loadConfig({ SYNCLET_UPDATE_CHECK: '   ' }).updateCheck).toBe(true);
+  });
 });

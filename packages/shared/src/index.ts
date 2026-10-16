@@ -189,8 +189,28 @@ export interface AdminShareWire extends ShareLinkWire {
   space?: { id: string; name: string; kind: SyncSpaceKind };
 }
 export interface DiskUsage { totalBytes: number; freeBytes: number }
+/**
+ * - `development`: not a release build (`edge`, `dev`, `sha-...`); no update hint.
+ * - `checking`: no result yet; the first check (or its retry) is still running.
+ * - `unavailable`: the last check failed (network, rate limit, no release yet) and none succeeded before.
+ * - `disabled`: SYNCLET_UPDATE_CHECK=off; no outbound request is made.
+ */
+export type UpdateStatus = 'up-to-date' | 'update-available' | 'checking' | 'development' | 'unavailable' | 'disabled';
+export interface VersionInfoWire {
+  /** Release version without `v` (`1.2.3`), or `edge` / `dev` / ... for non-release builds. */
+  installed: string;
+  /** Git commit of the build, if known. */
+  revision: string | null;
+  /** Latest published release (without `v`); null if unknown. */
+  latest: string | null;
+  /** Release notes of `latest`. */
+  latestUrl: string | null;
+  /** Last time GitHub was asked (ISO), null if never. */
+  checkedAt: string | null;
+  status: UpdateStatus;
+}
 export interface AdminStatusWire {
-  version: string; uptimeSec: number;
+  version: VersionInfoWire; uptimeSec: number;
   watch: 'active' | 'scan-only' | 'off'; lastFullScanAt: string | null;
   users: { total: number; disabled: number };
   disk: { data: DiskUsage; meta: DiskUsage };
