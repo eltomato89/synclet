@@ -307,6 +307,19 @@ final class ParentMapTests: XCTestCase {
         XCTAssertTrue(queue.isEmpty)
     }
 
+    /// M6: bounded – beyond ``ParentMap/maxEntries`` the map starts over.
+    func testParentMapIsBounded() {
+        let map = ParentMap(fileURL: nil)
+        let many = (0..<ParentMap.maxEntries).map { Fixtures.item(id: "d_\($0)", parentId: "root", type: "folder") }
+        map.record(many)
+        XCTAssertEqual(map.count, ParentMap.maxEntries)
+        map.record([Fixtures.item(id: "d_new", parentId: "d_1", type: "folder")])
+        XCTAssertEqual(map.count, 1)
+        XCTAssertEqual(map.parent(of: "d_new"), "d_1")
+        map.removeAll()
+        XCTAssertEqual(map.count, 0)
+    }
+
     func testNotePolicyReportsFlipsOnly() {
         let map = ParentMap(fileURL: nil)
         XCTAssertFalse(map.notePolicy("d_unknown", kept: true))
@@ -794,6 +807,24 @@ final class PinnedEnumerationTests: XCTestCase {
         pin.queue.roundStarted()
         FileProviderEnumerator.finishPinning(pin, announce: [], workingSet: false)
         XCTAssertEqual(rounds.next(), 4)
+    }
+
+    /// M6: without pins the parent map is not grown (and an old one is cleared).
+    func testWithoutPinsTheParentMapStaysEmpty() async throws {
+        let pin = pinning()
+        pin.parentMap.record([Fixtures.item(id: "d_old", parentId: "root", type: "folder")])
+        let resolver = pin.resolver(layout: Fixtures.layout, client: Fixtures.client())
+        _ = try await resolver.items([Fixtures.item(id: "d_a", parentId: "root", type: "folder"),
+                                      Fixtures.item(id: "d_b", parentId: "d_a", type: "folder")])
+        XCTAssertEqual(pin.parentMap.count, 0)
+
+        try pin.store.setFolder("d_a", pinned: true, space: "personal")
+        MockURLProtocol.reset { request in
+            request.path == "/api/sync/v1/items/d_a" ? .json(200, Fixtures.folderJSON(id: "d_a", name: "a")) : .empty(500)
+        }
+        _ = try await pin.resolver(layout: Fixtures.layout, client: Fixtures.client())
+            .items([Fixtures.item(id: "d_b", parentId: "d_a", type: "folder")])
+        XCTAssertEqual(pin.parentMap.parent(of: "d_b"), "d_a", "recorded again once something is pinned")
     }
 
     func testWithoutPinsNothingIsResolved() async throws {

@@ -128,6 +128,7 @@ struct PinResolver: Sendable {
                       walking: Bool, announce: Bool) -> String? {
         let kept = Self.isKept(policy)
         if item.isFolder {
+            guard hasPins else { return nil }
             if map.notePolicy(item.id, kept: kept), !walking {
                 Log.pinning.info("folder \(item.id, privacy: .public) moved across a pin: re-reporting its subtree")
                 queue.enqueue(PinTask(kind: .walk, id: item.id, spaceId: spaceId, firstLevel: firstLevel, announce: true))
@@ -145,7 +146,9 @@ struct PinResolver: Sendable {
     /// Records the folders and maps the items with their policy. Returns the ids of kept
     /// files with new content. Only cancellation is thrown.
     func items(_ syncItems: [SyncItem], announce: Bool = true) async throws -> (items: [FileProviderItem], announce: [String]) {
-        map.record(syncItems)
+        // Without pins no ancestor is ever resolved: keep the map empty instead of growing it
+        // with every enumerated folder (it is rebuilt by the walks once a pin appears).
+        if hasPins { map.record(syncItems) } else { map.removeAll() }
         var result: [FileProviderItem] = []
         var fresh: [String] = []
         result.reserveCapacity(syncItems.count)
