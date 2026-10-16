@@ -2,6 +2,10 @@
 
 Quickstart, configuration and the other server topics are in the [top-level README](../README.md). This page covers what depends on your storage layout.
 
+## Upgrading: Office moved into compose.yml
+
+The Euro-Office `office` service is now part of `compose.yml` (profile `office`) and served below `/documentserver` by default. If you use Office on its own subdomain (`COMPOSE_FILE=compose.yml:compose.office.yml`), download the new `compose.office.yml` **together with** the new `compose.yml`: the new `compose.yml` with the old `compose.office.yml` fails with "depends on undefined service office". The new override keeps your subdomain setup (same variables, same volumes; needs Docker Compose 2.24 or newer). Or switch to `/documentserver`: remove `COMPOSE_FILE`, `SYNCLET_OFFICE_SITE_ADDRESS` and `SYNCLET_OFFICE_PUBLIC_URL` from `.env`, add `COMPOSE_PROFILES=office` and run `docker compose up -d --remove-orphans`. Details: [README, Office](../README.md#office-euro-office-editing).
+
 ## Files in this folder
 
 | File | Purpose |

@@ -74,6 +74,8 @@ docker compose up -d
 
 The server migrates the database on start. Downgrading after a migration is not supported, so back up the database before updating if you want a way back. If the release notes say that `compose.yml` changed, download it again (for a pinned release from its tag, e.g. `https://raw.githubusercontent.com/eltomato89/synclet/v1.2.3/deploy/compose.yml`).
 
+**With Office on its own subdomain (`compose.office.yml`):** the office container moved into `compose.yml`. Download the new `compose.office.yml` together with the new `compose.yml` (a new `compose.yml` with the old `compose.office.yml` fails with "depends on undefined service office"), or switch to the default `/documentserver` setup; see [Upgrading from the subdomain-only setup](#office-euro-office-editing).
+
 ### Building from source
 
 To build the images yourself from a checkout, add `deploy/compose.build.yml`. It builds both images and tags them locally (`synclet/server:dev`, `synclet/caddy:dev`), so they never overwrite pulled images:
@@ -156,8 +158,8 @@ All settings go into `.env` next to `compose.yml` (in a checkout: `deploy/.env`,
 | `COMPOSE_PROFILES` | (empty) | `office` starts the Euro-Office Document Server container; see [Office](#office-euro-office-editing). |
 | `OFFICE_JWT_SECRET` | (empty) | Shared JWT secret with the Document Server (`openssl rand -hex 32`). Set = office editing on (and `/documentserver` routed by Caddy); empty = off. |
 | `OFFICE_TAG` | `latest` | Image tag of `ghcr.io/euro-office/documentserver`; pin it in production. |
-| `SYNCLET_OFFICE_WELCOME` | (empty) | `on` serves the Document Server's welcome and example pages below `/documentserver` (404 by default). |
-| `SYNCLET_OFFICE_PUBLIC_URL` | `${SYNCLET_PUBLIC_URL}/documentserver` | Browser-facing URL of the Document Server, without trailing slash. With `compose.office.yml`: the `https://` URL of the office subdomain (required there); it is then also added to the Synclet site's CSP. |
+| `SYNCLET_OFFICE_WELCOME` | (empty) | `on` serves the Document Server's welcome, example and admin pages below `/documentserver` (404 by default). |
+| `SYNCLET_OFFICE_PUBLIC_URL` | `${SYNCLET_PUBLIC_URL}/documentserver` | Browser-facing URL of the Document Server, without trailing slash. Whenever set, Caddy also adds its origin to the Synclet site's CSP (not needed for the same-origin default). With `compose.office.yml`: the `https://` URL of the office subdomain (required there). |
 | `SYNCLET_OFFICE_SITE_ADDRESS` | (empty) | `compose.office.yml` only: Caddy site address of the office subdomain (domain, or `http://...` behind a TLS-terminating proxy). Required there. |
 
 ### PostgreSQL extensions
@@ -183,7 +185,7 @@ Optional. Edit `docx`, `xlsx`, `pptx`, `odt`, `ods` and `odp` files in the brows
 **Requirements**
 
 - About **4 GB of free RAM** for the Document Server (the first start takes a minute or two).
-- `SYNCLET_PUBLIC_URL` set to the browser-facing URL of Synclet (the editor URL is derived from it).
+- `SYNCLET_PUBLIC_URL` set to the browser-facing URL of Synclet (the editor URL is derived from it). With `OFFICE_JWT_SECRET` set but `SYNCLET_PUBLIC_URL` (and `SYNCLET_OFFICE_PUBLIC_URL`) empty, the server does not start and logs why.
 
 **Setup**
 
@@ -204,7 +206,7 @@ Optional. Edit `docx`, `xlsx`, `pptx`, `odt`, `ods` and `odp` files in the brows
 
 3. Open a document in the web app with "Open in Office" (new documents can be created there as well). The admin status page shows whether the Document Server is reachable.
 
-Both settings are needed: `OFFICE_JWT_SECRET` turns office editing on in Synclet and the `/documentserver` route in Caddy (without it, `/documentserver` answers 404), the profile starts the container. The server uses `OFFICE_URL=${SYNCLET_PUBLIC_URL}/documentserver`; set `SYNCLET_OFFICE_PUBLIC_URL` to override it. The Document Server's welcome and example pages (`/documentserver/welcome/`, `/documentserver/example/`) are not needed and answer 404; `SYNCLET_OFFICE_WELCOME=on` serves them anyway (e.g. to check the installation).
+Both settings are needed: `OFFICE_JWT_SECRET` turns office editing on in Synclet and the `/documentserver` route in Caddy (without it, `/documentserver` answers 404), the profile starts the container. `COMPOSE_PROFILES=office` without a secret starts a Document Server that nothing uses (it still takes its RAM). The server uses `OFFICE_URL=${SYNCLET_PUBLIC_URL}/documentserver`; set `SYNCLET_OFFICE_PUBLIC_URL` to override it. The Document Server's welcome, example and admin pages (`/documentserver/welcome/`, `/documentserver/example/`, `/documentserver/admin/`) are not needed and answer 404; `SYNCLET_OFFICE_WELCOME=on` serves them anyway (e.g. to check the installation).
 
 **Behind an outer reverse proxy** (nginx, Traefik, Nginx Proxy Manager) that terminates TLS, the proxy must, for the Synclet host:
 
@@ -243,7 +245,7 @@ It needs a second DNS name pointing at the same host. Both sites share Caddy's p
 
 **Upgrading from the subdomain-only setup.** Before, the office container was defined in `compose.office.yml` only. Download the new `compose.yml` *and* `compose.office.yml`: with your existing `.env` (`COMPOSE_FILE=compose.yml:compose.office.yml`, `SYNCLET_OFFICE_SITE_ADDRESS`, `SYNCLET_OFFICE_PUBLIC_URL`) everything keeps working on the subdomain, with the same volumes. To move to `/documentserver` instead: remove `COMPOSE_FILE`, `SYNCLET_OFFICE_SITE_ADDRESS` and `SYNCLET_OFFICE_PUBLIC_URL` from `.env`, add `COMPOSE_PROFILES=office`, run `docker compose up -d --remove-orphans`, and drop the office hostname from DNS and your outer proxy. Editor sessions open during the switch are lost (save before), files are not affected.
 
-**Security.** `OFFICE_JWT_SECRET` is shared between Synclet and the Document Server (JWT on every request in both directions). Keep it secret and set it to a random value. The Document Server fetches and saves files from Synclet over the internal Docker network (`http://server:3000/api`) with short-lived, file-bound tokens; only Caddy publishes ports. Pin `OFFICE_TAG` to a specific image tag in production.
+**Security.** `OFFICE_JWT_SECRET` is shared between Synclet and the Document Server (JWT on every request in both directions). Keep it secret and set it to a random value. The Document Server fetches and saves files from Synclet over the internal Docker network (`http://server:3000/api`) with short-lived, file-bound tokens; only Caddy publishes ports. Pin `OFFICE_TAG` to a specific image tag in production. For an **internet-facing** installation we recommend the [subdomain setup](#office-euro-office-editing) (`compose.office.yml`): with the default `/documentserver` the Document Server shares Synclet's origin, so a vulnerability in it could act as the signed-in user.
 
 **Size limits.** The Document Server has its own limit, `FileConverter.converter.maxDownloadBytes`, **500 MB** by default (`/etc/euro-office/documentserver/default.json` in the `office` container; override it with a `local.json`). Larger documents do not open. `SYNCLET_MAX_UPLOAD_BYTES` does not apply to it.
 
