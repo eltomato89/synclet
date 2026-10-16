@@ -11,6 +11,9 @@ import { useAdminGroups, useAdminUsers, useSpaceMutations } from './queries';
 import type { SpacePatch, SpaceWire } from './types';
 import { Field } from './UserDialog';
 
+/** The server clamps shorter scan intervals to 10 s anyway. */
+export const MIN_INTERVAL_SEC = 10;
+
 const wireMembers = (rows: MemberRow[]): NonNullable<SpacePatch['members']> => rows.map((r) => ({ kind: r.kind, id: r.id, role: r.role }));
 
 /** Create a team folder, or edit a space (name for team folders; watch mode and scan interval for external storages). */
@@ -31,7 +34,7 @@ export function SpaceDialog({ open, onOpenChange, space }: { open: boolean; onOp
 
   const nameError = external ? null : validateSpaceName(name);
   const intervalNum = interval.trim() === '' ? null : Number(interval);
-  const intervalError = intervalNum !== null && (!Number.isInteger(intervalNum) || intervalNum < 1);
+  const intervalError = intervalNum !== null && (!Number.isInteger(intervalNum) || intervalNum < MIN_INTERVAL_SEC);
   const shownName = submitted && nameError ? t(`admin.spaces.form.errors.${nameError}`) : server?.field === 'name' ? server.message : undefined;
   const shownInterval = submitted && intervalError ? t('admin.spaces.form.errors.interval') : undefined;
 
@@ -93,7 +96,7 @@ export function SpaceDialog({ open, onOpenChange, space }: { open: boolean; onOp
               </Field>
               <Field id={`${ids}-interval`} label={t('admin.spaces.form.interval')} hint={t('admin.spaces.form.intervalHint')} error={shownInterval}>
                 <Input
-                  id={`${ids}-interval`} type="number" min={1} inputMode="numeric" value={interval}
+                  id={`${ids}-interval`} type="number" min={MIN_INTERVAL_SEC} inputMode="numeric" value={interval}
                   aria-invalid={shownInterval ? true : undefined}
                   onChange={(e) => setIntervalText(e.target.value)}
                 />

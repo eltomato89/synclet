@@ -1,4 +1,4 @@
-import { FolderMinus, MoreHorizontal, PencilLine, Plus, RefreshCw } from 'lucide-react';
+import { FolderMinus, MoreHorizontal, PencilLine, Plus, RefreshCw, Undo2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useTopbar } from '@/components/app-shell/Topbar';
@@ -53,6 +53,15 @@ export function SpacesPage() {
     }
   }
 
+  async function restore(s: SpaceWire) {
+    try {
+      await m.restore.mutateAsync(s.id);
+      notify.success(t('admin.spaces.toast.restored', { name: s.name }));
+    } catch (err) {
+      notify.error(t(adminErrorKey(err)));
+    }
+  }
+
   const list = spaces.data;
   let body;
   if (!list && spaces.error) {
@@ -89,7 +98,7 @@ export function SpacesPage() {
                   <td className="hidden truncate px-2 font-mono text-xs text-muted-foreground lg:table-cell" title={s.rootPath}>{s.rootPath}</td>
                   <td className="px-2">
                     <span className="flex flex-wrap gap-1">
-                      <Badge variant={s.status === 'available' ? 'secondary' : 'destructive'} className="h-4.5 px-1.5 text-[11px]">
+                      <Badge variant={s.status === 'missing' ? 'destructive' : s.status === 'ignored' ? 'outline' : 'secondary'} className="h-4.5 px-1.5 text-[11px]">
                         {t(`admin.spaces.status.${s.status}`)}
                       </Badge>
                       {s.readOnly && <Badge variant="outline" className="h-4.5 px-1.5 text-[11px]">{t('admin.spaces.readOnly')}</Badge>}
@@ -106,10 +115,12 @@ export function SpacesPage() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end" className="w-52">
-                          <DropdownMenuItem onSelect={() => openDialog(s)}><PencilLine />{t('admin.users.edit')}</DropdownMenuItem>
-                          <DropdownMenuItem onSelect={() => void scan(s)}><RefreshCw />{t('admin.spaces.scan')}</DropdownMenuItem>
-                          {s.kind === 'team' && (
+                          {s.status === 'ignored' ? (
+                            <DropdownMenuItem onSelect={() => void restore(s)}><Undo2 />{t('admin.spaces.restore.action')}</DropdownMenuItem>
+                          ) : (
                             <>
+                              <DropdownMenuItem onSelect={() => openDialog(s)}><PencilLine />{t('admin.users.edit')}</DropdownMenuItem>
+                              <DropdownMenuItem onSelect={() => void scan(s)}><RefreshCw />{t('admin.spaces.scan')}</DropdownMenuItem>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem variant="destructive" onSelect={() => setConfirm({ space: s, open: true })}>
                                 <FolderMinus />{t('admin.spaces.remove.action')}

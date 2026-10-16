@@ -183,6 +183,10 @@ export function useSpaceMutations() {
       mutationFn: (id: string) => api<void>(`/admin/spaces/${id}`, { method: 'DELETE' }),
       onSettled: settled,
     }),
+    restore: useMutation({
+      mutationFn: (id: string) => api<SpaceWire>(`/admin/spaces/${id}/restore`, { method: 'POST' }),
+      onSettled: settled,
+    }),
     scan: useMutation({
       mutationFn: (id: string) => api<void>(`/admin/spaces/${id}/scan`, { method: 'POST' }),
       onSettled: settled,

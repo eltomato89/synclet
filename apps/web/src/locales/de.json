@@ -1110,7 +1110,8 @@
       },
       "status": {
         "available": "verfügbar",
-        "missing": "nicht verfügbar"
+        "missing": "nicht verfügbar",
+        "ignored": "ausgeblendet"
       },
       "watch": {
         "auto": "Automatisch (Änderungen beobachten)",
@@ -1149,21 +1150,25 @@
         "errors": {
           "required": "Gib einen Namen ein.",
           "invalid": "Dieser Name ist nicht zulässig. Vermeide / \\ : * ? \" < > | sowie Leerzeichen oder Punkte am Ende.",
-          "interval": "Gib eine ganze Zahl von Sekunden ein (mindestens 1)."
+          "interval": "Gib eine ganze Zahl von Sekunden ein (mindestens 10)."
         }
       },
       "toast": {
         "created": "Team-Ordner {{name}} angelegt",
         "updated": "{{name}} gespeichert",
-        "scanned": "Scan von {{name}} gestartet"
+        "scanned": "Scan von {{name}} gestartet",
+        "restored": "{{name}} wieder aufgenommen. Füge Mitglieder neu hinzu."
       },
       "remove": {
         "action": "Entfernen",
         "title": "{{name}} entfernen?",
-        "body": "Mitglieder verlieren den Zugriff, der Index wird verworfen. Der Ordner bleibt auf der Platte erhalten.",
+        "body": "Der Bereich wird in Synclet ausgeblendet. Der Ordner bleibt auf der Platte erhalten.",
         "submit": "Ordner entfernen",
         "submitting": "Wird entfernt …",
         "done": "{{name}} entfernt. Der Ordner bleibt auf der Platte erhalten."
+      },
+      "restore": {
+        "action": "Wieder aufnehmen"
       }
     }
   }

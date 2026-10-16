@@ -1110,7 +1110,8 @@
       },
       "status": {
         "available": "Available",
-        "missing": "Unavailable"
+        "missing": "Unavailable",
+        "ignored": "Hidden"
       },
       "watch": {
         "auto": "Automatic (watch for changes)",
@@ -1149,21 +1150,25 @@
         "errors": {
           "required": "Enter a name.",
           "invalid": "This can't be used as a name. Avoid / \\ : * ? \" < > |, and trailing spaces or dots.",
-          "interval": "Enter a whole number of seconds, 1 or more."
+          "interval": "Enter a whole number of seconds, 10 or more."
         }
       },
       "toast": {
         "created": "Team folder {{name}} created",
         "updated": "{{name}} saved",
-        "scanned": "Scan of {{name}} started"
+        "scanned": "Scan of {{name}} started",
+        "restored": "{{name}} restored. Add members again."
       },
       "remove": {
         "action": "Remove",
         "title": "Remove {{name}}?",
-        "body": "Members lose access and the index is dropped. The folder stays on disk.",
+        "body": "The space is hidden in Synclet. The folder stays on disk.",
         "submit": "Remove folder",
         "submitting": "Removing …",
         "done": "{{name}} removed. The folder stays on disk."
+      },
+      "restore": {
+        "action": "Restore"
       }
     }
   }
