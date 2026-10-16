@@ -16,7 +16,7 @@ fun signingValue(key: String, env: String): String? = System.getenv(env) ?: keys
 val releaseStoreFile = signingValue("storeFile", "SYNCLET_KEYSTORE_FILE")?.let { rootProject.file(it) }
 val hasReleaseSigning = releaseStoreFile?.exists() == true
 // Service-Account-JSON der Play Developer API: Pfad außerhalb des Repos.
-val playCredentials = (System.getenv("SYNCLET_PLAY_CREDENTIALS") ?: keystoreProperties.getProperty("playCredentials"))?.let { file(it) }
+val playCredentials = (System.getenv("SYNCLET_PLAY_CREDENTIALS") ?: keystoreProperties.getProperty("playCredentials"))?.let { rootProject.file(it) }
 
 // Release-Builds setzen beides über build_release.sh (Task 10).
 val syncletVersionName = providers.gradleProperty("syncletVersionName").getOrElse("0.1.5-dev")
