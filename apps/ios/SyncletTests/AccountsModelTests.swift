@@ -141,6 +141,32 @@ final class AccountsModelTests: XCTestCase {
         }
     }
 
+    func testAccountEventUpdatesTheSpacesOfTheEntry() async throws {
+        let server = FakeSynclet(serverId: "srv1")
+        Harness.serve(["files.example.test": server])
+        let stored = try await harness.accounts.add(server: URL(string: "https://files.example.test")!,
+                                                    tokens: harness.tokens(server))
+        XCTAssertEqual(harness.accounts.entry(key: stored.key)?.account.spaces.map(\.id), ["personal"])
+
+        let world = FakeMonitorWorld()
+        world.spaces = [world.spaces[0], SyncSpace(id: "s1", kind: .shared, name: "Team", rootId: "r_s1", canWrite: true)]
+        let manager = harness.manager
+        harness.accounts.startMonitoring { account in
+            var dependencies = world.dependencies()
+            dependencies.updateSpaces = { spaces in (try? manager.updateSpaces(key: account.key, spaces: spaces)) ?? false }
+            return ForegroundMonitor(accountKey: account.key, dependencies: dependencies,
+                                     timing: ForegroundMonitor.Timing(coalesce: .milliseconds(1)))
+        }
+        _ = await eventually { world.streamCount == 1 }
+        world.send(.connected(cursor: "7"))
+        world.send(.account)
+
+        let updated = await eventually {
+            self.harness.accounts.entry(key: stored.key)?.account.spaces.map(\.id) == ["personal", "s1"]
+        }
+        XCTAssertTrue(updated, "the browser sees the new space")
+    }
+
     func testChangeEventsReachEverySubscriber() async throws {
         let server = FakeSynclet(serverId: "srv1")
         Harness.serve(["files.example.test": server])

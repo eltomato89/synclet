@@ -19,8 +19,10 @@ private enum NameRequest: Identifiable {
 /// account (debounced), when it appears again and when the scene becomes active.
 struct FolderView: View {
     let environment: AppEnvironment
-    /// „Meine Dateien“ of the account (start of the move picker).
-    let root: FolderRoute
+    /// The account's spaces (start of the move picker).
+    let spaces: SpaceDirectory
+    /// Uploads and new folders are allowed (hidden in read-only folders and spaces).
+    let canAddChildren: Bool
     @State private var model: FolderModel
 
     @AppStorage("browserLayout") private var layout: BrowserLayout = .list
@@ -36,9 +38,10 @@ struct FolderView: View {
     @State private var showsFileImporter = false
     @State private var sharing: SyncItem?
 
-    init(environment: AppEnvironment, accountKey: String, api: SyncAPIClient, folder: FolderRoute, root: FolderRoute) {
+    init(environment: AppEnvironment, accountKey: String, api: SyncAPIClient, folder: FolderRoute, spaces: SpaceDirectory) {
         self.environment = environment
-        self.root = root
+        self.spaces = spaces
+        canAddChildren = folder.canAddChildren
         _model = State(initialValue: FolderModel(
             accountKey: accountKey, folderId: folder.id, title: folder.title, api: api,
             signal: { key in await environment.signalWorkingSet(accountKey: key) }))
@@ -72,6 +75,9 @@ struct FolderView: View {
                 if !editing { selection = [] }
             }
             .overlay(alignment: .bottom) { noticeBanner }
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if !canAddChildren, model.state == .loaded { ReadOnlyBar() }
+            }
             .uploadPickers(photos: $showsPhotoPicker, files: $showsFileImporter,
                            target: UploadTarget(accountKey: model.accountKey, parentId: model.folderId,
                                                 parentName: model.title))
@@ -79,7 +85,7 @@ struct FolderView: View {
                 nameSheet(request)
             }
             .sheet(isPresented: showsMovePicker) {
-                MovePicker(api: model.api, accountKey: model.accountKey, root: root, moving: moveCandidates,
+                MovePicker(api: model.api, accountKey: model.accountKey, spaces: spaces, moving: moveCandidates,
                            sourceFolderId: model.folderId) { target in
                     let items = moveCandidates
                     Task {
@@ -122,6 +128,8 @@ struct FolderView: View {
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("browser.retry")
             }
+        case .unavailable:
+            SpaceUnavailableView { Task { await model.load() } }
         case .failed(let message):
             ContentUnavailableView {
                 Label("Can’t Load Folder", systemImage: "exclamationmark.triangle")
@@ -155,7 +163,7 @@ struct FolderView: View {
             ForEach(model.items) { item in
                 Group {
                     if item.isFolder {
-                        NavigationLink(value: FolderRoute(id: item.id, title: item.name)) {
+                        NavigationLink(value: FolderRoute(item: item)) {
                             ItemRow(item: item, api: model.api)
                         }
                     } else {
@@ -195,7 +203,7 @@ struct FolderView: View {
                     if selection.contains(item.id) { selection.remove(item.id) } else { selection.insert(item.id) }
                 } label: { cell }
             } else if item.isFolder {
-                NavigationLink(value: FolderRoute(id: item.id, title: item.name)) { cell }
+                NavigationLink(value: FolderRoute(item: item)) { cell }
             } else {
                 Button { opening = item } label: { cell }
             }
@@ -230,7 +238,7 @@ struct FolderView: View {
     private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
             if !isEditing {
-                addMenu
+                if canAddChildren { addMenu }
                 Menu {
                     Picker("Sort By", selection: $sort) {
                         Text("Name").tag(BrowserSort.name)

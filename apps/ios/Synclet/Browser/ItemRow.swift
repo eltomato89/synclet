@@ -5,6 +5,8 @@ import SyncletKit
 struct ItemRow: View {
     let item: SyncItem
     let api: SyncAPIClient
+    /// The item's space in lists across spaces („Zuletzt“); `nil` in a folder.
+    var space: String?
 
     var body: some View {
         HStack(spacing: 12) {
@@ -13,7 +15,7 @@ struct ItemRow: View {
                 Text(verbatim: item.name)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(verbatim: ItemFormatting.subtitle(for: item))
+                Text(verbatim: [space, ItemFormatting.subtitle(for: item)].compactMap { $0 }.joined(separator: " · "))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

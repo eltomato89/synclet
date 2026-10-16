@@ -2,11 +2,8 @@ import SwiftUI
 import SyncletKit
 
 extension AccountEntry {
-    /// „Meine Dateien“: the root of the account's `personal` space.
-    var filesRoot: FolderRoute {
-        let rootId = account.spaces.first { $0.kind == .personal }?.rootId ?? SyncItem.rootID
-        return FolderRoute(id: rootId, title: String(localized: "My Files"))
-    }
+    /// The account's spaces („Meine Dateien“, team folders, storages).
+    var spaces: SpaceDirectory { SpaceDirectory(spaces: account.spaces) }
 }
 
 /// The navigation around a destination other than „Meine Dateien“ (Zuletzt, Suche, Papierkorb):
@@ -61,7 +58,7 @@ struct DestinationStack<Content: View>: View {
     @ViewBuilder
     private func folderView(_ route: FolderRoute) -> some View {
         if let api = environment.client(for: entry.id) {
-            FolderView(environment: environment, accountKey: entry.id, api: api, folder: route, root: entry.filesRoot)
+            FolderView(environment: environment, accountKey: entry.id, api: api, folder: route, spaces: entry.spaces)
         }
     }
 }
@@ -110,6 +107,8 @@ struct LoadStatePlaceholder: View {
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("browser.retry")
             }
+        case .unavailable:
+            SpaceUnavailableView(retry: retry)
         case .failed(let message):
             ContentUnavailableView {
                 Label(failureTitle, systemImage: "exclamationmark.triangle")

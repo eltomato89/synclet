@@ -5,7 +5,8 @@
 #   1. SyncletKit live tests (`swift test --filter Live`, incl. LiveBackgroundUploadTests) with the
 #      same environment as scripts/macos-live-tests.sh;
 #   2. the app's UI tests (scheme SyncletUITests) on a private simulator: LaunchTests on the fresh
-#      install, then BrowserFlowUITests signed in through the DEBUG test login
+#      install, then BrowserFlowUITests (incl. the upload into the team folder `/teams/UITeam`,
+#      seeded through the admin API) signed in through the DEBUG test login
 #      (`-SyncletTestServer`/`-SyncletTestToken`, handed to the runner as TEST_RUNNER_* env vars
 #      and turned into launch arguments by UITestSupport).
 # The administrator is created through the setup API; device tokens are registered with its access
@@ -44,10 +45,12 @@ USER_NAME=ioslive
 PASSWORD='correct horse battery staple'
 WORK=$(mktemp -d)
 UDID=
-mkdir -p "$WORK/files" "$WORK/meta"
+TEAM_NAME=UITeam
+mkdir -p "$WORK/files" "$WORK/meta" "$WORK/teams/$TEAM_NAME"
 cat > "$WORK/.env" <<ENV
 SYNCLET_DATA=$WORK/files
 SYNCLET_META=$WORK/meta
+SYNCLET_TEAMS=$WORK/teams
 PUID=$(id -u)
 PGID=$(id -g)
 POSTGRES_PASSWORD=ioslive
@@ -98,9 +101,33 @@ curl -fs "localhost:$PORT/api/health" >/dev/null || fail "stack did not become h
 [ -n "$("${DC[@]}" ps -q worker)" ] || fail "derivatives worker is not running"
 
 B=http://localhost:$PORT/api
-ACCESS=$(curl -fsS -XPOST "$B/setup" -H 'content-type: application/json' \
-  -d "{\"username\":\"$USER_NAME\",\"displayName\":\"iOS Live\",\"password\":\"$PASSWORD\"}" | jq -r .accessToken)
+SETUP=$(curl -fsS -XPOST "$B/setup" -H 'content-type: application/json' \
+  -d "{\"username\":\"$USER_NAME\",\"displayName\":\"iOS Live\",\"password\":\"$PASSWORD\"}")
+ACCESS=$(jq -r .accessToken <<<"$SETUP")
+USER_ID=$(jq -r .user.id <<<"$SETUP")
 [ -n "$ACCESS" ] && [ "$ACCESS" != null ] || fail "setup returned no access token"
+
+# Team folder (Phase 4): discovery finds /teams/UITeam; the administrator becomes a writing member
+# and the UI flow uploads into it. A server without the admin spaces API (404) only skips this;
+# the team space UI test then skips itself (no TEST_RUNNER_SYNCLET_UITEST_TEAM).
+TEAM=
+if [ "$(curl -s -o /dev/null -w '%{http_code}' "$B/admin/spaces" -H "authorization: Bearer $ACCESS")" = 200 ]; then
+  TEAM_ID=
+  for _ in $(seq 1 30); do
+    TEAM_ID=$(curl -fsS "$B/admin/spaces" -H "authorization: Bearer $ACCESS" \
+      | jq -r --arg n "$TEAM_NAME" '[.[] | select(.kind == "team" and .name == $n)][0].id // empty')
+    [ -n "$TEAM_ID" ] && break
+    sleep 1
+  done
+  [ -n "$TEAM_ID" ] || fail "the team folder /teams/$TEAM_NAME was not discovered"
+  curl -fsS -XPATCH "$B/admin/spaces/$TEAM_ID" -H "authorization: Bearer $ACCESS" -H 'content-type: application/json' \
+    -d "{\"members\":[{\"kind\":\"user\",\"id\":\"$USER_ID\",\"role\":\"write\"}]}" >/dev/null \
+    || fail "adding $USER_NAME to the team folder failed"
+  TEAM=$TEAM_NAME
+  echo "== team folder $TEAM_NAME ($TEAM_ID): $USER_NAME is a writing member"
+else
+  echo "== the server has no admin spaces API: no team folder (the team space UI test skips)"
+fi
 # register_device <name> <platform>: a device token through the documented registration.
 register_device() {
   local token
@@ -150,6 +177,7 @@ if [ "$MODE" = all ] || [ "$MODE" = --ui ]; then
     shift
     TEST_RUNNER_SYNCLET_UITEST_SERVER="http://localhost:$PORT" \
       TEST_RUNNER_SYNCLET_UITEST_TOKEN="$APP_TOKEN" \
+      TEST_RUNNER_SYNCLET_UITEST_TEAM="$TEAM" \
       xcodebuild "$@" -scheme SyncletUITests -destination "id=$UDID" -derivedDataPath "$DD" \
       -collect-test-diagnostics never >"$log" 2>&1 || status=$?
     grep -E "error:|: failed|Test Case .*(passed|failed|skipped)|UITEST:|\*\* .* \*\*" "$log" | tail -n 40 || true

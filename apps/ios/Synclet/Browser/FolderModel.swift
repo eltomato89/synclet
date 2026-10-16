@@ -81,7 +81,7 @@ final class FolderModel {
         } catch {
             guard generation == loadGeneration else { return }
             Self.log.error("loading \(self.folderId, privacy: .public) failed: \(String(describing: error), privacy: .public)")
-            state = Self.isOffline(error) ? .offline : .failed(Self.describe(error))
+            state = Self.loadState(for: error)
         }
     }
 
@@ -235,6 +235,13 @@ final class FolderModel {
     }
 
     // MARK: - Errors
+
+    /// The state of a list whose load failed: offline, unavailable space or an error message.
+    static func loadState(for error: Error) -> LoadState {
+        if isOffline(error) { return .offline }
+        if (error as? SyncAPIError)?.isSpaceUnavailable == true { return .unavailable }
+        return .failed(describe(error))
+    }
 
     static func isOffline(_ error: Error) -> Bool {
         if error is URLError { return true }

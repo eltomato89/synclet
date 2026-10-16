@@ -161,6 +161,26 @@
         }
       }
     },
+    "Not Available": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nicht verfügbar"
+          }
+        }
+      }
+    },
+    "Read Only": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nur lesen"
+          }
+        }
+      }
+    },
     "Sign In Again": {
       "localizations": {
         "de": {
@@ -177,6 +197,16 @@
           "stringUnit": {
             "state": "translated",
             "value": "In der Synclet-App anmelden"
+          }
+        }
+      }
+    },
+    "Spaces": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bereiche"
           }
         }
       }
