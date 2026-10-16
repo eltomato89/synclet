@@ -173,6 +173,21 @@ describe('Sync API v1', () => {
     expect((await api('DELETE', '/items/root')).json().code).toBe('forbidden');
   });
 
+  it('DELETE honours an optional If-Match: stale → 412 with the item, nothing deleted', async () => {
+    const f = (await api('POST', '/items/upload?parentId=root&name=del.txt', { body: 'one' })).json();
+    await api('PUT', `/items/${f.id}/content`, { body: 'two', headers: { 'if-match': '"v1"' } });
+    const stale = await api('DELETE', `/items/${f.id}`, { headers: { 'if-match': '"v1"' } });
+    expect(stale.statusCode).toBe(412);
+    expect(stale.json()).toMatchObject({ code: 'conflict', item: { id: f.id, etag: 'v2' } });
+    expect((await api('GET', `/items/${f.id}`)).statusCode).toBe(200);
+    expect((await api('DELETE', `/items/${f.id}`, { headers: { 'if-match': 'v2' } })).statusCode).toBe(204);
+    const folder = (await api('POST', '/items', { payload: { parentId: 'root', type: 'folder', name: 'DelDir' } })).json();
+    expect((await api('DELETE', `/items/${folder.id}`, { headers: { 'if-match': '"t0000000000000000"' } })).statusCode).toBe(412);
+    expect((await api('DELETE', `/items/${folder.id}`, { headers: { 'if-match': `"${folder.etag}"` } })).statusCode).toBe(204);
+    const g = (await api('POST', '/items/upload?parentId=root&name=star.txt', { body: 'x' })).json();
+    expect((await api('DELETE', `/items/${g.id}`, { headers: { 'if-match': '*' } })).statusCode).toBe(204);
+  });
+
   itIfCaseSensitive('PATCH with the display name keeps the stored name, unless only the display name is free at the target', async () => {
     await writeFile(path.join(ctx.config.dataRoot, 'jens', 'a.txt'), '1');
     await writeFile(path.join(ctx.config.dataRoot, 'jens', 'A.txt'), '2');

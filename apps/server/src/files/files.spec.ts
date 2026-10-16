@@ -113,6 +113,15 @@ describe('FilesService', () => {
     await expect(files.update(space, f.id, { name: 'b.txt' }, { ifMatchEtag: 'v42' })).rejects.toMatchObject({ code: 'conflict' });
   });
 
+  it('remove refuses a stale ifMatchEtag and keeps the item', async () => {
+    const f = await files.upload(space, null, 'r.txt', body('x'), {});
+    await expect(files.remove(space, f.id, undefined, { ifMatchEtag: 'v42' })).rejects.toMatchObject({ code: 'conflict' });
+    expect(await visible()).toEqual(['r.txt']);
+    await files.remove(space, f.id, undefined, { ifMatchEtag: 'v1' });
+    await files.pendingTrash();
+    expect(await visible()).toEqual([]);
+  });
+
   it('remove moves the subtree to /meta/trash and journals deletes', async () => {
     const a = await files.createFolder(space, null, 'A');
     await files.upload(space, a.id, 'x.txt', body('x'), {});
