@@ -25,6 +25,12 @@ COPY --from=build /out /app
 RUN npm install --prefix /opt/prisma-cli --no-audit --no-fund "prisma@$(cat /app/.prisma-version)" && npm cache clean --force
 COPY deploy/server-entrypoint.sh /usr/local/bin/synclet-entrypoint
 RUN chmod +x /usr/local/bin/synclet-entrypoint
+# Version shown in the admin area and compared with the latest GitHub release. Set by the image
+# workflow (release `1.2.3`, or `edge` for main, plus the commit); source builds stay `dev`.
+# Declared late so that a new version does not invalidate the cached layers above.
+ARG SYNCLET_BUILD_VERSION=dev
+ARG SYNCLET_BUILD_REVISION=
+ENV SYNCLET_BUILD_VERSION=$SYNCLET_BUILD_VERSION SYNCLET_BUILD_REVISION=$SYNCLET_BUILD_REVISION
 ENV PATH=/opt/prisma-cli/node_modules/.bin:$PATH NODE_ENV=production PORT=3000 SYNCLET_DATA_ROOT=/data SYNCLET_META_ROOT=/meta
 EXPOSE 3000
 HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=6 \

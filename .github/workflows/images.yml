@@ -96,6 +96,12 @@ jobs:
           file: ${{ matrix.dockerfile }}
           platforms: linux/${{ matrix.arch }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Baked into the server image (admin status, update check): the release version without
+          # `v` for tags, `edge` for main; the revision is the commit actually checked out.
+          # Unused by the web image.
+          build-args: |
+            SYNCLET_BUILD_VERSION=${{ steps.meta.outputs.version }}
+            SYNCLET_BUILD_REVISION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.revision'] }}
           provenance: false # plain per-platform manifests, so the merged index lists only images
           outputs: type=image,name=${{ env.IMAGE_PREFIX }}/synclet-${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=gha,scope=synclet-${{ matrix.image }}-${{ matrix.arch }}

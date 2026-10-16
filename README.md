@@ -153,6 +153,8 @@ All settings go into `.env` next to `compose.yml` (in a checkout: `deploy/.env`,
 | `SYNCLET_VERSIONS_MAX_BYTES` | `0` (unlimited) | Per-user cap for stored version bytes; the oldest versions are evicted first. |
 | `SYNCLET_SSO_EMERGENCY` | (empty) | `1` (or `true`, `on`, `yes`) ignores OIDC and forward-auth and allows password login for everyone; see [Locked out?](#locked-out-emergency-recovery). |
 | `SYNCLET_SSO_ALLOW_HTTP_ISSUER` | (empty) | `1` accepts an `http://` OIDC issuer on a loopback/private host (lab setups only; otherwise `https://` is required). |
+| `SYNCLET_UPDATE_CHECK` | `on` | The server asks `api.github.com` for the latest release (at most every 12 hours, only while an admin uses the web app; the request carries nothing but the installed version in its User-Agent) and the admin area shows when an update is available. `off` makes no outbound request at all. Development builds (`edge`, source builds) are never checked. |
+| `SYNCLET_UPDATE_REPO` | `eltomato89/synclet` | Repository (`owner/repo`) whose GitHub releases the update check compares against, for forks. |
 | `SYNCLET_OFFICE_SITE_ADDRESS` | (empty) | Office override only: Caddy site address of the Document Server (domain, or `http://...` behind a TLS-terminating proxy). Required with `compose.office.yml`. |
 | `SYNCLET_OFFICE_PUBLIC_URL` | (empty) | Office override only: browser-facing `https://` URL of the office site; also added to the Synclet site's CSP. Required with `compose.office.yml`. |
 | `OFFICE_JWT_SECRET` | (empty) | Office override only: shared JWT secret with the Document Server (`openssl rand -hex 32`). Required with `compose.office.yml`. |
@@ -412,7 +414,9 @@ Admins get an "Admin" entry in the web app with:
 - **Single sign-on:** the OIDC and forward-auth settings described above, including discovery test and the password-login switch.
 - **Folders and storages (Spaces):** create team folders, see external storages, assign users and groups with read or write access, set watch mode and scan interval per space, scan now, hide ("Remove") and restore ("Restore"). Details: [deploy/README.md](deploy/README.md#team-folders-and-external-storage).
 - **Groups:** bundle users to grant access to spaces at once.
-- **Status:** version and uptime, file watcher state and last full scan, number of users, free and used space of the data and meta volumes, size of derivatives / trash / versions / uploads in `SYNCLET_META`, thumbnail and text-extraction job queues, whether versions are on and whether the Document Server is reachable.
+- **Status:** version and uptime (with an update hint, see below), file watcher state and last full scan, number of users, free and used space of the data and meta volumes, size of derivatives / trash / versions / uploads in `SYNCLET_META`, thumbnail and text-extraction job queues, whether versions are on and whether the Document Server is reachable.
+
+**Update check.** The status page shows the installed version (baked into the image at build time) and whether a newer release exists on GitHub; if so, "Administration" in the sidebar gets a dot and the status page links the release notes. Release images only: `edge` and source builds show "Development build" (with the commit) and never ask GitHub. Turn the check off with `SYNCLET_UPDATE_CHECK=off`; updating itself stays manual (see [Updating](#updating)).
 
 ## Known limitations
 
