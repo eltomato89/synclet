@@ -2,6 +2,7 @@ package tech.jensk.synclet.ui.uploads
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
@@ -28,7 +29,9 @@ class UploadsViewModel(
 
     fun remove(entry: UploadEntry) = viewModelScope.launch {
         val removed = queue.remove(entry.id) ?: return@launch
-        if (removed.tusUrl != null) runCatching { terminate(removed) }
+        if (removed.tusUrl != null) {
+            try { terminate(removed) } catch (e: CancellationException) { throw e } catch (_: Exception) { /* best effort */ }
+        }
     }
 
     fun clearDone() = viewModelScope.launch {
