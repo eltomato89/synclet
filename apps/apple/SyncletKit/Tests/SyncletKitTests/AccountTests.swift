@@ -219,7 +219,7 @@ final class AccountManagerTests: XCTestCase {
         XCTAssertEqual(requests.map(\.path), ["/api/sync/v1/devices", "/api/sync/v1/account", "/api/auth/logout"])
         XCTAssertEqual(requests[0].header("Authorization"), "Bearer jwt.access")
         XCTAssertEqual(requests[0].json?["name"] as? String, "Jens' MacBook")
-        XCTAssertEqual(requests[0].json?["platform"] as? String, "macos")
+        XCTAssertEqual(requests[0].json?["platform"] as? String, SyncPlatform.current.rawValue)
         XCTAssertEqual(requests[0].json?["installationId"] as? String, "inst-hash")
         XCTAssertEqual(requests[1].header("Authorization"), "Bearer syd_1")
         XCTAssertEqual(requests[2].header("Cookie"), "synclet_refresh=syr_refresh")

@@ -31,7 +31,6 @@ targets:
       - path: Synclet
         excludes:
           - "**/.*.swp"
-      - Shared
     dependencies:
       - package: SyncletKit
       - target: SyncletFileProvider
@@ -69,7 +68,6 @@ targets:
     platform: macOS
     sources:
       - SyncletFileProvider
-      - Shared
       # Written by the extension, read by the app ("Letzte Probleme").
       - Synclet/Core/ErrorLog.swift
     dependencies:

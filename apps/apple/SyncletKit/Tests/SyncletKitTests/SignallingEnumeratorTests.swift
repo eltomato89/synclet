@@ -1,15 +1,8 @@
 import FileProvider
 import XCTest
-@testable import Synclet
+@testable import SyncletKit
 
-/// `Shared/` code of the extension (compiled into the app as well).
-final class ExtensionSupportTests: XCTestCase {
-    func testIsAuthenticationFailure() {
-        XCTAssertTrue(AuthFailureSignal.isAuthenticationFailure(NSFileProviderError(.notAuthenticated)))
-        XCTAssertFalse(AuthFailureSignal.isAuthenticationFailure(NSFileProviderError(.serverUnreachable)))
-        XCTAssertFalse(AuthFailureSignal.isAuthenticationFailure(CocoaError(.fileWriteNoPermission)))
-    }
-
+final class SignallingEnumeratorTests: XCTestCase {
     func testSignallingEnumeratorReportsErrorsAndPassesResultsThrough() {
         let inner = FakeEnumerator(itemsError: NSFileProviderError(.notAuthenticated))
         var reported: [Error] = []

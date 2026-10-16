@@ -139,6 +139,7 @@ final class PinStoreTests: XCTestCase {
     }
 }
 
+#if os(macOS)   // needs .downloadEagerlyAndKeepDownloaded (macOS-only SDK symbol)
 final class PinPolicyTests: XCTestCase {
     private let keep = NSFileProviderContentPolicy.downloadEagerlyAndKeepDownloaded
 
@@ -165,6 +166,7 @@ final class PinPolicyTests: XCTestCase {
         XCTAssertEqual(PinPolicy.contentPolicy(forSpace: "personal", pins: pinned), .inherited)
     }
 }
+#endif
 
 final class ParentMapTests: XCTestCase {
     let roots: Set<String> = ["root"]
@@ -218,6 +220,7 @@ final class ParentMapTests: XCTestCase {
         XCTAssertNil(result)
     }
 
+#if os(macOS)   // needs .downloadEagerlyAndKeepDownloaded (macOS-only SDK symbol)
     func testMoveIntoAndOutOfAPinnedFolder() async throws {
         let map = ParentMap(fileURL: nil)
         map.record([
@@ -242,6 +245,7 @@ final class ParentMapTests: XCTestCase {
         let after = try await policy()
         XCTAssertEqual(after, .inherited)
     }
+#endif
 
     func testHopLimitAndCycles() async throws {
         let map = ParentMap(fileURL: nil)
@@ -370,6 +374,7 @@ final class ParentMapTests: XCTestCase {
 }
 
 /// Enumerator and extension behaviour with pins (Strategy B: explicit policy on every item).
+#if os(macOS)   // needs .downloadEagerlyAndKeepDownloaded (macOS-only SDK symbol)
 final class PinnedEnumerationTests: XCTestCase {
     var dir: URL!
     let keep = NSFileProviderContentPolicy.downloadEagerlyAndKeepDownloaded
@@ -909,3 +914,4 @@ final class PinnedEnumerationTests: XCTestCase {
         XCTAssertEqual(space.contentPolicy, keep)
     }
 }
+#endif
