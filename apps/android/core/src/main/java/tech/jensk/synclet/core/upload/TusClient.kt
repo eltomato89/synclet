@@ -1,6 +1,7 @@
 package tech.jensk.synclet.core.upload
 
 import java.io.File
+import java.io.IOException
 import java.util.Base64
 import kotlinx.serialization.SerializationException
 import okhttp3.HttpUrl
@@ -79,7 +80,7 @@ class TusClient(private val api: SyncApi) {
 
     /** The completing request carries the SyncItem; otherwise `X-Synclet-Item` + GET (§7.4). */
     private suspend fun published(response: Response): SyncItem {
-        val text = response.body.string()
+        val text = try { response.body.string() } catch (e: IOException) { throw SyncError.Transport(e) }
         if (text.isNotBlank()) {
             try { return SyncJson.decodeFromString(SyncItem.serializer(), text) } catch (e: SerializationException) { }
         }

@@ -4,14 +4,17 @@ import java.util.Base64
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import tech.jensk.synclet.core.api.SyncApi
+import tech.jensk.synclet.core.api.SyncError
 import tech.jensk.synclet.core.testing.F1
 import tech.jensk.synclet.core.testing.api
 import tech.jensk.synclet.core.testing.itemJson
@@ -72,5 +75,15 @@ class TusClientTest {
         server.enqueue(MockResponse().setResponseCode(200).setHeader("Upload-Offset", "42"))
         assertEquals(42L, tus.head(server.url("/api/sync/v1/uploads/u1")))
         assertEquals("HEAD", server.takeRequest().method)
+    }
+
+    @Test fun brokenCompletionBodyIsATransportError() = runBlocking {
+        val file = tmp.newFile().apply { writeText("ab") }
+        server.enqueue(MockResponse().setResponseCode(200).setBody(itemJson(F1, "a.txt"))
+            .setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY))
+        try {
+            tus.patch(server.url("/api/sync/v1/uploads/u1"), 0, file, 2)
+            fail()
+        } catch (e: SyncError.Transport) { }
     }
 }

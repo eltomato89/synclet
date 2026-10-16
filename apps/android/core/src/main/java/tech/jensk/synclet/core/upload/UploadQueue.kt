@@ -1,6 +1,7 @@
 package tech.jensk.synclet.core.upload
 
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -45,7 +46,9 @@ class UploadQueue(private val dir: File, private val clock: () -> Long = System:
         val part = File(dir, "$id.part")
         val size = withContext(Dispatchers.IO) {
             try {
-                source.open().use { input -> part.outputStream().use { out -> input.copyTo(out, 64 * 1024) } }
+                source.open().use { input ->
+                    FileOutputStream(part).use { out -> input.copyTo(out, 64 * 1024).also { out.fd.sync() } }
+                }
             } catch (e: Throwable) {
                 part.delete(); throw e
             }
@@ -71,7 +74,8 @@ class UploadQueue(private val dir: File, private val clock: () -> Long = System:
         if (waiting != null) {
             // Newest content wins; the base (ifMatch / chainAfter) of the waiting upload stays.
             withContext(Dispatchers.IO) { moveInto(workingCopy, copyFile(waiting.id)) }
-            val merged = waiting.copy(name = name, size = copyFile(waiting.id).length(), tusUrl = null, tusOffset = 0, sent = 0)
+            val merged = waiting.copy(name = name, size = copyFile(waiting.id).length(), tusUrl = null, tusOffset = 0, sent = 0,
+                attempts = 0, message = null)
             write(state.value.map { if (it.id == waiting.id) merged else it })
             return@withLock merged
         }
@@ -189,14 +193,32 @@ class UploadQueue(private val dir: File, private val clock: () -> Long = System:
     private suspend fun write(entries: List<UploadEntry>) {
         withContext(Dispatchers.IO) {
             val tmp = File(dir, "queue.json.tmp")
-            tmp.writeText(SyncJson.encodeToString(QueueFile.serializer(), QueueFile(VERSION, entries)))
+            FileOutputStream(tmp).use { out ->
+                out.write(SyncJson.encodeToString(QueueFile.serializer(), QueueFile(VERSION, entries)).toByteArray(Charsets.UTF_8))
+                out.fd.sync()                       // durable before it replaces the old file
+            }
             Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
         }
         state.value = entries
     }
 
+    /**
+     * Moves [source] onto [target] atomically: a rename, or (other file system) a synced copy to `<target>.part`
+     * renamed into place, so a crash never leaves a truncated live copy.
+     */
     private fun moveInto(source: File, target: File) {
-        if (!source.renameTo(target)) { source.copyTo(target, overwrite = true); source.delete() }
+        if (source.renameTo(target)) {
+            FileOutputStream(target, true).use { it.fd.sync() }
+            return
+        }
+        val part = File(target.path + ".part")
+        try {
+            source.inputStream().use { input -> FileOutputStream(part).use { out -> input.copyTo(out, 64 * 1024); out.fd.sync() } }
+            Files.move(part.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        } catch (e: Throwable) {
+            part.delete(); throw e
+        }
+        source.delete()
     }
 
     private companion object {

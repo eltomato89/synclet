@@ -35,6 +35,8 @@ class Uploader(
     suspend fun upload(entry: UploadEntry, onProgress: (Long) -> Unit = {}): UploadOutcome {
         val copy = queue.copyFile(entry.id)
         if (!copy.exists()) return UploadOutcome.Failed(UploadFailure.SOURCE_MISSING, null)
+        // Never push truncated content over the user's file.
+        if (copy.length() != entry.size) return UploadOutcome.Failed(UploadFailure.SOURCE_MISSING, "the upload copy is incomplete")
         return try {
             when (entry.kind) {
                 UploadKind.CREATE -> UploadOutcome.Done(create(entry, copy, entry.name, entry.parentId, onProgress), null)
@@ -54,8 +56,12 @@ class Uploader(
         else tus(entry, copy, TusTarget.Create(name, parentId), onProgress, restarted = false)
 
     private suspend fun replace(entry: UploadEntry, copy: File, onProgress: (Long) -> Unit): UploadOutcome {
-        val itemId = entry.itemId ?: return UploadOutcome.Failed(UploadFailure.OTHER, "replace without item")
-        val ifMatch = resolveIfMatch(entry) ?: return UploadOutcome.Retry("waiting for the previous upload of this file")
+        // Already decided (an earlier run hit 412): finish the conflict copy, tus resumes its Create upload.
+        entry.conflictCopyName?.let { copyName ->
+            return UploadOutcome.Done(create(entry, copy, copyName, entry.parentId, onProgress), copyName)
+        }
+        if (entry.itemId == null || entry.ifMatch == null) return UploadOutcome.Failed(UploadFailure.OTHER, "replace without base")
+        val (itemId, ifMatch) = resolveBase(entry) ?: return UploadOutcome.Retry("waiting for the previous upload of this file")
         return try {
             val item = if (copy.length() <= threshold) api.replaceContent(itemId, copy, ifMatch, entry.modifiedAt, onProgress)
                        else tus(entry, copy, TusTarget.Replace(itemId, ifMatch), onProgress, restarted = false)
@@ -65,8 +71,12 @@ class Uploader(
                 // Changed on the server meanwhile: keep our content as a conflict copy next to it (§6.3).
                 e.status == 412 && e.code == ErrorCodes.CONFLICT -> {
                     val copyName = ConflictNaming.name(entry.name, deviceName, conflictWord, now())
-                    val fresh = queue.update(entry.id) { it.copy(tusUrl = null, tusOffset = 0, sent = 0) } ?: throw RemovedSignal()
-                    UploadOutcome.Done(create(fresh, copy, copyName, e.item?.parentId ?: entry.parentId, onProgress), copyName)
+                    val parentId = e.item?.parentId ?: entry.parentId
+                    // Persist the decision first: an interrupted copy upload must resume as the conflict copy.
+                    val fresh = queue.update(entry.id) {
+                        it.copy(conflictCopyName = copyName, parentId = parentId, tusUrl = null, tusOffset = 0, sent = 0)
+                    } ?: throw RemovedSignal()
+                    UploadOutcome.Done(create(fresh, copy, copyName, parentId, onProgress), copyName)
                 }
                 // The file was deleted meanwhile: the content is not lost, it comes back as a new file (Spec-Klärung 9).
                 e.status == 404 && e.code == ErrorCodes.NOT_FOUND -> {
@@ -78,15 +88,22 @@ class Uploader(
         }
     }
 
-    /** A replace chained after an earlier upload of the same file is based on that upload's result. */
-    private suspend fun resolveIfMatch(entry: UploadEntry): String? {
-        val previousId = entry.chainAfter ?: return entry.ifMatch
-        val previous = queue.entry(previousId) ?: return entry.ifMatch
+    /**
+     * Target file and `If-Match` of a replace. One chained after an earlier upload of the same file is based on
+     * that upload's result: the same file at its new etag, or the file it was recreated as (deleted meanwhile).
+     * After a conflict copy or a failure the entry keeps its own base. Null while the earlier upload is pending.
+     */
+    private suspend fun resolveBase(entry: UploadEntry): Pair<String, String>? {
+        val own = entry.itemId!! to entry.ifMatch!!
+        val previousId = entry.chainAfter ?: return own
+        val previous = queue.entry(previousId) ?: return own
         return when (previous.status) {
-            UploadStatus.DONE ->
-                if (previous.conflictCopyName == null && previous.resultItemId == entry.itemId) previous.resultEtag ?: entry.ifMatch
-                else entry.ifMatch
-            UploadStatus.FAILED -> entry.ifMatch
+            UploadStatus.DONE -> {
+                val resultId = previous.resultItemId
+                val resultEtag = previous.resultEtag
+                if (previous.conflictCopyName == null && resultId != null && resultEtag != null) resultId to resultEtag else own
+            }
+            UploadStatus.FAILED -> own
             UploadStatus.WAITING, UploadStatus.UPLOADING -> null
         }
     }
@@ -122,7 +139,8 @@ class Uploader(
             } catch (e: SyncError.Http) {
                 when (e.status) {
                     404, 410 -> {
-                        if (restarted) throw e
+                        // Our own fresh upload vanished again: a server problem, not a deleted file (no recreate).
+                        if (restarted) throw SyncError.Transport(java.io.IOException("tus upload vanished (HTTP ${e.status})", e))
                         val fresh = queue.update(entry.id) { it.copy(tusUrl = null, tusOffset = 0, sent = 0) } ?: throw RemovedSignal()
                         return tus(fresh, copy, target, onProgress, restarted = true)
                     }

@@ -21,7 +21,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import tech.jensk.synclet.core.api.SyncError
 import tech.jensk.synclet.core.api.SyncItem
+import tech.jensk.synclet.core.api.TokenSource
 import tech.jensk.synclet.core.testing.F1
 import tech.jensk.synclet.core.testing.F2
 import tech.jensk.synclet.core.testing.api
@@ -116,6 +118,20 @@ class UploadWorkerTest {
         assertTrue(queue.entries.value.none { it.accountKey == "gone" })
         assertFalse(queue.copyFile(e.id).exists())
         assertTrue(queue.copyFile(kept.id).exists())
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test fun unexpectedExceptionLeavesTheEntryWaiting() = runBlocking {
+        val broken = object : TokenSource {
+            override fun token(): String? = throw IllegalStateException("keystore exploded")
+            override fun onUnauthorized(sentToken: String, error: SyncError.Http) {}
+        }
+        env.uploaders = { Uploader(server.api(broken), env.uploadQueue, "Pixel 9", "Konflikt") }
+        val e = enqueue("a.txt")
+        assertEquals(ListenableWorker.Result.retry(), worker().doWork())
+        val r = queue.entry(e.id)!!
+        assertEquals(UploadStatus.WAITING, r.status)
+        assertEquals(1, r.attempts)
         assertEquals(0, server.requestCount)
     }
 }

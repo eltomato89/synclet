@@ -4,9 +4,12 @@ import java.io.File
 import java.time.ZoneOffset
 import java.time.ZonedDateTime
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
+import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -283,4 +286,86 @@ class UploaderTest {
         assertNull(queue.entry(e.id))
         assertEquals(2, server.requestCount)
     }
+
+    // --- fix round 1 ---
+
+    @Test fun interruptedConflictCopyResumesAsConflictCopy() = runBlocking {
+        val slow = uploader(server.api(client = OkHttpClient.Builder().readTimeout(300, TimeUnit.MILLISECONDS).build()))
+        val e = replace("0123456789", ifMatch = "v1")
+        val copyName = "a (Konflikt Pixel 9 2026-10-16 09-05).txt"
+        server.error(412, "conflict", itemJson = itemJson(F1, "a.txt", parentId = D1, version = 2))
+        tusCreated("/api/sync/v1/uploads/u2"); tusOffset(4)
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.NO_RESPONSE))
+        assertTrue(slow.upload(queue.claimNext("k")!!) is UploadOutcome.Retry)
+        val interrupted = queue.entry(e.id)!!
+        assertEquals(copyName, interrupted.conflictCopyName)
+        assertEquals(D1, interrupted.parentId)
+        assertTrue(interrupted.tusUrl!!.endsWith("/api/sync/v1/uploads/u2"))
+        assertEquals(4L, interrupted.tusOffset)
+        assertEquals("POST", server.takeRequest().method)            // tus create of the replace → 412
+        val createCopy = server.takeRequest()
+        assertEquals("name " + b64(copyName) + ",parentId " + b64(D1) + ",onConflict " + b64("rename"),
+            createCopy.getHeader("Upload-Metadata"))
+        repeat(2) { server.takeRequest() }
+
+        tusHead(4); tusOffset(8); server.json(itemJson(F2, copyName, parentId = D1, size = 10))
+        val outcome = slow.upload(queue.entry(e.id)!!)
+        assertTrue(outcome is UploadOutcome.Done)
+        assertEquals(copyName, (outcome as UploadOutcome.Done).conflictCopyName)
+        assertEquals(F2, outcome.item.id)
+        val head = server.takeRequest()
+        assertEquals("HEAD", head.method)
+        assertEquals("/api/sync/v1/uploads/u2", head.path)
+        assertEquals("4", server.takeRequest().getHeader("Upload-Offset"))
+        assertEquals("8", server.takeRequest().getHeader("Upload-Offset"))
+        assertEquals(7, server.requestCount)
+    }
+
+    @Test fun smallInterruptedConflictCopyGoesStraightToTheCopy() = runBlocking {
+        val e = replace("hello", ifMatch = "v1")
+        val copyName = "a (Konflikt Pixel 9 2026-10-16 09-05).txt"
+        queue.update(e.id) { it.copy(conflictCopyName = copyName, parentId = D1) }
+        server.json(itemJson(F2, copyName, parentId = D1), 201)
+        assertEquals(copyName, (uploader.upload(queue.claimNext("k")!!) as UploadOutcome.Done).conflictCopyName)
+        val post = server.takeRequest()
+        assertEquals("POST", post.method)
+        assertEquals(copyName, post.requestUrl!!.queryParameter("name"))
+        assertEquals(D1, post.requestUrl!!.queryParameter("parentId"))
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun restartedTusUploadVanishingIsRetriedNotRecreated() = runBlocking {
+        replace("0123456789", ifMatch = "v1")
+        tusCreated("/api/sync/v1/uploads/u1"); server.enqueue(MockResponse().setResponseCode(404))
+        tusCreated("/api/sync/v1/uploads/u2"); server.enqueue(MockResponse().setResponseCode(404))
+        assertTrue(uploader.upload(queue.claimNext("k")!!) is UploadOutcome.Retry)
+        assertEquals(4, server.requestCount)
+        val paths = (0 until 4).map { server.takeRequest().let { r -> r.method + " " + r.path } }
+        assertEquals(listOf("POST /api/sync/v1/uploads", "PATCH /api/sync/v1/uploads/u1",
+            "POST /api/sync/v1/uploads", "PATCH /api/sync/v1/uploads/u2"), paths)
+    }
+
+    @Test fun chainedReplaceAfterRecreateTargetsTheNewFile() = runBlocking {
+        val previous = replace("one", ifMatch = "v5")
+        queue.claimNext("k")
+        queue.markDone(previous.id, item(F2, version = 1), null)     // recreated as F2 (404 → new file)
+        replace("two", ifMatch = "v5", chainAfter = previous.id)
+        server.json(itemJson(F2, "a.txt", version = 2))
+        assertEquals(UploadOutcome.Done(item(F2, version = 2), null), uploader.upload(queue.claimNext("k")!!))
+        val put = server.takeRequest()
+        assertEquals("PUT", put.method)
+        assertEquals("/api/sync/v1/items/$F2/content", put.path)
+        assertEquals("\"v1\"", put.getHeader("If-Match"))
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun truncatedCopyIsNeverUploaded() = runBlocking {
+        val e = replace("hello", ifMatch = "v1")
+        queue.copyFile(e.id).writeText("hel")
+        val outcome = uploader.upload(queue.claimNext("k")!!)
+        assertEquals(UploadFailure.SOURCE_MISSING, (outcome as UploadOutcome.Failed).failure)
+        assertEquals(0, server.requestCount)
+    }
+
+    private fun b64(s: String) = java.util.Base64.getEncoder().encodeToString(s.toByteArray(Charsets.UTF_8))
 }

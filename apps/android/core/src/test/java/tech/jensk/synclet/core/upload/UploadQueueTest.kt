@@ -171,5 +171,16 @@ class UploadQueueTest {
         assertFalse(q.hasWork("k"))
     }
 
+    @Test fun coalescedEntryStartsWithFreshAttempts() = runBlocking {
+        val q = queue()
+        val first = q.enqueueReplace("k", F1, "root", "", "a.txt", "v3", tmp.newFile().apply { writeText("one") }, null)
+        q.claimNext("k"); q.markRetry(first.id, "net"); q.claimNext("k"); q.markRetry(first.id, "net")
+        val merged = q.enqueueReplace("k", F1, "root", "", "a.txt", "v3", tmp.newFile().apply { writeText("two") }, null)
+        assertEquals(first.id, merged.id)
+        assertEquals(0, merged.attempts)
+        assertNull(merged.message)
+        assertEquals(0, q.entry(first.id)!!.attempts)
+    }
+
     private fun item(id: String, version: Long = 1) = SyncJson.decodeFromString(SyncItem.serializer(), itemJson(id, "a", version = version))
 }

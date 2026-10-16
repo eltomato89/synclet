@@ -5,6 +5,7 @@ import android.os.SystemClock
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -25,7 +26,17 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         foreground(null, 0)
         while (true) {
             val entry = queue.claimNext(accountKey) ?: break
-            when (val outcome = transfer(queue, uploader, entry)) {
+            var unexpected = false
+            val outcome = try {
+                transfer(queue, uploader, entry)
+            } catch (e: CancellationException) {
+                throw e                           // stopped: the entry stays UPLOADING and is resumed first next time
+            } catch (e: Exception) {
+                // Unexpected (not a SyncError): never leave the entry stuck in UPLOADING.
+                unexpected = true
+                UploadOutcome.Retry(e.message ?: e.javaClass.simpleName)
+            }
+            when (outcome) {
                 is UploadOutcome.Done -> {
                     queue.markDone(entry.id, outcome.item, outcome.conflictCopyName)
                     env.onUploadFinished(entry, outcome.item)
@@ -39,7 +50,7 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                 is UploadOutcome.Retry -> {
                     val attempts = queue.markRetry(entry.id, outcome.message)
                     if (attempts >= MAX_ATTEMPTS) {
-                        queue.markFailed(entry.id, UploadFailure.NETWORK, outcome.message)
+                        queue.markFailed(entry.id, if (unexpected) UploadFailure.OTHER else UploadFailure.NETWORK, outcome.message)
                         UploadNotifications.failed(applicationContext, entry.name)
                     } else {
                         return Result.retry()
