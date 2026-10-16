@@ -426,3 +426,55 @@ final class FakeUploadDriver: UploadDriving {
     func cancel(id: String) async { cancelled.append(id) }
     func handleBackgroundEvents(completion: @escaping @Sendable () -> Void) { completion() }
 }
+
+// MARK: - Search, recent, trash, share links
+
+/// Fixtures for the search, recent, trash and share link tests (Task 8).
+enum AppFixtures {
+    static let base = URL(string: "https://files.test")!
+
+    static func client() -> SyncAPIClient {
+        SyncAPIClient(baseURL: base, token: "syd_test", session: MockURLProtocol.session())
+    }
+
+    static func query(_ request: RecordedRequest) -> [String: String] {
+        let items = URLComponents(url: request.request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+        return Dictionary(items.map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { $1 })
+    }
+
+    static func ok(_ value: some Encodable, status: Int = 200) -> MockResponse {
+        .data(status, Items.json(value), contentType: "application/json")
+    }
+
+    static func hit(_ name: String, snippet: String? = nil) -> SyncSearchHit {
+        SyncSearchHit(item: Items.file(name), path: "/\(name)", snippet: snippet, matched: "name")
+    }
+
+    static func trashEntry(_ name: String, id: String? = nil) -> TrashEntry {
+        TrashEntry(id: id ?? "t-\(name)", itemId: "f-\(name)", type: .file, name: name, originalPath: "/Docs/\(name)",
+                   size: 3, deletedAt: "2026-10-10T10:00:00.000Z", expiresAt: nil, itemCount: 1)
+    }
+
+    static func share(id: String = "s1", item: SyncItem, url: String = "/s/tok", hasPassword: Bool = false,
+                      expiresAt: String? = nil, allowDownload: Bool = true, allowUpload: Bool = false,
+                      createdAt: String = "2026-10-10T10:00:00.000Z", revokedAt: String? = nil,
+                      itemTrashed: Bool = false) -> ShareLink {
+        ShareLink(id: id, itemId: item.id, itemName: item.name, itemType: item.type, url: url,
+                  hasPassword: hasPassword, expiresAt: expiresAt, allowDownload: allowDownload,
+                  allowUpload: allowUpload, createdAt: createdAt, revokedAt: revokedAt, hits: 0,
+                  itemTrashed: itemTrashed)
+    }
+}
+
+/// A value shared between a test and the `MockURLProtocol` handler (which runs off the main actor).
+final class LockedBox<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Value
+
+    init(_ value: Value) { stored = value }
+
+    var value: Value {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
+}

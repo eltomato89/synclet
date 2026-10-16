@@ -34,6 +34,7 @@ struct FolderView: View {
     @State private var opening: SyncItem?
     @State private var showsPhotoPicker = false
     @State private var showsFileImporter = false
+    @State private var sharing: SyncItem?
 
     init(environment: AppEnvironment, accountKey: String, api: SyncAPIClient, folder: FolderRoute, root: FolderRoute) {
         self.environment = environment
@@ -89,6 +90,9 @@ struct FolderView: View {
             }
             .sheet(item: $opening) { item in
                 OpenFileSheet(item: item, api: model.api)
+            }
+            .sheet(item: $sharing) { item in
+                ShareLinkView(item: item, api: model.api)
             }
             .confirmationDialog(deleteTitle, isPresented: showsDeleteConfirmation, titleVisibility: .visible) {
                 Button("Move to Trash", role: .destructive) {
@@ -288,6 +292,8 @@ struct FolderView: View {
 
     private func perform(_ action: ItemAction, _ item: SyncItem) {
         switch action {
+        case .share:
+            sharing = item
         case .rename:
             model.fieldError = nil
             nameRequest = .rename(item)

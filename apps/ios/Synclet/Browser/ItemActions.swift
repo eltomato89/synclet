@@ -4,6 +4,7 @@ import SyncletKit
 /// Actions on an item in the browser (context menu, swipe actions). Later tasks add cases
 /// (Task 8: „Link teilen“) – add the case, its label and its place in ``available(for:)``.
 enum ItemAction: String, Hashable, CaseIterable, Identifiable {
+    case share
     case rename
     case move
     case delete
@@ -14,6 +15,7 @@ enum ItemAction: String, Hashable, CaseIterable, Identifiable {
     static func available(for item: SyncItem) -> [ItemAction] {
         allCases.filter { action in
             switch action {
+            case .share: return item.capabilities.read
             case .rename: return item.capabilities.rename
             case .move: return item.capabilities.move
             case .delete: return item.capabilities.delete
@@ -23,6 +25,7 @@ enum ItemAction: String, Hashable, CaseIterable, Identifiable {
 
     var title: LocalizedStringKey {
         switch self {
+        case .share: return "Share Link"
         case .rename: return "Rename"
         case .move: return "Move"
         case .delete: return "Move to Trash"
@@ -31,6 +34,7 @@ enum ItemAction: String, Hashable, CaseIterable, Identifiable {
 
     var systemImage: String {
         switch self {
+        case .share: return "link"
         case .rename: return "pencil"
         case .move: return "folder"
         case .delete: return "trash"
@@ -39,7 +43,7 @@ enum ItemAction: String, Hashable, CaseIterable, Identifiable {
 
     var role: ButtonRole? { self == .delete ? .destructive : nil }
 
-    /// Accessibility identifier (`item.rename`, `item.move`, `item.delete`).
+    /// Accessibility identifier (`item.share`, `item.rename`, `item.move`, `item.delete`).
     var identifier: String { "item.\(rawValue)" }
 }
 

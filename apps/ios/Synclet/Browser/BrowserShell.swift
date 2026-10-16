@@ -7,21 +7,27 @@ import SyncletKit
 enum BrowserDestination: String, Hashable, Identifiable, CaseIterable {
     case files
     case uploads
+    case recent
+    case search
+    case trash
 
     var id: String { rawValue }
 
     /// iPhone tabs (before „Mehr“).
-    static let tabs: [BrowserDestination] = [.files]
+    static let tabs: [BrowserDestination] = [.files, .recent, .search]
     /// iPhone „Mehr“ tab, above „Konten“.
-    static let more: [BrowserDestination] = [.uploads]
+    static let more: [BrowserDestination] = [.trash, .uploads]
     /// iPad sidebar, below each account.
-    static let sidebar: [BrowserDestination] = [.files, .uploads]
+    static let sidebar: [BrowserDestination] = [.files, .recent, .search, .trash, .uploads]
 
     /// Tab title (iPhone).
     var tabTitle: LocalizedStringKey {
         switch self {
         case .files: return "Files"
         case .uploads: return "Uploads"
+        case .recent: return "Recent"
+        case .search: return "Search"
+        case .trash: return "Trash"
         }
     }
 
@@ -30,12 +36,18 @@ enum BrowserDestination: String, Hashable, Identifiable, CaseIterable {
         switch self {
         case .files: return "My Files"
         case .uploads: return "Uploads"
+        case .recent: return "Recent"
+        case .search: return "Search"
+        case .trash: return "Trash"
         }
     }
 
     var systemImage: String {
         switch self {
         case .files: return "folder"
+        case .recent: return "clock"
+        case .search: return "magnifyingglass"
+        case .trash: return "trash"
         case .uploads: return "arrow.up.circle"
         }
     }
@@ -226,6 +238,12 @@ struct DestinationView: View {
             } else {
                 NavigationStack { UploadsView(accountKey: entry.id) }
             }
+        case .recent:
+            RecentView(environment: environment, entry: entry, accountMenu: accountMenu, embedded: embedded)
+        case .search:
+            SearchView(environment: environment, entry: entry, accountMenu: accountMenu, embedded: embedded)
+        case .trash:
+            TrashView(environment: environment, entry: entry, accountMenu: accountMenu, embedded: embedded)
         }
     }
 }
@@ -236,6 +254,9 @@ struct FolderStack: View {
     let entry: AccountEntry
     var accountMenu: AccountMenu?
     @State private var path: [FolderRoute] = []
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    /// Search inside the folders (iPad; Task 8).
+    @State private var search: SearchModel?
 
     /// Root of the `personal` space.
     private var root: FolderRoute {
@@ -248,8 +269,10 @@ struct FolderStack: View {
             Group {
                 if let api = environment.client(for: entry.id) {
                     FolderView(environment: environment, accountKey: entry.id, api: api, folder: root, root: root)
+                        .folderSearch(search, folder: root) { path.append($0) }
                         .navigationDestination(for: FolderRoute.self) { route in
                             FolderView(environment: environment, accountKey: entry.id, api: api, folder: route, root: root)
+                                .folderSearch(search, folder: route) { path.append($0) }
                         }
                 } else {
                     ContentUnavailableView("Sign-in required", systemImage: "person.crop.circle.badge.exclamationmark")
@@ -260,6 +283,11 @@ struct FolderStack: View {
                 if let accountMenu {
                     ToolbarItem(placement: .topBarLeading) { accountMenu }
                 }
+            }
+        }
+        .onAppear {
+            if sizeClass != .compact, search == nil, let api = environment.client(for: entry.id) {
+                search = SearchModel(api: api)
             }
         }
     }
