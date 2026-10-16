@@ -323,6 +323,9 @@ public final class SyncAPIClient: Sendable {
     /// Path below `<origin>/api/sync/v1`.
     private func sync(_ segments: [String]) -> [String] { ["sync", "v1"] + segments }
 
+    /// Path below `<origin>/api` (not below the Sync API).
+    func api(_ segments: [String]) -> [String] { segments }
+
     /// Strict encoding of path segments and query values (also `+`, `&`, `/`).
     private static let strictAllowed: CharacterSet = {
         var set = CharacterSet.alphanumerics
@@ -376,7 +379,7 @@ public final class SyncAPIClient: Sendable {
         }
     }
 
-    private func send<T: Decodable>(_ method: Method, _ segments: [String], query: [(String, String?)] = [],
+    func send<T: Decodable>(_ method: Method, _ segments: [String], query: [(String, String?)] = [],
                                     body: (any Encodable)? = nil, headers: [String: String] = [:]) async throws -> T {
         let data = try await sendRaw(method, segments, query: query, body: body, headers: headers)
         do {
@@ -386,17 +389,19 @@ public final class SyncAPIClient: Sendable {
         }
     }
 
-    private func sendNoContent(_ method: Method, _ segments: [String], body: (any Encodable)? = nil) async throws {
+    func sendNoContent(_ method: Method, _ segments: [String], body: (any Encodable)? = nil) async throws {
         _ = try await sendRaw(method, segments, query: [], body: body, headers: [:])
     }
 
-    private func sendRaw(_ method: Method, _ segments: [String], query: [(String, String?)],
+    func sendRaw(_ method: Method, _ segments: [String], query: [(String, String?)],
                          body: (any Encodable)?, headers: [String: String]) async throws -> Data {
         var request = try await makeRequest(method, segments, query: query)
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
         if let body {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONEncoder().encode(body)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            request.httpBody = try encoder.encode(body)
         }
         let (data, response) = try await perform { try await self.session.data(for: request) }
         let http = try Self.httpResponse(response)
