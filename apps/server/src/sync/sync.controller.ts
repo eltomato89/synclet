@@ -358,6 +358,6 @@ export class SyncController {
   async remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     const { space, item: row } = await this.resolve(user, id, 'write');
     if (!row) throw new SyncError('forbidden', 'root cannot be deleted');
-    await this.files.remove(space, row.id);
+    await this.files.remove(space, row.id, user.id);
   }
 }

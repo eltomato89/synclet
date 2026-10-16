@@ -16,7 +16,7 @@ import { readDisk } from '../indexer/disk';
 import { ItemStore } from '../journal/item-store';
 import { JournalService, Tx } from '../journal/journal.service';
 import { PrismaService, TX_OPTS } from '../prisma/prisma.service';
-import { SerializerService } from '../sync/serializer.service';
+import { SerializerService, type ItemView } from '../sync/serializer.service';
 import { toSyncId, UUID } from '../sync/sync-ids';
 import { VersionsService } from '../versions/versions.service';
 
@@ -61,17 +61,28 @@ export class TrashService {
 
   private trashDir(id: string) { return path.resolve(this.config.metaRoot, 'trash', id); }
 
-  private toWire(e: TrashEntry): TrashEntryWire {
+  /** `apiSpaceId`: the entry's space as the caller sees it (`personal` or the space uuid). */
+  private toWire(e: TrashEntry, apiSpaceId: string): TrashEntryWire {
     return {
       id: e.id, itemId: toSyncId({ id: e.itemId, type: e.type }), type: e.type, name: e.name, originalPath: e.originalPath,
       size: Number(e.size), deletedAt: e.deletedAt.toISOString(), expiresAt: e.expiresAt?.toISOString() ?? null,
-      itemCount: manifestOf(e).length,
+      itemCount: manifestOf(e).length, spaceId: apiSpaceId, deletedBy: e.deletedBy,
     };
   }
 
-  async list(space: IndexSpace): Promise<TrashEntryWire[]> {
-    const rows = await this.prisma.trashEntry.findMany({ where: { spaceId: space.id }, orderBy: [{ deletedAt: 'desc' }, { id: 'asc' }] });
-    return rows.map((e) => this.toWire(e));
+  /** Entries of the given spaces (with the caller's API id of each), newest first. */
+  async list(space: IndexSpace | Array<{ space: IndexSpace; apiSpaceId: string }>): Promise<TrashEntryWire[]> {
+    const spaces = Array.isArray(space) ? space : [{ space, apiSpaceId: space.kind === 'personal' ? 'personal' : space.id }];
+    if (spaces.length === 0) return [];
+    const apiIds = new Map(spaces.map((s) => [s.space.id, s.apiSpaceId]));
+    const rows = await this.prisma.trashEntry.findMany({ where: { spaceId: { in: [...apiIds.keys()] } }, orderBy: [{ deletedAt: 'desc' }, { id: 'asc' }] });
+    return rows.map((e) => this.toWire(e, apiIds.get(e.spaceId)!));
+  }
+
+  /** Space id of a trash entry (null for an unknown or malformed id); the caller checks access to it. */
+  async spaceOf(trashId: string): Promise<string | null> {
+    if (!UUID.test(trashId)) return null;
+    return (await this.prisma.trashEntry.findUnique({ where: { id: trashId }, select: { spaceId: true } }))?.spaceId ?? null;
   }
 
   private async find(space: IndexSpace, trashId: string): Promise<TrashEntry> {
@@ -99,7 +110,7 @@ export class TrashService {
    * copied (outside the lock) into an ignored temp folder in the target folder, then published.
    * Nothing existing is ever replaced; on failure before commit the trash entry stays intact.
    */
-  async restore(space: IndexSpace, trashId: string): Promise<RestoreResult> {
+  async restore(space: IndexSpace, trashId: string, view?: ItemView): Promise<RestoreResult> {
     const entry = await this.find(space, trashId);
     if (this.claim([entry.id]).length === 0) throw busyError();
     try {
@@ -115,7 +126,7 @@ export class TrashService {
             if (copy) await rmdir(copy.tmp).catch((e) => this.log.warn(`cannot remove ${copy?.tmp}: ${String(e)}`));
             copy = null;
             await this.removeStore(entry);
-            const [item] = await this.serializer.toSyncItems(space, [outcome.done.item]);
+            const [item] = await this.serializer.toSyncItems(space, [outcome.done.item], view);
             return { item, restoredTo: outcome.done.restoredTo, renamed: outcome.done.renamed };
           }
           // Different file system (or the target folder changed since the last copy): copy first.

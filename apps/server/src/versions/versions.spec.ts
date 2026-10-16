@@ -1,7 +1,8 @@
 import fsp, { chmod, link, mkdir, readdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
-import { createTestApp, createTestUser, personalSpace, TestContext } from '../../test/context';
+import { createTestApp, createTestSpace, createTestUser, personalSpace, TestContext } from '../../test/context';
+import { AuthService } from '../auth/auth.service';
 import type { AppConfig } from '../config';
 import type { IndexSpace, IndexUser } from '../common/types';
 import { DerivativesGc } from '../derivatives/derivatives-gc';
@@ -541,6 +542,40 @@ describe('Versions HTTP API', () => {
     expect((await api('GET', `/items/${item.id}/versions`)).json().map((x: { version: number }) => x.version)).toEqual([2, 1]);
     expect((await api('GET', `/items/${item.id}/versions/00000000-0000-4000-8000-000000000000/content`)).statusCode).toBe(404);
     expect((await api('GET', '/capabilities')).json()).toEqual({ versions: true, office: { enabled: true, url: 'https://office.example.com' } });
+  });
+
+  it('versions in a team space: stored under the space id, read members list and download, only write members restore', async () => {
+    await start(true);
+    const jens = await ctx.prisma.user.findFirstOrThrow({ where: { username: 'jens' } });
+    const team = await createTestSpace(ctx, 'Team');
+    const reader = await createTestUser(ctx, 'carol');
+    const outsider = await createTestUser(ctx, 'eve');
+    await ctx.prisma.spaceMember.createMany({ data: [{ spaceId: team.id, userId: jens.id, role: 'write' }, { spaceId: team.id, userId: reader.id, role: 'read' }] });
+    const tokenOf = async (id: string) => ctx.app.get(AuthService).signAccess(await ctx.prisma.user.findUniqueOrThrow({ where: { id } }));
+    const carol = await tokenOf(reader.id);
+    const eve = await tokenOf(outsider.id);
+    const as = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
+
+    const item = (await api('POST', `/items/upload?parentId=r_${team.id}&name=plan.txt`, { body: 'v1 team' })).json();
+    expect((await api('PUT', `/items/${item.id}/content`, { body: 'v2', headers: { 'if-match': '"v1"' } })).statusCode).toBe(200);
+    const [v] = (await api('GET', `/items/${item.id}/versions`)).json();
+    expect(v).toMatchObject({ version: 1, size: 7 });
+    const row = await ctx.prisma.fileVersion.findUniqueOrThrow({ where: { id: v.id } });
+    expect(row.spaceId).toBe(team.id);
+    expect(row.storePath.startsWith(path.join(ctx.config.metaRoot, 'versions', team.id, item.id.slice(2)) + path.sep)).toBe(true);
+
+    expect((await api('GET', `/items/${item.id}/versions`, as(carol))).json()).toHaveLength(1);
+    expect((await api('GET', `/items/${item.id}/versions/${v.id}/content`, as(carol))).body).toBe('v1 team');
+    const denied = await api('POST', `/items/${item.id}/versions/${v.id}/restore`, as(carol));
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json().code).toBe('forbidden');
+    for (const [m, u] of [['GET', `/items/${item.id}/versions`], ['GET', `/items/${item.id}/versions/${v.id}/content`], ['POST', `/items/${item.id}/versions/${v.id}/restore`]]) {
+      expect((await api(m, u, as(eve))).statusCode).toBe(404);
+    }
+    const restored = await api('POST', `/items/${item.id}/versions/${v.id}/restore`);
+    expect(restored.statusCode).toBe(200);
+    expect(restored.json()).toMatchObject({ id: item.id, version: 3, spaceId: team.id });
+    expect((await api('GET', `/items/${item.id}/content`)).body).toBe('v1 team');
   });
 
   it('a failed capture answers 500 and keeps the current content', async () => {

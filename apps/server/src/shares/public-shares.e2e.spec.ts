@@ -3,7 +3,8 @@ import { mkdir, rename, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import * as yauzl from 'yauzl';
-import { createTestApp, createTestUser, personalSpace, TestContext } from '../../test/context';
+import { createTestApp, createTestSpace, createTestUser, personalSpace, TestContext } from '../../test/context';
+import { AuthService } from '../auth/auth.service';
 import { RateLimiter } from '../auth/rate-limit';
 import { DerivedStore } from '../derivatives/derived-store';
 import { FilesService } from '../files/files.service';
@@ -92,6 +93,75 @@ describe('Share links', () => {
     const top = await upload('root', 'top.txt', 'top');
     return { P, A, sub, empty, a, x, B, secret, bx, Ax, ax, top };
   }
+
+  describe('in team spaces', () => {
+    const as = (t: string, method: string, url: string, payload?: unknown) =>
+      ctx.app.inject({ method: method as 'GET', url: `/api${url}`, headers: { authorization: `Bearer ${t}` }, ...(payload !== undefined ? { payload: payload as object } : {}) });
+    const tokenOf = async (id: string) => ctx.app.get(AuthService).signAccess(await ctx.prisma.user.findUniqueOrThrow({ where: { id } }));
+
+    it('create needs write; the link stops working (404) once its creator loses write in the space, and works again after', async () => {
+      const team = await createTestSpace(ctx, 'Team');
+      const alice = await createTestUser(ctx, 'alice');
+      const carol = await createTestUser(ctx, 'carol');
+      await ctx.prisma.spaceMember.createMany({ data: [
+        { spaceId: team.id, userId: alice.id, role: 'write' },
+        { spaceId: team.id, userId: carol.id, role: 'read' },
+        { spaceId: team.id, userId: userId, role: 'write' },
+      ] });
+      const aliceT = await tokenOf(alice.id); const carolT = await tokenOf(carol.id);
+      const file = (await ctx.app.inject({ method: 'POST', url: `/api/sync/v1/items/upload?parentId=r_${team.id}&name=f.txt`, headers: { authorization: `Bearer ${aliceT}`, 'content-type': 'application/octet-stream' }, body: 'team bytes' })).json();
+      expect(file.spaceId).toBe(team.id);
+
+      // read members cannot share (403), outsiders get 404
+      const denied = await as(carolT, 'POST', '/shares', { itemId: file.id });
+      expect(denied.statusCode).toBe(403);
+      expect(denied.json().code).toBe('forbidden');
+      const eve = await createTestUser(ctx, 'eve');
+      expect((await as(await tokenOf(eve.id), 'POST', '/shares', { itemId: file.id })).statusCode).toBe(404);
+
+      const created = await as(aliceT, 'POST', '/shares', { itemId: file.id });
+      expect(created.statusCode).toBe(201);
+      const link = created.json() as ShareLinkWire;
+      expect(link).toMatchObject({ itemId: file.id, itemName: 'f.txt', spaceId: team.id });
+      const shareToken = link.url.split('/s/')[1];
+      expect((await pub('GET', shareToken)).statusCode).toBe(200);
+      expect((await pub('GET', `${shareToken}/items/${file.id}/content`)).body).toBe('team bytes');
+
+      // the owner list shows only one's own links; jens (another writer) does not see alice's
+      expect((await as(aliceT, 'GET', '/shares')).json()).toEqual([expect.objectContaining({ id: link.id, spaceId: team.id })]);
+      expect((await api('GET', '/shares')).json()).toEqual([]);
+      // the admin list names the space
+      const admin = (await api('GET', '/admin/shares')).json();
+      expect(admin).toEqual([expect.objectContaining({ id: link.id, owner: { id: alice.id, username: 'alice' }, space: { id: team.id, name: 'Team', kind: 'shared' } })]);
+
+      // alice is downgraded to read: the link is dead (404 like a revoked one)
+      await ctx.prisma.spaceMember.updateMany({ where: { spaceId: team.id, userId: alice.id }, data: { role: 'read' } });
+      expect((await pub('GET', shareToken)).statusCode).toBe(404);
+      // and removed entirely
+      await ctx.prisma.spaceMember.deleteMany({ where: { spaceId: team.id, userId: alice.id } });
+      const gone = await pub('GET', shareToken);
+      expect(gone.statusCode).toBe(404);
+      expect(gone.json().code).toBe('not_found');
+      expect((await pub('GET', `${shareToken}/items/${file.id}/content`)).statusCode).toBe(404);
+      // alice can still revoke her link, but not rotate or change it
+      expect((await as(aliceT, 'POST', `/shares/${link.id}/rotate`)).statusCode).toBe(404);
+      // write access again: the link works again
+      await ctx.prisma.spaceMember.create({ data: { spaceId: team.id, userId: alice.id, role: 'write' } });
+      expect((await pub('GET', shareToken)).statusCode).toBe(200);
+      expect((await as(aliceT, 'DELETE', `/shares/${link.id}`)).statusCode).toBe(204);
+      expect((await pub('GET', shareToken)).statusCode).toBe(404);
+    });
+
+    it('a share in a missing space answers 404', async () => {
+      const team = await createTestSpace(ctx, 'Team');
+      await ctx.prisma.spaceMember.create({ data: { spaceId: team.id, userId: userId, role: 'write' } });
+      const f = await upload(`r_${team.id}`, 'f.txt', 'x');
+      const s = await share(f.id);
+      expect((await pub('GET', s.token)).statusCode).toBe(200);
+      await ctx.prisma.space.update({ where: { id: team.id }, data: { status: 'missing' } });
+      expect((await pub('GET', s.token)).statusCode).toBe(404);
+    });
+  });
 
   describe('owner API', () => {
     it('creates, lists, patches, rotates and revokes', async () => {
