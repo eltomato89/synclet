@@ -14,6 +14,8 @@ export function RequireAdmin() {
 
 const TABS = [
   { to: '/admin/users', label: 'admin.nav.users' },
+  { to: '/admin/groups', label: 'admin.nav.groups' },
+  { to: '/admin/spaces', label: 'admin.nav.spaces' },
   { to: '/admin/status', label: 'admin.nav.status' },
   { to: '/admin/shares', label: 'admin.nav.shares' },
   { to: '/admin/sso', label: 'admin.nav.sso' },

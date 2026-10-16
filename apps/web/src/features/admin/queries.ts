@@ -4,6 +4,7 @@ import type {
 } from '@synclet/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import type { GroupWire, SpacePatch, SpaceWire } from './types';
 
 export const ADMIN_KEY = ['admin'] as const;
 const usersKey = [...ADMIN_KEY, 'users'] as const;
@@ -127,6 +128,64 @@ export function useSsoMutations() {
     }),
     test: useMutation({
       mutationFn: (issuer: string) => api<SsoTestResult>('/admin/sso/test', { method: 'POST', json: issuer.trim() ? { issuer: issuer.trim() } : {} }),
+    }),
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Groups and spaces
+
+const groupsKey = [...ADMIN_KEY, 'groups'] as const;
+const spacesKey = [...ADMIN_KEY, 'spaces'] as const;
+
+export function useAdminGroups() {
+  return useQuery({ queryKey: groupsKey, queryFn: () => api<GroupWire[]>('/admin/groups') });
+}
+
+export function useGroupMutations() {
+  const qc = useQueryClient();
+  // Group membership shows up in spaces (via member names) too.
+  const settled = () => qc.invalidateQueries({ queryKey: ADMIN_KEY });
+  return {
+    create: useMutation({
+      mutationFn: (input: { name: string; memberIds?: string[] }) => api<GroupWire>('/admin/groups', { method: 'POST', json: input }),
+      onSettled: settled,
+    }),
+    update: useMutation({
+      mutationFn: (v: { id: string; patch: { name?: string; memberIds?: string[] } }) =>
+        api<GroupWire>(`/admin/groups/${v.id}`, { method: 'PATCH', json: v.patch }),
+      onSettled: settled,
+    }),
+    remove: useMutation({
+      mutationFn: (id: string) => api<void>(`/admin/groups/${id}`, { method: 'DELETE' }),
+      onSettled: settled,
+    }),
+  };
+}
+
+export function useAdminSpaces() {
+  return useQuery({ queryKey: spacesKey, queryFn: () => api<SpaceWire[]>('/admin/spaces') });
+}
+
+export function useSpaceMutations() {
+  const qc = useQueryClient();
+  const settled = () => qc.invalidateQueries({ queryKey: ADMIN_KEY });
+  return {
+    create: useMutation({
+      mutationFn: (input: { name: string; members?: SpacePatch['members'] }) => api<SpaceWire>('/admin/spaces', { method: 'POST', json: input }),
+      onSettled: settled,
+    }),
+    update: useMutation({
+      mutationFn: (v: { id: string; patch: SpacePatch }) => api<SpaceWire>(`/admin/spaces/${v.id}`, { method: 'PATCH', json: v.patch }),
+      onSettled: settled,
+    }),
+    remove: useMutation({
+      mutationFn: (id: string) => api<void>(`/admin/spaces/${id}`, { method: 'DELETE' }),
+      onSettled: settled,
+    }),
+    scan: useMutation({
+      mutationFn: (id: string) => api<void>(`/admin/spaces/${id}/scan`, { method: 'POST' }),
+      onSettled: settled,
     }),
   };
 }
