@@ -13,6 +13,19 @@ export interface UploadTask {
   /** Sync API error code (`too_large`, `name_conflict`, …), `network` or `unauthorized`. */
   error?: string;
   result?: SyncItem;
+  /** The folder upload this file belongs to, if any. */
+  groupId?: number;
+}
+
+/** A folder that could not be created, with the number of files below it that were left out. */
+export interface UploadGroupError { path: string; code: string; files: number }
+/** A folder upload: its folders are created first (`creating`), then its files are queued. */
+export interface UploadGroup {
+  id: number;
+  /** The top folder's real name (the server may have made it "Urlaub (2)"). */
+  name: string;
+  state: 'creating' | 'ready';
+  errors: UploadGroupError[];
 }
 
 const MAX_PARALLEL = 3;
@@ -123,6 +136,8 @@ export class UploadQueue {
   private seq = 0;
   private listeners = new Set<() => void>();
   private snap: UploadTask[] = [];
+  private groups: UploadGroup[] = [];
+  private groupSnap: UploadGroup[] = [];
   /** Aborts the in-flight transfer of a task (tus: also terminates the server-side upload). */
   private aborts = new Map<number, () => void>();
   private maxBytes = 0;
@@ -139,8 +154,36 @@ export class UploadQueue {
   /** Server upload limit from the account; 0 = unknown. Larger files fail with `too_large` without being sent. */
   setMaxUploadBytes(n: number) { this.maxBytes = n; }
 
-  enqueue(files: File[], parentId: string) {
-    for (const file of files) this.tasks.push({ id: ++this.seq, file, parentId, status: 'queued', progress: 0 });
+  enqueue(files: File[], parentId: string, groupId?: number) {
+    for (const file of files) this.tasks.push({ id: ++this.seq, file, parentId, status: 'queued', progress: 0, ...(groupId ? { groupId } : {}) });
+    this.pump();
+  }
+
+  /** Starts a folder upload in the `creating` state; its files are enqueued with the returned id. */
+  addGroup(name: string): number {
+    const id = ++this.seq;
+    this.groups.push({ id, name, state: 'creating', errors: [] });
+    this.emit();
+    return id;
+  }
+
+  updateGroup(id: number, patch: Partial<Omit<UploadGroup, 'id'>>) {
+    const g = this.groups.find((x) => x.id === id);
+    if (g) { Object.assign(g, patch); this.emit(); }
+  }
+
+  /** False once the group was cancelled or cleared. */
+  hasGroup(id: number) { return this.groups.some((g) => g.id === id); }
+
+  /** Removes a folder upload and every file of it (uploads in flight are aborted). */
+  cancelGroup(id: number) {
+    for (const t of this.tasks) {
+      if (t.groupId !== id) continue;
+      this.aborts.get(t.id)?.();
+      this.aborts.delete(t.id);
+    }
+    this.tasks = this.tasks.filter((t) => t.groupId !== id);
+    this.groups = this.groups.filter((g) => g.id !== id);
     this.pump();
   }
 
@@ -157,15 +200,33 @@ export class UploadQueue {
     this.pump();
   }
 
-  clearFinished() { this.tasks = this.tasks.filter((t) => t.status !== 'done'); this.emit(); }
+  clearFinished() {
+    this.tasks = this.tasks.filter((t) => t.status !== 'done');
+    this.dropGroups((g) => g.errors.length === 0);
+    this.emit();
+  }
 
   /** Removes everything that is not queued or uploading. */
-  clearInactive() { this.tasks = this.tasks.filter((t) => t.status === 'queued' || t.status === 'uploading'); this.emit(); }
+  clearInactive() {
+    this.tasks = this.tasks.filter((t) => t.status === 'queued' || t.status === 'uploading');
+    this.dropGroups(() => true);
+    this.emit();
+  }
+
+  /** Drops ready groups without remaining tasks that match `also`. */
+  private dropGroups(also: (g: UploadGroup) => boolean) {
+    this.groups = this.groups.filter((g) => g.state === 'creating' || this.tasks.some((t) => t.groupId === g.id) || !also(g));
+  }
 
   snapshot(): UploadTask[] { return this.snap; }
+  groupSnapshot(): UploadGroup[] { return this.groupSnap; }
   subscribe = (fn: () => void) => { this.listeners.add(fn); return () => { this.listeners.delete(fn); }; };
 
-  private emit() { this.snap = this.tasks.map((t) => ({ ...t })); this.listeners.forEach((l) => l()); }
+  private emit() {
+    this.snap = this.tasks.map((t) => ({ ...t }));
+    this.groupSnap = this.groups.map((g) => ({ ...g, errors: [...g.errors] }));
+    this.listeners.forEach((l) => l());
+  }
 
   private pump() {
     let active = this.tasks.filter((t) => t.status === 'uploading').length;
@@ -428,4 +489,8 @@ export function getUploadQueue(onDone: (parentId: string) => void): UploadQueue 
 
 export function useUploads(q: UploadQueue) {
   return useSyncExternalStore(q.subscribe, () => q.snapshot());
+}
+
+export function useUploadGroups(q: UploadQueue) {
+  return useSyncExternalStore(q.subscribe, () => q.groupSnapshot());
 }

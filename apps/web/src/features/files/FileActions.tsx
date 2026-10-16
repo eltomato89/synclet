@@ -1,5 +1,5 @@
 import type { SyncItem } from '@synclet/shared';
-import { Download, Eye, FilePen, FolderInput, FolderOpen, FolderPlus, History, MoreHorizontal, PencilLine, Share2, Trash2, Upload } from 'lucide-react';
+import { Download, Eye, FilePen, FolderInput, FolderOpen, FolderPlus, FolderUp, History, MoreHorizontal, PencilLine, Share2, Trash2, Upload } from 'lucide-react';
 import type { ComponentType, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
@@ -116,8 +116,8 @@ export function ItemMenuButton({ item, actions, className }: { item: SyncItem; a
  * Content of the right-click menu shared by list and grid: item actions when an item was
  * targeted, otherwise "new folder" / "upload" for the folder itself.
  */
-export function BrowserContextMenu({ item, actions, onNewFolder, onUpload, canAdd }: {
-  item: SyncItem | null; actions: ItemActions; onNewFolder(): void; onUpload(): void; canAdd: boolean;
+export function BrowserContextMenu({ item, actions, onNewFolder, onUpload, onUploadFolder, canAdd }: {
+  item: SyncItem | null; actions: ItemActions; onNewFolder(): void; onUpload(): void; onUploadFolder(): void; canAdd: boolean;
 }) {
   const { t } = useTranslation();
   return (
@@ -128,6 +128,7 @@ export function BrowserContextMenu({ item, actions, onNewFolder, onUpload, canAd
         <>
           <ContextMenuItem onSelect={onNewFolder} disabled={!canAdd}><FolderPlus />{t('files.newFolderDialog.title')}</ContextMenuItem>
           <ContextMenuItem onSelect={onUpload} disabled={!canAdd}><Upload />{t('files.uploadFiles')}</ContextMenuItem>
+          <ContextMenuItem onSelect={onUploadFolder} disabled={!canAdd}><FolderUp />{t('files.uploadFolder')}</ContextMenuItem>
         </>
       )}
     </ContextMenuContent>

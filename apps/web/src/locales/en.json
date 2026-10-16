@@ -66,6 +66,7 @@
     "newFolder": "Folder",
     "upload": "Upload",
     "uploadFiles": "Upload files",
+    "uploadFolder": "Upload folder",
     "view": "View",
     "viewList": "List",
     "viewGrid": "Grid",
@@ -102,7 +103,7 @@
     "drop": {
       "title": "Drop to upload",
       "target": "Files go into “{{folder}}”.",
-      "foldersUnsupported": "Folders can't be uploaded by drag and drop yet. Drag the files inside them here instead."
+      "foldersUnsupported": "Folders can’t be uploaded here. Drag the files inside them here instead."
     },
     "newFolderDialog": {
       "title": "New folder",
@@ -111,6 +112,14 @@
       "placeholder": "Untitled folder",
       "submit": "Create folder",
       "submitting": "Creating …"
+    },
+    "folderConflict": {
+      "title": "“{{name}}” already exists",
+      "folderBody": "There is already a folder with this name here. Merging puts the contents into the existing folder; files with the same name get a “(2)”.",
+      "fileBody": "There is already a file with this name here. The folder can be added next to it under another name.",
+      "merge": "Merge",
+      "keep": "Keep as “{{name}}”",
+      "applyAll": "Apply to all"
     },
     "renameDialog": {
       "title": "Rename",
@@ -180,12 +189,24 @@
       "collapse": "Collapse uploads",
       "expand": "Expand uploads",
       "close": "Close uploads",
-      "dismiss": "Remove from list"
+      "dismiss": "Remove from list",
+      "folderProgress": "Folder “{{name}}”: {{done}} of {{total}} files",
+      "folderCreating": "Creating folders …",
+      "folderErrors_one": "{{count}} folder could not be created",
+      "folderErrors_other": "{{count}} folders could not be created",
+      "folderError": "“{{path}}”: {{error}}",
+      "folderSkipped_one": "{{count}} file in it was not uploaded.",
+      "folderSkipped_other": "{{count}} files in it were not uploaded.",
+      "cancelFolder": "Cancel folder upload"
     },
     "preview": "Preview",
     "shortcutPreview": "Space",
     "versionsShort": "Versions",
-    "versions": "Versions …"
+    "versions": "Versions …",
+    "folderUpload": {
+      "readFailed": "The folder could not be read.",
+      "failed": "“{{name}}” could not be uploaded: {{error}}"
+    }
   },
   "preview": {
     "close": "Close preview",

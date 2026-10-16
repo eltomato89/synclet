@@ -1,12 +1,12 @@
-import { FolderPlus, Upload } from 'lucide-react';
+import { FolderPlus, FolderUp, Upload } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 
 /** Typographic empty folder: the panel itself reads as a drop area, with the two ways in. */
-export function EmptyState({ isRoot, canAdd, onUpload, onNewFolder }: {
-  isRoot: boolean; canAdd: boolean; onUpload(): void; onNewFolder(): void;
+export function EmptyState({ isRoot, canAdd, onUpload, onUploadFolder, onNewFolder }: {
+  isRoot: boolean; canAdd: boolean; onUpload(): void; onUploadFolder(): void; onNewFolder(): void;
 }) {
   const { t } = useTranslation();
   return (
@@ -17,6 +17,7 @@ export function EmptyState({ isRoot, canAdd, onUpload, onNewFolder }: {
         {canAdd && (
           <div className="mt-6 flex flex-wrap gap-2">
             <Button onClick={onUpload}><Upload />{t('files.uploadFiles')}</Button>
+            <Button variant="outline" onClick={onUploadFolder}><FolderUp />{t('files.uploadFolder')}</Button>
             <Button variant="outline" onClick={onNewFolder}><FolderPlus />{t('files.newFolderDialog.title')}</Button>
           </div>
         )}

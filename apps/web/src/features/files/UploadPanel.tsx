@@ -7,7 +7,7 @@ import { formatBytes } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { errorKey } from './errors';
 import { FileIcon } from './FileIcon';
-import { type UploadQueue, type UploadTask, useUploads } from './uploads';
+import { type UploadGroup, type UploadQueue, type UploadTask, useUploadGroups, useUploads } from './uploads';
 
 const AUTO_HIDE_MS = 5_000;
 /** Errors where trying the same upload again cannot help. */
@@ -86,25 +86,85 @@ function TaskRow({ task, queue }: { task: UploadTask; queue: UploadQueue }) {
   );
 }
 
+/** One folder upload: „Ordner „Urlaub“: 37 von 120 Dateien“, folder errors, failed files below. */
+function GroupRow({ group, tasks, queue }: { group: UploadGroup; tasks: UploadTask[]; queue: UploadQueue }) {
+  const { t, i18n } = useTranslation();
+  const locale = i18n.language;
+  const creating = group.state === 'creating';
+  const active = creating || tasks.some((x) => x.status === 'queued' || x.status === 'uploading');
+  const done = tasks.filter((x) => x.status === 'done').length;
+  const failedTasks = tasks.filter((x) => x.status === 'error' || x.status === 'conflict');
+  const bytes = tasks.reduce((s, x) => s + x.file.size, 0);
+  const sent = tasks.reduce((s, x) => s + x.file.size * (x.status === 'done' ? 1 : x.progress), 0);
+  const progress = bytes > 0 ? sent / bytes : done / Math.max(1, tasks.length);
+  const skipped = group.errors.reduce((s, e) => s + e.files, 0);
+  const label = t('files.uploads.folderProgress', { name: group.name, done, total: tasks.length });
+
+  let detail: string;
+  if (creating) detail = t('files.uploads.folderCreating');
+  else if (active) detail = t('files.uploads.progress', { loaded: formatBytes(sent, locale), total: formatBytes(bytes, locale) });
+  else detail = formatBytes(bytes, locale);
+
+  return (
+    <>
+      <li className="flex items-center gap-3 px-4 py-2">
+        <FileIcon item={{ type: 'folder', name: group.name, mime: null }} className="size-5" />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium" title={label}>{label}</div>
+          <div className="truncate text-xs text-muted-foreground tabular-nums">{detail}</div>
+          {group.errors.length > 0 && (
+            <div className="mt-0.5 text-xs text-destructive">
+              <p>{t('files.uploads.folderErrors', { count: group.errors.length })}{skipped > 0 && ` ${t('files.uploads.folderSkipped', { count: skipped })}`}</p>
+              <ul className="line-clamp-3">
+                {group.errors.map((e) => <li key={e.path} className="truncate" title={e.path}>{t('files.uploads.folderError', { path: e.path, error: t(errorKey(e.code)) })}</li>)}
+              </ul>
+            </div>
+          )}
+          {active && !creating && (
+            <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-border" role="progressbar" aria-label={label}
+              aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)}>
+              <div className="h-full origin-left rounded-full bg-primary transition-transform duration-200" style={{ transform: `scaleX(${progress})` }} />
+            </div>
+          )}
+        </div>
+        {!active && group.errors.length === 0 && failedTasks.length === 0 ? (
+          <span className="flex size-8 items-center justify-center text-primary"><Check className="size-4" /></span>
+        ) : (
+          <Button variant="ghost" size="icon-sm" className="text-muted-foreground" onClick={() => queue.cancelGroup(group.id)}
+            aria-label={active ? t('files.uploads.cancelFolder') : t('files.uploads.dismiss')} title={active ? t('files.uploads.cancelFolder') : t('files.uploads.dismiss')}>
+            <X />
+          </Button>
+        )}
+      </li>
+      {failedTasks.map((task) => <TaskRow key={task.id} task={task} queue={queue} />)}
+    </>
+  );
+}
+
 /** Bottom-right upload tray: collapsible, per-file progress, retry, auto-hides 5 s after a clean finish. */
 export function UploadPanel({ queue }: { queue: UploadQueue }) {
   const { t } = useTranslation();
   const tasks = useUploads(queue);
+  const groups = useUploadGroups(queue);
   const [collapsed, setCollapsed] = useState(false);
 
   const total = tasks.length;
-  const active = tasks.some((x) => x.status === 'queued' || x.status === 'uploading');
+  const creating = groups.some((g) => g.state === 'creating');
+  const active = creating || tasks.some((x) => x.status === 'queued' || x.status === 'uploading');
   const done = tasks.filter((x) => x.status === 'done').length;
-  const failed = tasks.filter((x) => x.status === 'error' || x.status === 'conflict').length;
+  const failed = tasks.filter((x) => x.status === 'error' || x.status === 'conflict').length + groups.reduce((s, g) => s + g.errors.length, 0);
+  const empty = total === 0 && groups.length === 0;
+  const groupIds = new Set(groups.map((g) => g.id));
+  const loose = tasks.filter((x) => !x.groupId || !groupIds.has(x.groupId));
   const bytes = tasks.reduce((s, x) => s + x.file.size, 0);
   const sent = tasks.reduce((s, x) => s + x.file.size * (x.status === 'done' ? 1 : x.progress), 0);
   const progress = bytes > 0 ? sent / bytes : done / Math.max(1, total);
 
   useEffect(() => {
-    if (total === 0 || active || failed > 0) return;
+    if (empty || active || failed > 0) return;
     const id = window.setTimeout(() => queue.clearFinished(), AUTO_HIDE_MS);
     return () => window.clearTimeout(id);
-  }, [total, active, failed, queue]);
+  }, [empty, active, failed, queue]);
 
   useEffect(() => {
     if (!active) return;
@@ -113,12 +173,12 @@ export function UploadPanel({ queue }: { queue: UploadQueue }) {
     return () => window.removeEventListener('beforeunload', warn);
   }, [active]);
 
-  useEffect(() => { if (total === 0) setCollapsed(false); }, [total]);
+  useEffect(() => { if (empty) setCollapsed(false); }, [empty]);
 
-  if (total === 0) return null;
+  if (empty) return null;
 
   const title = active
-    ? t('files.uploads.uploading', { done, total })
+    ? total === 0 ? t('files.uploads.folderCreating') : t('files.uploads.uploading', { done, total })
     : failed > 0 ? t('files.uploads.failed', { count: failed }) : t('files.uploads.done', { count: done });
 
   return (
@@ -148,7 +208,8 @@ export function UploadPanel({ queue }: { queue: UploadQueue }) {
       </header>
       {!collapsed && (
         <ul className="max-h-[min(18rem,45dvh)] overflow-y-auto border-t py-1">
-          {tasks.map((task) => <TaskRow key={task.id} task={task} queue={queue} />)}
+          {groups.map((g) => <GroupRow key={`g${g.id}`} group={g} tasks={tasks.filter((x) => x.groupId === g.id)} queue={queue} />)}
+          {loose.map((task) => <TaskRow key={task.id} task={task} queue={queue} />)}
         </ul>
       )}
     </section>

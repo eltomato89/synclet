@@ -1,6 +1,6 @@
 import type { OfficeNewFormat, SyncAccount, SyncItem } from '@synclet/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { FilePlus, FileSpreadsheet, FileText, FolderPlus, LayoutGrid, List, Plus, Presentation, Share2, Upload } from 'lucide-react';
+import { FilePlus, FileSpreadsheet, FileText, FolderPlus, FolderUp, LayoutGrid, List, Plus, Presentation, Share2, Upload } from 'lucide-react';
 import { type KeyboardEvent, lazy, type MouseEvent, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useParams } from 'react-router';
@@ -21,12 +21,15 @@ import { errorKey } from '@/features/files/errors';
 import { BrowserContextMenu, type ItemActions } from '@/features/files/FileActions';
 import { FileGrid } from '@/features/files/FileGrid';
 import { FileList } from '@/features/files/FileList';
+import { FolderConflictDialog } from '@/features/files/FolderConflictDialog';
+import { pickedFromInputFiles } from '@/features/files/folderUpload';
 import {
   folderPath, ROOT_ID, type SortDir, type SortKey, sortItems, useAncestors, useFileMutations, useFolder,
 } from '@/features/files/queries';
 import { useRevealParam } from '@/features/files/reveal';
 import { UploadPanel } from '@/features/files/UploadPanel';
 import { getUploadQueue, type UploadQueue } from '@/features/files/uploads';
+import { useFolderUpload } from '@/features/files/useFolderUpload';
 import { MORE_FORMATS, openOfficeTab, PRIMARY_FORMATS, reserveOfficeTab } from '@/features/office/office';
 import { useCapabilities, useCreateOfficeFile } from '@/features/office/queries';
 import { quickLookEntries } from '@/features/preview/navigation';
@@ -133,6 +136,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   const [menuItem, setMenuItem] = useState<SyncItem | null>(null);
   const [quickLook, setQuickLook] = useState<{ id: string; open: boolean } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const folderInput = useRef<HTMLInputElement>(null);
   const viewRef = useRef<HTMLDivElement>(null);
   const focusAfterRender = useRef<string | null>(null);
   const selectedRef = useRef(selectedId);
@@ -219,9 +223,20 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   };
   const selectedItem = items.find((i) => i.id === selectedId) ?? null;
   const startUpload = () => fileInput.current?.click();
+  const startFolderUpload = () => folderInput.current?.click();
   const newFolder = () => { if (canAdd) openDialog({ kind: 'newFolder' }); };
   const newOffice = (format: OfficeNewFormat) => { if (canAdd) openDialog({ kind: 'newOffice', format }); };
   const enqueue = (files: File[]) => { if (canAdd && files.length) queue.enqueue(files, folderId); };
+  const folderUpload = useFolderUpload({
+    queue,
+    folderId,
+    siblings: folderQ.data?.items ?? [],
+    onFoldersChanged: () => {
+      void qc.invalidateQueries({ queryKey: ['folder', folderId] });
+      void qc.invalidateQueries({ queryKey: ['subfolders', folderId] });
+    },
+  });
+  const uploadPicked: typeof folderUpload.upload = async (picked) => { if (canAdd) await folderUpload.upload(picked); };
 
   const onSort = (key: SortKey) => setSort((s) => {
     const next: Sort = s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'name' ? 'asc' : 'desc' };
@@ -348,9 +363,17 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
-        <Button size="sm" onClick={startUpload} disabled={!canAdd} aria-label={t('files.upload')}>
-          <Upload /><span className="max-sm:hidden">{t('files.upload')}</span>
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="sm" disabled={!canAdd} aria-label={t('files.upload')}>
+              <Upload /><span className="max-sm:hidden">{t('files.upload')}</span>
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuItem onSelect={startUpload}><Upload />{t('files.uploadFiles')}</DropdownMenuItem>
+            <DropdownMenuItem onSelect={startFolderUpload}><FolderUp />{t('files.uploadFolder')}</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </>,
   );
@@ -369,7 +392,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   } else if (!folderQ.data) {
     body = <SkeletonRows view={view} />;
   } else if (items.length === 0) {
-    body = <EmptyState isRoot={folder?.kind === 'root'} canAdd={canAdd} onUpload={startUpload} onNewFolder={newFolder} />;
+    body = <EmptyState isRoot={folder?.kind === 'root'} canAdd={canAdd} onUpload={startUpload} onUploadFolder={startFolderUpload} onNewFolder={newFolder} />;
   } else {
     const folders = items.filter((i) => i.type === 'folder').length;
     const files = items.length - folders;
@@ -384,7 +407,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
             </p>
           </div>
         </ContextMenuTrigger>
-        <BrowserContextMenu item={menuItem} actions={actions} onNewFolder={newFolder} onUpload={startUpload} canAdd={canAdd} />
+        <BrowserContextMenu item={menuItem} actions={actions} onNewFolder={newFolder} onUpload={startUpload} onUploadFolder={startFolderUpload} canAdd={canAdd} />
       </ContextMenu>
     );
   }
@@ -399,12 +422,28 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
         multiple
         hidden
         tabIndex={-1}
+        data-upload="files"
         onChange={(e) => { enqueue(Array.from(e.target.files ?? [])); e.target.value = ''; }}
       />
+      <input
+        ref={folderInput}
+        type="file"
+        hidden
+        tabIndex={-1}
+        data-upload="folder"
+        // Not in React's types; the browser then picks a whole folder (files carry webkitRelativePath).
+        {...{ webkitdirectory: '' }}
+        onChange={(e) => {
+          const files = Array.from(e.target.files ?? []);
+          e.target.value = '';
+          if (files.length) void uploadPicked(pickedFromInputFiles(files));
+        }}
+      />
+      <FolderConflictDialog question={folderUpload.question} onAnswer={folderUpload.answer} />
       <div ref={viewRef} className="flex flex-1 flex-col" onKeyDown={onKeyDown} onClick={onBackgroundClick}>
         {body}
       </div>
-      <DropZone enabled={canAdd} folderName={folderName} onFiles={enqueue} />
+      <DropZone enabled={canAdd} folderName={folderName} onPicked={(p) => void uploadPicked(p)} />
       <Suspense fallback={null}>
         {quickLook && (
           <QuickLook

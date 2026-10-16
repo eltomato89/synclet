@@ -22,7 +22,7 @@ test('setup, upload, rename, move, delete, download', async ({ page }) => {
   await page.keyboard.press('Enter');
   await expect(row('Projekte')).toBeVisible();
 
-  await page.locator('input[type=file]').setInputFiles({ name: 'notiz.txt', mimeType: 'text/plain', buffer: Buffer.from('hallo') });
+  await page.locator('input[data-upload=files]').setInputFiles({ name: 'notiz.txt', mimeType: 'text/plain', buffer: Buffer.from('hallo') });
   await expect(row('notiz.txt')).toBeVisible();
 
   await row('notiz.txt').click();
