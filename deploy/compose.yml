@@ -112,6 +112,10 @@ services:
       - office-data:/var/www/euro-office/Data
       - office-lib:/var/lib/euro-office/documentserver
       - office-logs:/var/log/euro-office/documentserver
+    configs:
+      # Read by the Document Server on top of its generated local.json (see configs below).
+      - source: office-autosave
+        target: /etc/euro-office/documentserver/local-production-linux.json
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost/healthcheck | grep -q true"]
       interval: 15s
@@ -131,6 +135,16 @@ services:
       interval: 3s
       retries: 30
     restart: unless-stopped
+configs:
+  # Autosave: while a document is open, the Document Server writes pending edits to the file every
+  # OFFICE_AUTOSAVE_INTERVAL (callback status 6), so other devices see them without waiting until
+  # the last editor closes. Only documents with unsaved edits are saved.
+  office-autosave:
+    content: |
+      {"services": {"CoAuthoring": {"autoAssembly": {
+        "enable": ${OFFICE_AUTOSAVE:-true},
+        "interval": "${OFFICE_AUTOSAVE_INTERVAL:-5m}"
+      }}}}
 volumes:
   pgdata:
   caddy-data:
