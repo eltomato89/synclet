@@ -33,6 +33,12 @@ public struct SpaceLayout: Sendable, Hashable {
         NSFileProviderItemIdentifier(identifierPrefix + space.id)
     }
 
+    /// Root id of a space by its id alone (spec §3.1: `personal` → `root`, any other space
+    /// `<uuid>` → `r_<uuid>`), for a space that is no longer in the layout.
+    public static func rootId(ofSpaceID id: String) -> String {
+        id == SyncAPIClient.personalSpaceID ? SyncItem.rootID : "r_" + id
+    }
+
     /// The space id of a `space:<id>` identifier, else `nil`.
     public static func spaceID(from identifier: NSFileProviderItemIdentifier) -> String? {
         let raw = identifier.rawValue

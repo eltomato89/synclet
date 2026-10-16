@@ -42,10 +42,14 @@ public enum SyncAnchorCodec {
 ///   stays (or it stays out of the anchor) and the other spaces go on. Errors of the
 ///   personal feed fail the batch as before.
 /// - A move between spaces keeps the item id: the old space reports `delete`, the new one
-///   `upsert`. The enumerator remembers the space of every upsert it saw and ignores a
-///   `delete` from another space's feed (in the same round or a later one).
+///   `upsert` – in the same round, or rounds apart in either order. With more than one space
+///   a `delete` is therefore only reported when no feed upserted the id in this round and
+///   `GET /items/:id` answers 404/403 (gone or no access); an item that still exists is left
+///   alone (its upsert arrives through its current space's feed). Other errors of that check
+///   fail the batch (retried later) rather than deleting anything.
 /// - A space that left the layout: its cursor is dropped; the working set reports its
-///   folder (`space:<id>`) deleted, so the system removes everything below it.
+///   folder (`space:<id>`) deleted, so the system removes everything below it, and forgets
+///   the space's pins and pinning bookkeeping.
 /// - Pinning (``PinningContext``, Strategy B): every reported item carries its
 ///   ``PinPolicy`` content policy. The working set additionally re-reports subtrees whose
 ///   policy changed (pins changed since last applied, a folder moved into or out of a
@@ -64,9 +68,8 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
     /// Cursor before the first page and the space of the enumerated folder (`nil` = unknown).
     private var firstPage: (space: String?, cursor: String)?
     private var tasks: [UUID: Task<Void, Never>] = [:]
-    /// Space id of the last upsert seen per item id (cross-space moves); bounded.
-    private var lastSpaceOf: [String: String] = [:]
-    private static let lastSpaceLimit = 50_000
+    /// Parallel `GET /items/:id` checks of deletions (multi-space layouts).
+    static let deleteCheckConcurrency = 8
 
     /// - Parameters:
     ///   - layout: current space layout (read on every call; spaces may change).
@@ -229,7 +232,7 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
         let limit = Self.pageSize(suggested: observer.suggestedBatchSize)
         let filterParent = isWorkingSet ? nil : layout.serverID(for: containerIdentifier)
         let isWorkingSet = isWorkingSet
-        track { [weak self, client, cursorSink, pinning] in
+        track { [client, cursorSink, pinning] in
             do {
                 var next: [String: String] = [:]
                 var moreComing = false
@@ -261,8 +264,12 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
                     next[space.id] = page.cursor
                     moreComing = moreComing || page.hasMore
                 }
-                for (_, changes) in self?.droppingMovedAway(pages) ?? pages {
-                    let (up, del) = Self.split(changes, onlyChildrenOf: filterParent, layout: layout)
+                let kept = try await Self.confirmedDeletes(pages.flatMap(\.changes), layout: layout, client: client)
+                for (_, changes) in pages {
+                    let (up, del) = Self.split(changes.filter { change in
+                        guard case .delete(let id) = change else { return true }
+                        return kept.contains(id)
+                    }, onlyChildrenOf: filterParent, layout: layout)
                     updated += up
                     deleted += del
                 }
@@ -294,25 +301,49 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
         }
     }
 
-    /// Drops a `delete` of an item whose last seen upsert came from another space (a move
-    /// between spaces: the old space reports `delete`, the new one `upsert` – possibly a
-    /// round apart). Upserts of this round are recorded first; an honoured delete forgets the id.
-    func droppingMovedAway(_ pages: [(space: String, changes: [SyncChange])]) -> [(space: String, changes: [SyncChange])] {
-        lock.withLock {
-            for (spaceID, changes) in pages {
-                for case .upsert(let item) in changes { lastSpaceOf[item.id] = spaceID }
+    /// The deleted ids of a round that really are gone. A single space: every delete. More
+    /// spaces: an id upserted by any feed of the round moved (dropped); every other id is
+    /// checked with `GET /items/:id` – 404/403 ⇒ gone, found ⇒ moved to another space (its
+    /// upsert comes with that feed, maybe later) ⇒ dropped. Other errors are thrown.
+    static func confirmedDeletes(_ changes: [SyncChange], layout: SpaceLayout, client: SyncAPIClient) async throws -> Set<String> {
+        var upserted: Set<String> = []
+        var deletes: [String] = []
+        var seen: Set<String> = []
+        for change in changes {
+            switch change {
+            case .upsert(let item): upserted.insert(item.id)
+            case .delete(let id): if seen.insert(id).inserted { deletes.append(id) }
             }
-            let result = pages.map { spaceID, changes in
-                (spaceID, changes.filter { change in
-                    guard case .delete(let id) = change else { return true }
-                    if let known = lastSpaceOf[id], known != spaceID { return false }
-                    lastSpaceOf[id] = nil
-                    return true
-                })
-            }
-            if lastSpaceOf.count > Self.lastSpaceLimit { lastSpaceOf.removeAll() }
-            return result
         }
+        guard layout.spaces.count > 1 else { return Set(deletes) }
+        let roots = layout.rootIds
+        let candidates = deletes.filter { !upserted.contains($0) && !roots.contains($0) }
+        var gone: Set<String> = []
+        try await withThrowingTaskGroup(of: (String, Bool).self) { group in
+            var next = 0
+            func start() {
+                let id = candidates[next]
+                next += 1
+                group.addTask {
+                    do {
+                        _ = try await client.item(id: id)
+                        return (id, false)
+                    } catch SyncAPIError.notFound, SyncAPIError.forbidden {
+                        return (id, true)
+                    }
+                }
+            }
+            while next < min(candidates.count, deleteCheckConcurrency) { start() }
+            while let (id, isGone) = try await group.next() {
+                if isGone {
+                    gone.insert(id)
+                } else {
+                    Log.fileProvider.info("\(id, privacy: .public) still exists (moved to another space): delete ignored")
+                }
+                if next < candidates.count { start() }
+            }
+        }
+        return gone
     }
 
     /// Reports the upserts of a change batch with their content policy. In the working set
@@ -326,6 +357,23 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
         let goneIDs = deleted.compactMap { layout.serverID(for: $0) }
         pinning.parentMap.remove(goneIDs)
         pinning.ledger.remove(goneIDs)
+        // Lost spaces (`space:<id>` no longer in the layout): forget their folders and pins.
+        let lostSpaces = deleted.compactMap(SpaceLayout.spaceID(from:)).filter { layout.space(id: $0) == nil }
+        if !lostSpaces.isEmpty {
+            let removed = pinning.parentMap.removeDescendants(of: lostSpaces.map(SpaceLayout.rootId(ofSpaceID:)))
+            pinning.ledger.remove(removed)
+            if isWorkingSet {
+                for space in lostSpaces {
+                    do {
+                        if try pinning.store.forgetSpace(space) {
+                            Log.pinning.info("space \(space, privacy: .public) is gone: its pins were dropped")
+                        }
+                    } catch {
+                        Log.pinning.error("dropping the pins of lost space \(space, privacy: .public) failed: \(String(describing: error), privacy: .public)")
+                    }
+                }
+            }
+        }
         if isWorkingSet {
             for id in goneIDs {
                 do {

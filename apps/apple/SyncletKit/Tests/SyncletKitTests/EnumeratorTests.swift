@@ -151,6 +151,7 @@ final class EnumeratorTests: XCTestCase {
     func testTwoSpacesDrainTwoFeedsWithSeparateCursors() async {
         let teamRoot = Self.team.rootId
         MockURLProtocol.reset { request in
+            if request.path.hasPrefix("/api/sync/v1/items/") { return .error(404, "not_found") }   // really gone
             guard request.path == "/api/sync/v1/changes" else { return .empty(500) }
             switch (request.query["space"], request.query["cursor"]) {
             case (nil, "10"):
@@ -174,7 +175,10 @@ final class EnumeratorTests: XCTestCase {
         XCTAssertEqual(anchorMap(observer.anchor), ["personal": "11", Self.teamID: "60"])
         XCTAssertEqual(observer.moreComing, true)
         XCTAssertEqual(log.all, ["personal": "11", Self.teamID: "60"])
-        XCTAssertEqual(MockURLProtocol.requests.count, 2)
+        XCTAssertEqual(MockURLProtocol.requests.filter { $0.path == "/api/sync/v1/changes" }.count, 2)
+        // With two spaces every delete is checked first (it could be a move).
+        XCTAssertEqual(Set(MockURLProtocol.requests.map(\.path).filter { $0.contains("/items/") }),
+                       ["/api/sync/v1/items/f_a", "/api/sync/v1/items/f_b"])
     }
 
     /// A server without spaces answers `?space=` with 400/404: the personal feed keeps working
@@ -185,6 +189,7 @@ final class EnumeratorTests: XCTestCase {
                 if request.query["space"] != nil {
                     return status == 400 ? .error(400, "invalid_request") : .error(404, "not_found")
                 }
+                if request.path.hasPrefix("/api/sync/v1/items/") { return .error(404, "not_found") }
                 return request.path.hasSuffix("/cursor")
                     ? .json(200, #"{"cursor":"5"}"#)
                     : .json(200, #"{"changes":[{"op":"delete","id":"f_a"}],"cursor":"11","hasMore":false}"#)
@@ -214,43 +219,132 @@ final class EnumeratorTests: XCTestCase {
         }
     }
 
-    /// A cross-space move: the old space reports `delete`, the new one `upsert` (same id).
-    /// The item must stay – in the same round and when the delete comes a round later.
-    func testCrossSpaceMoveIsNotReportedAsDelete() async {
+    /// One drain of a two-space layout: the feeds answer per (space, cursor); `GET /items/:id`
+    /// answers 200 for `existing`, else 404.
+    private func serveMoves(_ feeds: [String: String], existing: Set<String>) {
         let teamRoot = Self.team.rootId
-        let round = Counter()
         MockURLProtocol.reset { request in
-            let teamFeed = request.query["space"] == Self.teamID
-            switch (round.current, teamFeed) {
-            case (1, false):   // same round: delete in personal, upsert in team
-                return .json(200, #"{"changes":[{"op":"delete","id":"d_1"},{"op":"delete","id":"f_gone"}],"cursor":"11","hasMore":false}"#)
-            case (1, true):
-                return .json(200, #"{"changes":[{"op":"upsert","item":\#(Fixtures.folderJSON(id: "d_1", parentId: teamRoot, name: "Fotos"))}],"cursor":"51","hasMore":false}"#)
-            case (2, true):    // next move: upsert arrives first …
-                return .json(200, #"{"changes":[{"op":"upsert","item":\#(Fixtures.folderJSON(id: "d_2", parentId: teamRoot, name: "Akten"))}],"cursor":"52","hasMore":false}"#)
-            case (3, false):   // … the old space's delete one round later
-                return .json(200, #"{"changes":[{"op":"delete","id":"d_2"}],"cursor":"12","hasMore":false}"#)
-            case (4, true):    // a real delete in the space that holds it
-                return .json(200, #"{"changes":[{"op":"delete","id":"d_2"}],"cursor":"53","hasMore":false}"#)
-            default:
-                return .json(200, #"{"changes":[],"cursor":"\#(teamFeed ? "5x" : "1x")","hasMore":false}"#)
+            if request.path.hasPrefix("/api/sync/v1/items/") {
+                let id = String(request.path.dropFirst("/api/sync/v1/items/".count))
+                return existing.contains(id)
+                    ? .json(200, Fixtures.folderJSON(id: id, parentId: teamRoot, name: "x"))
+                    : .error(404, "not_found")
             }
+            let key = request.query["space"] ?? "personal"
+            return .json(200, feeds[key] ?? #"{"changes":[],"cursor":"0","hasMore":false}"#)
         }
-        let enumerator = FileProviderEnumerator(containerIdentifier: .workingSet, client: Fixtures.client(), layout: twoSpaces)
-        var results: [(updated: [String], deleted: [String])] = []
-        for _ in 1...4 {
-            _ = round.next()
-            let observer = MockChangeObserver(expectation(description: "round"))
-            enumerator.enumerateChanges(for: observer, from: SyncAnchorCodec.encode(["personal": "10", Self.teamID: "50"]))
-            await fulfillment(of: [observer.finished], timeout: 5)
-            XCTAssertNil(observer.error)
-            results.append((observer.updated.map(\.itemIdentifier.rawValue), observer.deleted.map(\.rawValue)))
+    }
+
+    private func drainOnce(_ enumerator: FileProviderEnumerator) async -> MockChangeObserver {
+        let observer = MockChangeObserver(expectation(description: "round"))
+        enumerator.enumerateChanges(for: observer, from: SyncAnchorCodec.encode(["personal": "10", Self.teamID: "50"]))
+        await fulfillment(of: [observer.finished], timeout: 5)
+        return observer
+    }
+
+    private func itemPaths() -> [String] {
+        MockURLProtocol.requests.map(\.path).filter { $0.hasPrefix("/api/sync/v1/items/") }
+    }
+
+    /// A cross-space move in one round: the old space's `delete` meets the new space's
+    /// `upsert` – the item is updated, not deleted, without an extra request.
+    func testCrossSpaceMoveInOneRoundIsAnUpdate() async {
+        serveMoves(["personal": #"{"changes":[{"op":"delete","id":"d_1"}],"cursor":"11","hasMore":false}"#,
+                    Self.teamID: #"{"changes":[{"op":"upsert","item":\#(Fixtures.folderJSON(id: "d_1", parentId: Self.team.rootId, name: "Fotos"))}],"cursor":"51","hasMore":false}"#],
+                   existing: ["d_1"])
+        let observer = await drainOnce(FileProviderEnumerator(containerIdentifier: .workingSet, client: Fixtures.client(), layout: twoSpaces))
+        XCTAssertNil(observer.error)
+        XCTAssertEqual(observer.updated.map(\.itemIdentifier.rawValue), ["d_1"])
+        XCTAssertEqual(observer.deleted, [])
+        XCTAssertEqual(itemPaths(), [])
+    }
+
+    /// The `delete` is seen before the `upsert` (the destination feed is behind, e.g. a move
+    /// between the two feed requests or `hasMore`): the item still exists ⇒ no delete; the
+    /// upsert arrives in a later round.
+    func testDeleteBeforeUpsertKeepsTheItem() async {
+        serveMoves([Self.teamID: #"{"changes":[{"op":"delete","id":"d_3"},{"op":"delete","id":"f_gone"}],"cursor":"51","hasMore":false}"#],
+                   existing: ["d_3"])
+        let observer = await drainOnce(FileProviderEnumerator(containerIdentifier: .workingSet, client: Fixtures.client(), layout: twoSpaces))
+        XCTAssertNil(observer.error)
+        XCTAssertEqual(observer.deleted.map(\.rawValue), ["f_gone"], "only the really deleted item")
+        XCTAssertEqual(Set(itemPaths()), ["/api/sync/v1/items/d_3", "/api/sync/v1/items/f_gone"])
+        XCTAssertEqual(anchorMap(observer.anchor), ["personal": "0", Self.teamID: "51"])
+
+        // Later round: the upsert in the personal space.
+        serveMoves(["personal": #"{"changes":[{"op":"upsert","item":\#(Fixtures.folderJSON(id: "d_3", name: "Akten"))}],"cursor":"12","hasMore":false}"#],
+                   existing: ["d_3"])
+        let later = await drainOnce(FileProviderEnumerator(containerIdentifier: .workingSet, client: Fixtures.client(), layout: twoSpaces))
+        XCTAssertEqual(later.updated.map(\.itemIdentifier.rawValue), ["d_3"])
+        XCTAssertEqual(later.deleted, [])
+    }
+
+    /// The upsert came in an earlier round; the old space's `delete` arrives later, in a fresh
+    /// enumerator instance (the extension makes one per call): the item is kept.
+    func testLateDeleteInAFreshEnumeratorKeepsTheItem() async {
+        serveMoves([Self.teamID: #"{"changes":[{"op":"upsert","item":\#(Fixtures.folderJSON(id: "d_2", parentId: Self.team.rootId, name: "Akten"))}],"cursor":"52","hasMore":false}"#],
+                   existing: ["d_2"])
+        let first = await drainOnce(FileProviderEnumerator(containerIdentifier: .workingSet, client: Fixtures.client(), layout: twoSpaces))
+        XCTAssertEqual(first.updated.map(\.itemIdentifier.rawValue), ["d_2"])
+
+        serveMoves(["personal": #"{"changes":[{"op":"delete","id":"d_2"}],"cursor":"12","hasMore":false}"#], existing: ["d_2"])
+        let second = await drainOnce(FileProviderEnumerator(containerIdentifier: .workingSet, client: Fixtures.client(), layout: twoSpaces))
+        XCTAssertNil(second.error)
+        XCTAssertEqual(second.deleted, [], "the moved item stays")
+        XCTAssertEqual(itemPaths(), ["/api/sync/v1/items/d_2"])
+    }
+
+    /// A real delete (404, or 403 = no access any more) is reported; a failing check fails the
+    /// batch instead of deleting.
+    func testRealDeleteIsReportedAndFailedChecksDoNotDelete() async {
+        serveMoves(["personal": #"{"changes":[{"op":"delete","id":"f_1"}],"cursor":"11","hasMore":false}"#], existing: [])
+        let observer = await drainOnce(FileProviderEnumerator(containerIdentifier: .workingSet, client: Fixtures.client(), layout: twoSpaces))
+        XCTAssertNil(observer.error)
+        XCTAssertEqual(observer.deleted.map(\.rawValue), ["f_1"])
+
+        MockURLProtocol.reset { request in
+            if request.path == "/api/sync/v1/items/f_1" { return .error(403, "forbidden") }
+            if request.path == "/api/sync/v1/items/f_2" { return .empty(502) }
+            return request.query["space"] == nil
+                ? .json(200, #"{"changes":[{"op":"delete","id":"f_1"}],"cursor":"11","hasMore":false}"#)
+                : .json(200, #"{"changes":[],"cursor":"51","hasMore":false}"#)
         }
-        XCTAssertEqual(results[0].updated, ["d_1"])
-        XCTAssertEqual(results[0].deleted, ["f_gone"])
-        XCTAssertEqual(results[1].updated, ["d_2"])
-        XCTAssertEqual(results[2].deleted, [], "the moved item stays")
-        XCTAssertEqual(results[3].deleted, ["d_2"])
+        let forbidden = await drainOnce(FileProviderEnumerator(containerIdentifier: .workingSet, client: Fixtures.client(), layout: twoSpaces))
+        XCTAssertEqual(forbidden.deleted.map(\.rawValue), ["f_1"])
+
+        MockURLProtocol.reset { request in
+            if request.path == "/api/sync/v1/items/f_2" { return .empty(502) }
+            return request.query["space"] == nil
+                ? .json(200, #"{"changes":[{"op":"delete","id":"f_2"}],"cursor":"11","hasMore":false}"#)
+                : .json(200, #"{"changes":[],"cursor":"51","hasMore":false}"#)
+        }
+        let failed = await drainOnce(FileProviderEnumerator(containerIdentifier: .workingSet, client: Fixtures.client(), layout: twoSpaces))
+        XCTAssertNotNil(failed.error)
+        XCTAssertEqual(failed.deleted, [])
+    }
+
+    /// Single space: deletes are reported as before, without checks.
+    func testSingleSpaceDeletesAreNotChecked() async {
+        MockURLProtocol.reset { _ in .json(200, #"{"changes":[{"op":"delete","id":"f_1"}],"cursor":"11","hasMore":false}"#) }
+        let enumerator = FileProviderEnumerator(containerIdentifier: .workingSet, client: Fixtures.client(), layout: layout)
+        let observer = MockChangeObserver(expectation(description: "changes"))
+        enumerator.enumerateChanges(for: observer, from: SyncAnchorCodec.encode(["personal": "10"]))
+        await fulfillment(of: [observer.finished], timeout: 5)
+        XCTAssertEqual(observer.deleted.map(\.rawValue), ["f_1"])
+        XCTAssertEqual(MockURLProtocol.requests.count, 1)
+    }
+
+    /// 410 on a non-personal feed is a full re-enumeration, not a skipped space.
+    func testExpiredCursorOfATeamFeedIsSyncAnchorExpired() async {
+        MockURLProtocol.reset { request in
+            request.query["space"] == nil
+                ? .json(200, #"{"changes":[],"cursor":"11","hasMore":false}"#)
+                : .error(410, "cursor_expired")
+        }
+        let observer = await drainOnce(FileProviderEnumerator(containerIdentifier: .workingSet, client: Fixtures.client(), layout: twoSpaces))
+        let error = observer.error as NSError?
+        XCTAssertEqual(error?.domain, NSFileProviderErrorDomain)
+        XCTAssertEqual(error?.code, NSFileProviderError.Code.syncAnchorExpired.rawValue)
     }
 
     /// `space_unavailable` (503) of one space does not stop the others.
@@ -332,7 +426,6 @@ final class EnumeratorTests: XCTestCase {
 
     /// A folder below a space root: its space comes from the items' `spaceId`.
     func testFirstPageCursorOfASubfolderUsesTheItemsSpace() async {
-        let teamRoot = Self.team.rootId
         MockURLProtocol.reset { request in
             switch request.path {
             case "/api/sync/v1/items/d_7/children":
@@ -343,7 +436,6 @@ final class EnumeratorTests: XCTestCase {
             case "/api/sync/v1/cursor":
                 return .json(200, request.query["space"] == nil ? #"{"cursor":"12"}"# : #"{"cursor":"99"}"#)
             default:
-                _ = teamRoot
                 return .empty(500)
             }
         }

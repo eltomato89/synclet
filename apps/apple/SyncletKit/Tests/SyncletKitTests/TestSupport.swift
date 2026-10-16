@@ -228,7 +228,6 @@ final class Counter: @unchecked Sendable {
     private var value = 0
     private let lock = NSLock()
     func next() -> Int { lock.withLock { value += 1; return value } }
-    var current: Int { lock.withLock { value } }
 }
 
 /// `.lproj` sub-bundles of the kit's resource bundle (to test a specific language).

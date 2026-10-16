@@ -97,6 +97,20 @@ public final class ParentMap: Sendable {
         }
     }
 
+    /// Forgets every recorded folder below `parents` (e.g. the root of a lost space, which
+    /// is never recorded itself); returns the ids removed.
+    @discardableResult
+    public func removeDescendants(of parents: [String]) -> [String] {
+        let parents = Set(parents)
+        guard !parents.isEmpty else { return [] }
+        let top = map.read { entries in entries.compactMap { parents.contains($0.value.p) ? $0.key : nil } }
+        guard !top.isEmpty else { return [] }
+        let before = Set(map.read { Array($0.keys) })
+        remove(top)
+        let after = Set(map.read { Array($0.keys) })
+        return Array(before.subtracting(after))
+    }
+
     /// Persists pending changes.
     public func flush() { map.flush() }
 

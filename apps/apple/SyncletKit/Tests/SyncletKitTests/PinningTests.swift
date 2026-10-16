@@ -408,6 +408,34 @@ final class PinnedEnumerationTests: XCTestCase {
         return observer
     }
 
+    /// A lost space (membership removed): the working set deletes its folder and forgets its
+    /// pins, applied pins and recorded folders; other spaces keep theirs.
+    func testLostSpaceDropsItsPinsAndParentMap() async throws {
+        let team = "6f1c0d2e-0000-4000-8000-000000000001"
+        let pin = pinning()
+        try pin.store.setFolder("d_k", pinned: true, space: team)
+        try pin.store.setAppliedPins(PinSet(wholeSpace: false, folders: ["d_k"]), space: team)
+        try pin.store.setFolder("d_f", pinned: true, space: "personal")
+        pin.parentMap.record([Fixtures.item(id: "d_k", parentId: "r_\(team)", type: "folder"),
+                              Fixtures.item(id: "d_sub", parentId: "d_k", type: "folder"),
+                              Fixtures.item(id: "d_f", parentId: "root", type: "folder")])
+        MockURLProtocol.reset { _ in .json(200, #"{"changes":[],"cursor":"11","hasMore":false}"#) }
+        let layout = Fixtures.layout   // the team space is gone
+        let enumerator = FileProviderEnumerator(containerIdentifier: .workingSet, client: Fixtures.client(),
+                                                layout: { layout }, pinning: pin)
+        let observer = MockChangeObserver(expectation(description: "changes"))
+        enumerator.enumerateChanges(for: observer, from: SyncAnchorCodec.encode(["personal": "10", team: "50"]))
+        await fulfillment(of: [observer.finished], timeout: 5)
+        XCTAssertNil(observer.error)
+        XCTAssertEqual(observer.deleted.map(\.rawValue), ["space:\(team)"])
+        XCTAssertTrue(pin.store.pins(space: team).isEmpty)
+        XCTAssertTrue(pin.store.appliedPins(space: team).isEmpty)
+        XCTAssertNil(pin.parentMap.parent(of: "d_k"))
+        XCTAssertNil(pin.parentMap.parent(of: "d_sub"))
+        XCTAssertEqual(pin.parentMap.parent(of: "d_f"), "root")
+        XCTAssertEqual(pin.store.pins(space: "personal").folders, ["d_f"])
+    }
+
     func testContainerItemsGetThePolicyOfTheirFirstLevelFolder() async throws {
         let pin = pinning()
         try pin.store.setFolder("d_fotos", pinned: true, space: "personal")
