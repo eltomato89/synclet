@@ -6,6 +6,7 @@ import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.UUID
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -14,6 +15,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import tech.jensk.synclet.core.api.SyncApi
 import tech.jensk.synclet.core.api.SyncItem
 import tech.jensk.synclet.core.api.SyncJson
 
@@ -144,6 +147,23 @@ class UploadQueue(private val dir: File, private val clock: () -> Long = System:
         removed
     }
 
+    /**
+     * After an explicit delete of [itemId]: removes its waiting or running replaces (a running upload stops when its
+     * entry is gone) and returns them. Replaces that became conflict copies stay: they carry the user's edit as a
+     * new file, which must not be lost with the deleted one.
+     */
+    suspend fun dropReplacesOf(accountKey: String, itemId: String): List<UploadEntry> = mutex.withLock {
+        ensureLoaded()
+        val (doomed, kept) = state.value.partition {
+            it.accountKey == accountKey && it.itemId == itemId && it.kind == UploadKind.REPLACE &&
+                it.conflictCopyName == null && (it.status == UploadStatus.WAITING || it.status == UploadStatus.UPLOADING)
+        }
+        if (doomed.isEmpty()) return@withLock emptyList()
+        write(kept)
+        withContext(Dispatchers.IO) { doomed.forEach { copyFile(it.id).delete() } }
+        doomed
+    }
+
     suspend fun removeAccount(accountKey: String) = mutex.withLock {
         ensureLoaded()
         val (gone, kept) = state.value.partition { it.accountKey == accountKey }
@@ -224,5 +244,22 @@ class UploadQueue(private val dir: File, private val clock: () -> Long = System:
     private companion object {
         const val VERSION = 1
         const val DONE_RETENTION_MS = 24 * 3_600_000L
+    }
+}
+
+/**
+ * [UploadQueue.dropReplacesOf] plus a best-effort terminate of their tus uploads, only on the account's own origin
+ * (no token to a foreign host). Shared by the provider and the app's delete.
+ */
+suspend fun UploadQueue.dropReplacesOf(api: SyncApi, accountKey: String, itemId: String) {
+    for (entry in dropReplacesOf(accountKey, itemId)) {
+        val tus = entry.tusUrl?.toHttpUrlOrNull()?.takeIf { SyncApi.sameOrigin(it, api.origin) } ?: continue
+        try {
+            TusClient(api).terminate(tus)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // The server expires abandoned tus uploads on its own.
+        }
     }
 }
