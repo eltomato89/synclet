@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="preview_share">Teilen</string>
+    <string name="preview_share_link">Link teilen</string>
+    <string name="preview_download">In „Downloads“ sichern</string>
+    <string name="preview_saved">In „Downloads“ gesichert</string>
+    <string name="preview_open_with">Öffnen mit …</string>
+    <string name="preview_no_app">Keine App kann diese Datei öffnen.</string>
+    <string name="preview_truncated">Es wird nur der Anfang der Datei angezeigt.</string>
+    <string name="preview_loading">Wird geladen: %1$d %%</string>
+    <string name="preview_back">Zurück</string>
+    <string name="preview_retry">Erneut versuchen</string>
+</resources>
