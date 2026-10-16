@@ -9,6 +9,7 @@ import { pipeline } from 'node:stream/promises';
 import { APP_CONFIG, AppConfig } from '../config';
 import { freeName, nameKey, tempName, TRASH_STAGING_PREFIX, trashStagingName, validateName } from '../common/names';
 import { absPath, joinRel, parentRel as parentOf, realpathInside } from '../common/paths';
+import { UUID } from '../common/ids';
 import { SyncError } from '../common/sync-error';
 import type { IndexSpace } from '../common/types';
 import { ItemStore } from '../journal/item-store';
@@ -47,6 +48,8 @@ interface TrashIntent {
   spaceId: string; itemId: string; originalRel: string; name: string; type: 'folder' | 'file';
   /** Intents written before Phase 4 carry the user id (= personal space id) instead. */
   userId?: string;
+  /** Who deleted it (absent in older intents). */
+  deletedBy?: string;
 }
 
 async function sizeOf(abs: string): Promise<bigint> {
@@ -628,7 +631,7 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
    * possibly slow copy to /meta happens after commit, in the background (`pendingTrash()`).
    * A crash in between is finished by `recoverStagedTrash()` at the next start.
    */
-  async remove(space: IndexSpace, itemId: string): Promise<void> {
+  async remove(space: IndexSpace, itemId: string, deletedBy?: string): Promise<void> {
     const trashId = randomUUID();
     const staging = path.join(this.root(space), trashStagingName(trashId));
     let staged: { from: string; storePath: string } | null = null;
@@ -640,7 +643,7 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
         // Already gone on the host (not indexed yet): the delete stands, there is nothing to trash.
         if ((await this.entryOnDisk(space, item)) === 'ok') {
           const from = this.abs(space, item.path);
-          await this.writeIntent(trashId, { spaceId: space.id, itemId: item.id, originalRel: item.path, name: item.name, type: item.type });
+          await this.writeIntent(trashId, { spaceId: space.id, itemId: item.id, originalRel: item.path, name: item.name, type: item.type, ...(deletedBy ? { deletedBy } : {}) });
           try {
             await moveAcrossFs(from, staging); // rename; copy only if a nested mount is in between
           } catch (e) {
@@ -656,7 +659,7 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
             data: {
               id: trashId, spaceId: space.id, itemId: item.id, type: item.type, name: item.name, originalPath: item.path,
               size: gone.reduce((s, i) => s + i.size, 0n), storePath: (staged as { storePath: string }).storePath,
-              manifest: gone.map(manifestEntry), deletedAt, expiresAt: this.trashExpiry(deletedAt),
+              manifest: gone.map(manifestEntry), deletedAt, expiresAt: this.trashExpiry(deletedAt), deletedBy: deletedBy ?? null,
             },
           });
         }
@@ -813,7 +816,7 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
       data: {
         id: trashId, spaceId: space.id, itemId: intent.itemId, type: intent.type, name: intent.name, originalPath: intent.originalRel,
         size: await sizeOf(staged), storePath, manifest: [{ id: intent.itemId, type: intent.type, path: intent.originalRel, name: intent.name }],
-        deletedAt, expiresAt: this.trashExpiry(deletedAt),
+        deletedAt, expiresAt: this.trashExpiry(deletedAt), deletedBy: typeof intent.deletedBy === 'string' && UUID.test(intent.deletedBy) ? intent.deletedBy : null,
       },
     });
     await this.finishTrash(staged, storePath);

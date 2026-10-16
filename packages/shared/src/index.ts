@@ -97,6 +97,8 @@ export interface ShareLinkWire {
    * restoring re-activates it. Only revoking is possible meanwhile (itemName/itemType from the trash).
    */
   itemTrashed: boolean;
+  /** API id of the shared item's space (`personal` = the caller's own); absent from older servers = personal. */
+  spaceId?: string;
 }
 export interface CreateShareInput {
   itemId: string; password?: string | null; expiresAt?: string | null;
@@ -167,7 +169,11 @@ export interface AdminUserWire extends PublicUser {
 }
 export interface AdminSessionWire { id: string; userAgent: string | null; createdAt: string; expiresAt: string }
 export interface AdminDeviceWire extends SyncDevice { userId: string }
-export interface AdminShareWire extends ShareLinkWire { owner: { id: string; username: string } }
+export interface AdminShareWire extends ShareLinkWire {
+  owner: { id: string; username: string };
+  /** The shared item's space (`id` = the space uuid; a personal space is named after its user). Absent from older servers. */
+  space?: { id: string; name: string; kind: SyncSpaceKind };
+}
 export interface DiskUsage { totalBytes: number; freeBytes: number }
 export interface AdminStatusWire {
   version: string; uptimeSec: number;

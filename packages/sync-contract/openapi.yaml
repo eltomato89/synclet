@@ -669,7 +669,7 @@ paths:
     get:
       tags: [versions]
       operationId: listVersions
-      summary: Previous versions of a file, newest first
+      summary: Previous versions of a file, newest first (needs read in the file's space)
       responses:
         '200':
           description: Versions.
@@ -718,7 +718,7 @@ paths:
     post:
       tags: [versions]
       operationId: restoreVersion
-      summary: Make a version current again (the current content becomes a version first)
+      summary: Make a version current again (the current content becomes a version first; needs write)
       responses:
         '200':
           description: The file after the restore (`version` + 1, same `id`).
@@ -727,6 +727,7 @@ paths:
               schema: { $ref: '#/components/schemas/SyncItem' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '507': { $ref: '#/components/responses/InsufficientStorage' }
 
@@ -734,28 +735,31 @@ paths:
     get:
       tags: [search]
       operationId: search
-      summary: Search names and extracted text
+      summary: Search names and extracted text across all readable spaces (or one)
       parameters:
         - { name: q, in: query, required: true, schema: { type: string, minLength: 1, maxLength: 200 } }
         - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 50, default: 20 } }
         - { name: offset, in: query, required: false, schema: { type: integer, minimum: 0, maximum: 10000, default: 0 } }
-        - { name: folder, in: query, required: false, schema: { type: string }, description: Restrict to the subtree of this folder id. }
+        - { name: folder, in: query, required: false, schema: { type: string }, description: 'Restrict to the subtree of this folder id (`root` / `r_<uuid>`: that whole space).' }
+        - { name: space, in: query, required: false, schema: { type: string }, description: 'Restrict to one space (`personal` or a space uuid). Without it: every readable, available space. No access → `404`.' }
       responses:
         '200':
-          description: Hits, best first.
+          description: Hits, best first; each `item` carries its `spaceId`, `path` is relative to the space root.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SearchResponse' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
   /sync/v1/recent:
     get:
       tags: [search]
       operationId: recent
-      summary: Most recently modified files
+      summary: Most recently modified files across all readable spaces (or one)
       parameters:
         - { name: limit, in: query, required: false, schema: { type: integer, minimum: 1, maximum: 200, default: 50 } }
+        - { name: space, in: query, required: false, schema: { type: string }, description: 'Restrict to one space (`personal` or a space uuid). No access → `404`.' }
       responses:
         '200':
           description: Files, newest `modifiedAt` first.
@@ -765,6 +769,8 @@ paths:
                 type: array
                 items: { $ref: '#/components/schemas/SyncItem' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
 
   /sync/v1/uploads:
     options:
@@ -885,7 +891,7 @@ paths:
     get:
       tags: [trash]
       operationId: listTrash
-      summary: Trash entries, most recently deleted first
+      summary: Trash entries of every space the caller can write, most recently deleted first
       responses:
         '200':
           description: Entries.
@@ -898,7 +904,9 @@ paths:
     delete:
       tags: [trash]
       operationId: emptyTrash
-      summary: Empty the whole trash
+      summary: Empty the trash of the personal space (or of `space`)
+      parameters:
+        - { name: space, in: query, required: false, schema: { type: string }, description: 'Space to empty: `personal` (default) or a space uuid; needs write.' }
       responses:
         '200':
           description: Number of removed entries.
@@ -906,16 +914,20 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/EmptyTrashResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
   /trash/{trashId}:
     parameters:
       - { name: trashId, in: path, required: true, schema: { type: string, format: uuid } }
     delete:
       tags: [trash]
       operationId: deleteTrashEntry
-      summary: Delete one trash entry forever
+      summary: Delete one trash entry forever (needs write in its space)
       responses:
         '204': { description: Deleted forever. }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/TrashBusy' }
   /trash/{trashId}/restore:
@@ -924,7 +936,7 @@ paths:
     post:
       tags: [trash]
       operationId: restoreTrashEntry
-      summary: Restore to the original folder (or the root), with the original ids
+      summary: Restore to the original folder (or the space root) in its space, with the original ids (needs write)
       responses:
         '200':
           description: Restored.
@@ -932,6 +944,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/RestoreResult' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/TrashBusy' }
         '507': { $ref: '#/components/responses/InsufficientStorage' }
@@ -959,6 +972,9 @@ paths:
       tags: [shares]
       operationId: createShare
       summary: Create a share link for a file or folder
+      description: |
+        Needs write in the item's space. The public link only works while its creator is enabled
+        and still has write in that space; otherwise it answers `404` like a revoked link.
       requestBody:
         required: true
         content:
@@ -972,7 +988,9 @@ paths:
               schema: { $ref: '#/components/schemas/ShareLink' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
   /shares/{id}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
@@ -1468,6 +1486,8 @@ components:
         deletedAt: { type: string, format: date-time }
         expiresAt: { type: [string, 'null'], format: date-time }
         itemCount: { type: integer, minimum: 1 }
+        spaceId: { type: string, description: 'API id of the entry''s space (`personal` or the space uuid); absent from older servers = personal.' }
+        deletedBy: { type: [string, 'null'], format: uuid, description: 'User id of whoever deleted it; null when unknown (e.g. deleted on disk).' }
     RestoreResult:
       type: object
       required: [item, restoredTo, renamed]
@@ -1502,6 +1522,7 @@ components:
         revokedAt: { type: [string, 'null'], format: date-time, description: Always null in `GET /shares` (revoked links are not listed). }
         hits: { type: integer, minimum: 0 }
         itemTrashed: { type: boolean, description: The item is in the trash; the link answers 404 until it is restored. }
+        spaceId: { type: string, description: 'API id of the shared item''s space (`personal` or the space uuid); absent from older servers = personal.' }
     CreateShareLink:
       type: object
       required: [itemId]

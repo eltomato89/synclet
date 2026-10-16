@@ -13,6 +13,7 @@ import { absPath } from '../common/paths';
 import { SyncError } from '../common/sync-error';
 import type { IndexSpace, IndexUser } from '../common/types';
 import { APP_CONFIG, AppConfig } from '../config';
+import { SpaceAccess } from '../spaces/space-access.service';
 import { SpacesRepo } from '../spaces/spaces.repo';
 import { PrismaService } from '../prisma/prisma.service';
 import { parseSyncId, UUID } from '../sync/sync-ids';
@@ -86,6 +87,7 @@ export class ShareAuth {
     private readonly serverConfig: ServerConfigService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
     private readonly spaces: SpacesRepo,
+    private readonly access: SpaceAccess,
   ) {}
 
   private async secretBox(): Promise<SecretBox> {
@@ -140,12 +142,17 @@ export class ShareAuth {
     return this.load(share);
   }
 
-  /** Owner (enabled) and live shared item of an active share; 404 otherwise. No password check. */
+  /**
+   * Owner and live shared item of an active share; 404 otherwise. No password check. A link is
+   * only valid while its creator is enabled and still has write in the share's space (an available
+   * one): losing either makes it answer like a revoked link, regaining it re-activates it.
+   */
   async load(share: ShareLink): Promise<ResolvedShare> {
     const owner = await this.prisma.user.findUnique({ where: { id: share.ownerId } });
     if (!owner || owner.disabledAt) throw new SyncError('not_found');
-    const space = await this.spaces.byId(share.spaceId);
-    if (!space) throw new SyncError('not_found');
+    const row = await this.prisma.space.findUnique({ where: { id: share.spaceId } });
+    if (!row || row.status !== 'available' || (await this.access.roleFor(owner, row)) !== 'write') throw new SyncError('not_found');
+    const space = this.spaces.toIndexSpace(row);
     const root = await this.prisma.item.findFirst({ where: { id: share.itemId, spaceId: share.spaceId, deletedAt: null } });
     if (!root) throw new SyncError('not_found');
     return { share, root, space, owner: { id: owner.id, username: owner.username, displayName: owner.displayName } };

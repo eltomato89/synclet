@@ -10,6 +10,8 @@ import { UUID } from '../sync/sync-ids';
 
 const Query_ = z.object({
   userId: z.string().regex(UUID).optional(),
+  /** Space uuid: only links into that space. */
+  spaceId: z.string().regex(UUID).optional(),
   status: z.enum(['active', 'expired', 'all']).default('active'),
 });
 

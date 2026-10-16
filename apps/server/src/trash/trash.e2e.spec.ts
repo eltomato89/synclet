@@ -1,7 +1,9 @@
 import { existsSync } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
-import { createTestApp, TestContext } from '../../test/context';
+import { createTestApp, createTestSpace, createTestUser, TestContext } from '../../test/context';
+import { AuthService } from '../auth/auth.service';
+import type { IndexSpace, IndexUser } from '../common/types';
 import { FilesService } from '../files/files.service';
 
 describe('Trash API', () => {
@@ -101,5 +103,78 @@ describe('Trash API', () => {
   it('works with a device token', async () => {
     const dev = (await sync('POST', '/devices', { payload: { name: 'Mac', platform: 'macos', appVersion: '1.0' } })).json().token;
     expect((await req('GET', '/api/trash', { auth: dev })).statusCode).toBe(200);
+  });
+});
+
+describe('Trash API in team spaces', () => {
+  let ctx: TestContext; let alice: IndexUser; let bob: IndexUser; let carol: IndexUser; let team: IndexSpace;
+  const tokens = new Map<string, string>();
+  const req = (as: IndexUser, method: string, url: string, opts: { payload?: unknown; body?: string } = {}) =>
+    ctx.app.inject({
+      method: method as 'GET', url,
+      headers: { authorization: `Bearer ${tokens.get(as.id)}`, ...(opts.body !== undefined ? { 'content-type': 'application/octet-stream' } : {}) },
+      ...(opts.body !== undefined ? { body: opts.body } : opts.payload !== undefined ? { payload: opts.payload as object } : {}),
+    });
+  const sync = (as: IndexUser, method: string, url: string, opts: { payload?: unknown; body?: string } = {}) => req(as, method, `/api/sync/v1${url}`, opts);
+  const settle = () => ctx.app.get(FilesService).pendingTrash();
+
+  beforeEach(async () => {
+    ctx = await createTestApp();
+    alice = await createTestUser(ctx, 'alice');
+    bob = await createTestUser(ctx, 'bob');
+    carol = await createTestUser(ctx, 'carol');
+    for (const u of [alice, bob, carol]) tokens.set(u.id, await ctx.app.get(AuthService).signAccess(await ctx.prisma.user.findUniqueOrThrow({ where: { id: u.id } })));
+    team = await createTestSpace(ctx, 'Team');
+    await ctx.prisma.spaceMember.createMany({ data: [
+      { spaceId: team.id, userId: alice.id, role: 'write' },
+      { spaceId: team.id, userId: bob.id, role: 'write' },
+      { spaceId: team.id, userId: carol.id, role: 'read' },
+    ] });
+  });
+  afterEach(async () => { await ctx.close(); });
+
+  it('delete in a team space: visible to write members (spaceId, deletedBy), not to read members; another member restores it into the space', async () => {
+    const folder = (await sync(alice, 'POST', '/items', { payload: { parentId: `r_${team.id}`, type: 'folder', name: 'Docs' } })).json();
+    const f = (await sync(alice, 'POST', `/items/upload?parentId=${folder.id}&name=a.txt`, { body: 'AAA' })).json();
+    const mine = (await sync(alice, 'POST', '/items/upload?parentId=root&name=mine.txt', { body: 'm' })).json();
+    expect((await sync(alice, 'DELETE', `/items/${f.id}`)).statusCode).toBe(204);
+    expect((await sync(alice, 'DELETE', `/items/${mine.id}`)).statusCode).toBe(204);
+    await settle();
+
+    const aliceList = (await req(alice, 'GET', '/api/trash')).json();
+    expect(aliceList).toHaveLength(2);
+    expect(aliceList.find((e: { name: string }) => e.name === 'mine.txt')).toMatchObject({ spaceId: 'personal', deletedBy: alice.id });
+    const entry = aliceList.find((e: { name: string }) => e.name === 'a.txt');
+    expect(entry).toMatchObject({ itemId: f.id, spaceId: team.id, deletedBy: alice.id, originalPath: 'Docs/a.txt' });
+    const bobList = (await req(bob, 'GET', '/api/trash')).json();
+    expect(bobList).toEqual([expect.objectContaining({ id: entry.id, spaceId: team.id, deletedBy: alice.id })]);
+    expect((await req(carol, 'GET', '/api/trash')).json()).toEqual([]);
+    // read members cannot restore or delete (403), non-members do not see it (404)
+    expect((await req(carol, 'POST', `/api/trash/${entry.id}/restore`)).statusCode).toBe(403);
+    expect((await req(carol, 'DELETE', `/api/trash/${entry.id}`)).statusCode).toBe(403);
+    const eve = await createTestUser(ctx, 'eve');
+    tokens.set(eve.id, await ctx.app.get(AuthService).signAccess(await ctx.prisma.user.findUniqueOrThrow({ where: { id: eve.id } })));
+    expect((await req(eve, 'POST', `/api/trash/${entry.id}/restore`)).statusCode).toBe(404);
+
+    const res = await req(bob, 'POST', `/api/trash/${entry.id}/restore`);
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toMatchObject({ restoredTo: 'Docs/a.txt', item: { id: f.id, parentId: folder.id, spaceId: team.id } });
+    expect((await sync(carol, 'GET', `/items/${f.id}/content`)).body).toBe('AAA');
+    expect(existsSync(path.join(team.rootPath, 'Docs', 'a.txt'))).toBe(true);
+    expect((await req(bob, 'GET', '/api/trash')).json()).toEqual([]);
+  });
+
+  it('emptying the trash empties only the personal space unless ?space= is given', async () => {
+    const t = (await sync(alice, 'POST', `/items/upload?parentId=r_${team.id}&name=t.txt`, { body: 't' })).json();
+    const p = (await sync(alice, 'POST', '/items/upload?parentId=root&name=p.txt', { body: 'p' })).json();
+    await sync(alice, 'DELETE', `/items/${t.id}`);
+    await sync(alice, 'DELETE', `/items/${p.id}`);
+    await settle();
+    expect((await req(alice, 'DELETE', '/api/trash')).json()).toEqual({ removed: 1 });
+    expect((await req(alice, 'GET', '/api/trash')).json()).toEqual([expect.objectContaining({ name: 't.txt', spaceId: team.id })]);
+    expect((await req(carol, 'DELETE', `/api/trash?space=${team.id}`)).statusCode).toBe(403);
+    expect((await req(alice, 'DELETE', '/api/trash?space=00000000-0000-4000-8000-000000000000')).statusCode).toBe(404);
+    expect((await req(bob, 'DELETE', `/api/trash?space=${team.id}`)).json()).toEqual({ removed: 1 });
+    expect((await req(alice, 'GET', '/api/trash')).json()).toEqual([]);
   });
 });

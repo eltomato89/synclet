@@ -11,6 +11,7 @@ import type { AuthUser, IndexSpace } from '../common/types';
 import { APP_CONFIG, AppConfig } from '../config';
 import { FilesService } from '../files/files.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { SpaceAccess, type Role } from '../spaces/space-access.service';
 import { SpacesRepo } from '../spaces/spaces.repo';
 import { toSyncId, UUID } from '../sync/sync-ids';
 
@@ -48,8 +49,15 @@ const CONTENT_TOKEN_TTL = '1d';
 const CALLBACK_TOKEN_TTL = '7d';
 
 export type FileTokenPurpose = 'content' | 'callback';
-/** `u`: the item's space id (= the owner's user id for a personal space). */
-interface FileToken { i: string; u: string; p: FileTokenPurpose }
+/**
+ * `i`: item id; `s`: the item's space id; `u`: the user the session was opened for; `m: 'view'`:
+ * a view-only session (read access), whose callbacks never write. Tokens of older servers carry
+ * no `s` and `u` = the owner's id = their personal space id.
+ */
+interface FileToken { i: string; s?: string; u: string; p: FileTokenPurpose; m?: 'view' }
+
+/** Space id a file token points at. */
+const tokenSpace = (t: Pick<FileToken, 's' | 'u'>) => t.s ?? t.u;
 
 export function extOf(name: string): string {
   const dot = name.lastIndexOf('.');
@@ -84,6 +92,7 @@ export class OfficeService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly spaces: SpacesRepo,
+    private readonly access: SpaceAccess,
     private readonly files: FilesService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
@@ -116,8 +125,10 @@ export class OfficeService {
     }
   }
 
-  fileToken(item: Item, p: FileTokenPurpose): string {
-    return this.sign({ i: item.id, u: item.spaceId, p } satisfies FileToken, p === 'callback' ? CALLBACK_TOKEN_TTL : CONTENT_TOKEN_TTL);
+  /** File token of `item` for a session opened by `user` (`view`: read access only). */
+  fileToken(item: Item, user: { id: string }, p: FileTokenPurpose, view = false): string {
+    const claims: FileToken = { i: item.id, s: item.spaceId, u: user.id, p, ...(view ? { m: 'view' as const } : {}) };
+    return this.sign(claims, p === 'callback' ? CALLBACK_TOKEN_TTL : CONTENT_TOKEN_TTL);
   }
 
   /**
@@ -127,16 +138,22 @@ export class OfficeService {
   verifyFileToken(token: string | undefined, syncId: string, p: FileTokenPurpose, opts: { allowExpired?: boolean } = {}): FileToken & { expired: boolean } {
     this.assertEnabled();
     const claims = token ? this.verify<FileToken & { exp?: number }>(token, { ignoreExpiration: opts.allowExpired }) : null;
-    if (!claims || claims.p !== p || typeof claims.i !== 'string' || typeof claims.u !== 'string' || syncId !== `f_${claims.i}`) {
+    if (!claims || claims.p !== p || typeof claims.i !== 'string' || typeof claims.u !== 'string' || syncId !== `f_${claims.i}`
+      || (claims.s !== undefined && typeof claims.s !== 'string')) {
       throw new SyncError('forbidden', 'invalid file token');
     }
     const expired = typeof claims.exp === 'number' && claims.exp * 1000 <= Date.now();
-    return { i: claims.i, u: claims.u, p: claims.p, expired };
+    return { i: claims.i, s: claims.s, u: claims.u, p: claims.p, ...(claims.m === 'view' ? { m: 'view' as const } : {}), expired };
   }
 
   /* ------------------------------------------------------------------ editor config */
 
-  async editorConfig(user: AuthUser, item: Item, langRaw: string | undefined): Promise<OfficeEditorConfig> {
+  /**
+   * `role` is the caller's role in the item's space: write opens editable formats for editing;
+   * read always opens a view-only session under its own document key (never joining, and never
+   * taking over the callback of, an editing session), whose callbacks write nothing.
+   */
+  async editorConfig(user: AuthUser, item: Item, role: Role, langRaw: string | undefined): Promise<OfficeEditorConfig> {
     this.assertEnabled();
     const ext = extOf(item.name);
     const documentType = TYPES[ext];
@@ -144,22 +161,22 @@ export class OfficeService {
     const u = await this.prisma.user.findUniqueOrThrow({ where: { id: user.id }, select: { displayName: true, username: true } });
     const apiUrl = trimSlash(this.config.officeApiUrl);
     const syncId = toSyncId(item);
-    // Synclet has no shared folders yet: the requesting user is the owner and may write.
-    const edit = EDITABLE.has(ext);
+    const viewOnly = role !== 'write';
+    const edit = !viewOnly && EDITABLE.has(ext);
     const config = {
       documentType,
       document: {
         fileType: ext,
         // A new key per version: after a save a new editing session starts.
-        key: `${item.id}-${item.version}`,
+        key: viewOnly ? `${item.id}-${item.version}-view` : `${item.id}-${item.version}`,
         title: item.name,
-        url: `${apiUrl}/office/files/${syncId}/content?t=${this.fileToken(item, 'content')}`,
+        url: `${apiUrl}/office/files/${syncId}/content?t=${this.fileToken(item, user, 'content', viewOnly)}`,
         permissions: { edit, download: true, print: true, comment: edit },
       },
       editorConfig: {
         mode: edit ? 'edit' : 'view',
         lang: langRaw === 'de' ? 'de' : 'en',
-        callbackUrl: `${apiUrl}/office/files/${syncId}/callback?t=${this.fileToken(item, 'callback')}`,
+        callbackUrl: `${apiUrl}/office/files/${syncId}/callback?t=${this.fileToken(item, user, 'callback', viewOnly)}`,
         user: { id: user.id, name: u.displayName || u.username },
         customization: { forcesave: true },
       },
@@ -173,12 +190,34 @@ export class OfficeService {
 
   /* ------------------------------------------------------------------ for the Document Server */
 
-  /** Space of the owner (enabled account) and live file row a content token points at; 404 otherwise. */
+  /**
+   * Space and item a content token points at, while the session's user (enabled) can still read
+   * that space; 404 otherwise (503 while the space is missing).
+   */
   async contentTarget(syncId: string, token: string | undefined): Promise<{ space: IndexSpace; itemId: string }> {
     const t = this.verifyFileToken(token, syncId, 'content');
-    const owner = await this.prisma.user.findUnique({ where: { id: t.u }, select: { id: true, disabledAt: true } });
-    if (!owner || owner.disabledAt) throw new SyncError('not_found');
-    return { space: await this.spaces.personalFor(owner.id), itemId: t.i };
+    try {
+      const { space } = await this.access.require({ id: t.u }, tokenSpace(t), 'read');
+      return { space, itemId: t.i };
+    } catch (e) {
+      if (e instanceof SyncError && e.code === 'not_found') throw new SyncError('not_found');
+      throw e;
+    }
+  }
+
+  /**
+   * Where a save of item `itemId` goes: the item's current space if it is live (it may have been
+   * moved to another space while editing), else the token's space (a conflict copy is written
+   * there). `drop`: the space is gone or the session's user may no longer write there;
+   * `retry`: the space is temporarily missing.
+   */
+  private async saveTarget(t: FileToken): Promise<{ space: IndexSpace } | { drop: string } | { retry: string }> {
+    const live = await this.prisma.item.findFirst({ where: { id: t.i, deletedAt: null }, select: { spaceId: true } });
+    const row = await this.prisma.space.findUnique({ where: { id: live?.spaceId ?? tokenSpace(t) } });
+    if (!row || row.status === 'ignored') return { drop: 'space gone' };
+    if (row.status === 'missing') return { retry: 'space unavailable' };
+    if ((await this.access.roleFor({ id: t.u }, row)) !== 'write') return { drop: 'editor has no write access to the space' };
+    return { space: this.spaces.toIndexSpace(row) };
   }
 
   /**
@@ -202,6 +241,7 @@ export class OfficeService {
     const data = (verified.payload && typeof verified.payload === 'object' ? verified.payload : verified) as Record<string, unknown>;
     const status = Number(data.status);
     if (!SAVE_STATUSES.has(status)) return { error: 0 };
+    if (t.m === 'view') throw new SyncError('forbidden', 'view-only session');
 
     // The session key is "<itemId>-<version it started on>"; anything else is not this file's session.
     const key = String(data.key ?? '');
@@ -210,14 +250,19 @@ export class OfficeService {
     const baseVersion = Number(m[2]);
     if (t.expired) this.log.warn(`office callback for ${syncId} with an expired callback token accepted (signed by the document server)`);
 
-    // The personal space is deleted together with its owner.
-    const space = await this.spaces.byId(t.u);
-    if (!space) {
-      // Only a vanished owner drops the save (otherwise the Document Server retries forever). A
-      // trashed or deleted file still gets the edits, as a conflict copy (see saveOfficeContent).
-      this.log.warn(`office save for ${syncId} discarded: owner gone`);
+    // Only a vanished space or a lost write access drops the save (otherwise the Document Server
+    // retries forever). A trashed or deleted file still gets the edits, as a conflict copy (see
+    // saveOfficeContent).
+    const target = await this.saveTarget(t);
+    if ('drop' in target) {
+      this.log.warn(`office save for ${syncId} discarded: ${target.drop}`);
       return { error: 0 };
     }
+    if ('retry' in target) {
+      this.log.warn(`office save for ${syncId}: ${target.retry}, asking the document server to retry`);
+      return { error: 1 };
+    }
+    const space = target.space;
 
     const url = this.downloadUrl(data.url);
     if (!url) {

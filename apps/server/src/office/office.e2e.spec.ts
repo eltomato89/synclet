@@ -3,7 +3,9 @@ import { readdir, readFile, rename, stat, writeFile, utimes } from 'node:fs/prom
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
-import { createTestApp, TestContext } from '../../test/context';
+import { createTestApp, createTestSpace, createTestUser, TestContext } from '../../test/context';
+import { AuthService } from '../auth/auth.service';
+import type { IndexSpace } from '../common/types';
 import { VersionsService } from '../versions/versions.service';
 import { conflictName, OfficeService, TEMPLATE_DIR } from './office.service';
 
@@ -409,6 +411,87 @@ describe('Office (Euro-Office) integration', () => {
       expect((await api('POST', '/items/new-office', { payload: { parentId: 'root', name: '  ', format: 'docx' } })).statusCode).toBe(400);
       expect((await api('POST', '/items/new-office', { payload: { parentId: 'root', name: 'a/b', format: 'docx' } })).statusCode).toBe(400);
       expect((await api('POST', '/items/new-office', { payload: { parentId: atRoot.json().id, name: 'x', format: 'docx' } })).statusCode).toBe(400);
+    });
+  });
+
+  describe('in team spaces', () => {
+    let team: IndexSpace; let carolId: string; let carol: string;
+    const as = (t: string, url: string) => ctx.app.inject({ method: 'GET', url: `/api/sync/v1${url}`, headers: { authorization: `Bearer ${t}` } });
+    beforeEach(async () => {
+      await start();
+      team = await createTestSpace(ctx, 'Team');
+      const c = await createTestUser(ctx, 'carol');
+      carolId = c.id;
+      carol = await ctx.app.get(AuthService).signAccess(await ctx.prisma.user.findUniqueOrThrow({ where: { id: c.id } }));
+      await ctx.prisma.spaceMember.createMany({ data: [{ spaceId: team.id, userId, role: 'write' }, { spaceId: team.id, userId: c.id, role: 'read' }] });
+    });
+
+    it('write members edit: tokens carry space and editor; the callback writes into the team folder on disk', async () => {
+      const folder = (await api('POST', '/items', { payload: { parentId: `r_${team.id}`, type: 'folder', name: 'Docs' } })).json();
+      const item = await upload('Plan.docx', 'original', folder.id);
+      const res = (await api('GET', `/items/${item.id}/office`)).json();
+      expect(res).toMatchObject({ editable: true, config: { editorConfig: { mode: 'edit' } } });
+      const { key, contentPath, callbackPath } = await open(item.id);
+      const ct = jwt.verify(new URL(contentPath, 'http://x').searchParams.get('t')!, { secret: SECRET });
+      expect(ct).toMatchObject({ i: item.id.slice(2), s: team.id, u: userId, p: 'content' });
+      expect((await anon('GET', contentPath)).body).toBe('original');
+      ds.state.body = Buffer.from('team edit');
+      expect((await callback(callbackPath, saveData(key, 2))).json()).toEqual({ error: 0 });
+      expect(await readFile(path.join(team.rootPath, 'Docs', 'Plan.docx'), 'utf8')).toBe('team edit');
+      expect(await readdir(path.join(ctx.config.dataRoot, 'jens'))).toEqual([]);
+      expect((await as(carol, `/items/${item.id}/content`)).body).toBe('team edit');
+    });
+
+    it('read members get a view-only session in its own key; its callback writes nothing', async () => {
+      const item = await upload('Plan.docx', 'original', `r_${team.id}`);
+      const res = await as(carol, `/items/${item.id}/office`);
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body).toMatchObject({ editable: false, config: { document: { permissions: { edit: false, comment: false } }, editorConfig: { mode: 'view', user: { id: carolId } } } });
+      const editKey = (await open(item.id)).key;
+      expect(body.config.document.key).not.toBe(editKey);
+      const rel = (u: string) => { const x = new URL(u); return x.pathname + x.search; };
+      expect((await anon('GET', rel(body.config.document.url))).body).toBe('original');
+      const cb = await callback(rel(body.config.editorConfig.callbackUrl), { ...saveData(body.config.document.key, 2), users: [carolId] });
+      expect(cb.statusCode).toBe(403);
+      // even with the edit session's key, a view token never writes
+      expect((await callback(rel(body.config.editorConfig.callbackUrl), saveData(editKey, 2))).statusCode).toBe(403);
+      expect(ds.state.hits).toEqual([]);
+      expect(await readFile(path.join(team.rootPath, 'Plan.docx'), 'utf8')).toBe('original');
+      // outsiders: 404; read members cannot create documents (403)
+      const eve = await createTestUser(ctx, 'eve');
+      const eveT = await ctx.app.get(AuthService).signAccess(await ctx.prisma.user.findUniqueOrThrow({ where: { id: eve.id } }));
+      expect((await as(eveT, `/items/${item.id}/office`)).statusCode).toBe(404);
+      const created = await ctx.app.inject({ method: 'POST', url: '/api/sync/v1/items/new-office', headers: { authorization: `Bearer ${carol}` }, payload: { parentId: `r_${team.id}`, name: 'X', format: 'docx' } });
+      expect(created.statusCode).toBe(403);
+    });
+
+    it('creates new documents in a team folder', async () => {
+      const res = await api('POST', '/items/new-office', { payload: { parentId: `r_${team.id}`, name: 'Report', format: 'docx' } });
+      expect(res.statusCode).toBe(201);
+      expect(res.json()).toMatchObject({ name: 'Report.docx', parentId: `r_${team.id}`, spaceId: team.id });
+      expect((await stat(path.join(team.rootPath, 'Report.docx'))).isFile()).toBe(true);
+    });
+
+    it('drops the save and stops serving content when the editor lost write access', async () => {
+      const item = await upload('Plan.docx', 'original', `r_${team.id}`);
+      const { key, contentPath, callbackPath } = await open(item.id);
+      await ctx.prisma.spaceMember.updateMany({ where: { spaceId: team.id, userId }, data: { role: 'read' } });
+      expect((await callback(callbackPath, saveData(key, 2))).json()).toEqual({ error: 0 });
+      expect(ds.state.hits).toEqual([]);
+      expect(await readFile(path.join(team.rootPath, 'Plan.docx'), 'utf8')).toBe('original');
+      await ctx.prisma.spaceMember.deleteMany({ where: { spaceId: team.id, userId } });
+      expect((await anon('GET', contentPath)).statusCode).toBe(404);
+    });
+
+    it('a file moved to another space while editing is saved where it now is', async () => {
+      const item = await upload('Plan.docx', 'original', `r_${team.id}`);
+      const { key, callbackPath } = await open(item.id);
+      expect((await api('PATCH', `/items/${item.id}`, { payload: { parentId: 'root' } })).statusCode).toBe(200);
+      ds.state.body = Buffer.from('moved edit');
+      expect((await callback(callbackPath, saveData(key, 2))).json()).toEqual({ error: 0 });
+      expect(await readFile(path.join(ctx.config.dataRoot, 'jens', 'Plan.docx'), 'utf8')).toBe('moved edit');
+      expect(await readdir(team.rootPath)).toEqual([]);
     });
   });
 

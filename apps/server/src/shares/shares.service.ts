@@ -7,13 +7,14 @@ import type { Readable } from 'node:stream';
 import { hashToken, randomToken } from '../auth/crypto';
 import { assignDisplayNames } from '../common/names';
 import { SyncError } from '../common/sync-error';
-import type { IndexSpace, IndexUser } from '../common/types';
+import type { IndexUser } from '../common/types';
 import { APP_CONFIG, AppConfig } from '../config';
 import { DerivativesGc } from '../derivatives/derivatives-gc';
 import { DerivedStore } from '../derivatives/derived-store';
 import { FilesService } from '../files/files.service';
 import { ItemStore } from '../journal/item-store';
-import { SpacesRepo } from '../spaces/spaces.repo';
+import { SpaceAccess, type Role } from '../spaces/space-access.service';
+import { apiSpaceId } from '../spaces/space-ids';
 import { PrismaService } from '../prisma/prisma.service';
 import { openNoFollow } from '../sync/http-content';
 import { mimeFor } from '../sync/serializer.service';
@@ -45,7 +46,7 @@ export class SharesService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly spaces: SpacesRepo,
+    private readonly access: SpaceAccess,
     private readonly auth: ShareAuth,
     private readonly files: FilesService,
     private readonly store: ItemStore,
@@ -56,7 +57,8 @@ export class SharesService {
 
   // ---------------------------------------------------------------- owner API
 
-  private async toWire(share: ShareLink, item: Pick<Item, 'id' | 'name' | 'type'>, itemTrashed = false, withUrl = true): Promise<ShareLinkWire> {
+  /** `viewer`: whose API space id the wire carries (`personal` for the viewer's own personal space). */
+  private async toWire(share: ShareLink, item: Pick<Item, 'id' | 'name' | 'type'>, viewer: { id: string }, itemTrashed = false, withUrl = true): Promise<ShareLinkWire> {
     let url = '';
     if (withUrl) try {
       url = this.auth.url(await this.auth.openToken(share.tokenEnc, share.id));
@@ -69,7 +71,7 @@ export class SharesService {
       hasPassword: share.passwordHash !== null, expiresAt: share.expiresAt?.toISOString() ?? null,
       allowDownload: share.allowDownload, allowUpload: share.allowUpload,
       createdAt: share.createdAt.toISOString(), revokedAt: share.revokedAt?.toISOString() ?? null, hits: share.hits,
-      itemTrashed,
+      itemTrashed, spaceId: apiSpaceId({ id: share.spaceId }, viewer),
     };
   }
 
@@ -79,11 +81,22 @@ export class SharesService {
     return item;
   }
 
-  /** An active (not revoked) share of `user` with its live item; anything else is 404. */
+  /** Access of `user` to a space: no access → 404 (as for a missing item), read only → 403, missing → 503. */
+  private async requireSpace(user: IndexUser, spaceId: string, need: Role): Promise<void> {
+    try {
+      await this.access.require(user, spaceId, need);
+    } catch (e) {
+      if (e instanceof SyncError && e.code === 'not_found') throw new SyncError('not_found');
+      throw e;
+    }
+  }
+
+  /** An active (not revoked) share of `user` with its live item, still writable by them; anything else is 404 (read only: 403). */
   private async ownShare(user: IndexUser, id: string): Promise<{ share: ShareLink; item: Item }> {
     if (!UUID.test(id)) throw new SyncError('not_found');
     const share = await this.prisma.shareLink.findFirst({ where: { id, ownerId: user.id, revokedAt: null } });
     if (!share) throw new SyncError('not_found');
+    await this.requireSpace(user, share.spaceId, 'write');
     return { share, item: await this.liveItem({ id: share.spaceId }, share.itemId) };
   }
 
@@ -98,8 +111,10 @@ export class SharesService {
   async create(user: IndexUser, input: CreateShareInput): Promise<ShareLinkWire> {
     const itemId = parseItemId(input.itemId);
     if (!itemId) throw new SyncError('invalid_request', 'invalid itemId');
-    const space: IndexSpace = await this.spaces.personalFor(user.id);
-    const item = await this.liveItem(space, itemId);
+    // Any space: the item must be live and its space writable by the creator.
+    const item = await this.prisma.item.findFirst({ where: { id: itemId, deletedAt: null } });
+    if (!item) throw new SyncError('not_found');
+    await this.requireSpace(user, item.spaceId, 'write');
     SharesService.checkUpload(item, input.allowUpload);
     const id = randomUUID();
     const token = newToken();
@@ -111,7 +126,7 @@ export class SharesService {
         allowDownload: input.allowDownload ?? true, allowUpload: input.allowUpload ?? false,
       },
     });
-    return this.toWire(share, item);
+    return this.toWire(share, item, user);
   }
 
   /**
@@ -152,11 +167,11 @@ export class SharesService {
       where: { ownerId: user.id, revokedAt: null, ...(itemId ? { itemId } : {}) },
       orderBy: { createdAt: 'desc' },
     });
-    return this.wires(shares, true);
+    return this.wires(shares, user, true);
   }
 
   /** Wire form of shares; shares of items deleted for good are left out. Items are looked up in each share's space. */
-  private async wires(shares: ShareLink[], withUrl: boolean): Promise<ShareLinkWire[]> {
+  private async wires(shares: ShareLink[], viewer: { id: string }, withUrl: boolean): Promise<ShareLinkWire[]> {
     const key = (spaceId: string, itemId: string) => `${spaceId}\u0000${itemId}`;
     const items = await this.prisma.item.findMany({
       where: { id: { in: [...new Set(shares.map((s) => s.itemId))] }, spaceId: { in: [...new Set(shares.map((s) => s.spaceId))] }, deletedAt: null },
@@ -169,10 +184,10 @@ export class SharesService {
     const out: ShareLinkWire[] = [];
     for (const s of shares) {
       const item = live.get(key(s.spaceId, s.itemId));
-      if (item) out.push(await this.toWire(s, item, false, withUrl));
+      if (item) out.push(await this.toWire(s, item, viewer, false, withUrl));
       else {
         const t = trashed.get(key(s.spaceId, s.itemId));
-        if (t) out.push(await this.toWire(s, t, true, withUrl));
+        if (t) out.push(await this.toWire(s, t, viewer, true, withUrl));
       }
     }
     return out;
@@ -183,11 +198,12 @@ export class SharesService {
    * expired = not revoked but past expiry, all = additionally includes revoked shares.
    * The real link is only returned for the admin's own shares; others get `url: ''` (revoke, not reuse).
    */
-  async listForAdmin(admin: IndexUser, filter: { userId?: string; status: 'active' | 'expired' | 'all' }): Promise<AdminShareWire[]> {
+  async listForAdmin(admin: IndexUser, filter: { userId?: string; spaceId?: string; status: 'active' | 'expired' | 'all' }): Promise<AdminShareWire[]> {
     const now = new Date();
     const shares = await this.prisma.shareLink.findMany({
       where: {
         ...(filter.userId ? { ownerId: filter.userId } : {}),
+        ...(filter.spaceId ? { spaceId: filter.spaceId } : {}),
         ...(filter.status === 'all' ? {} : { revokedAt: null }),
         ...(filter.status === 'active' ? { OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] } : {}),
         ...(filter.status === 'expired' ? { expiresAt: { lte: now } } : {}),
@@ -198,11 +214,15 @@ export class SharesService {
     const byOwner = new Map<string, ShareLink[]>();
     for (const s of shares) byOwner.set(s.ownerId, [...(byOwner.get(s.ownerId) ?? []), s]);
     const wire = new Map<string, ShareLinkWire>();
-    for (const [ownerId, list] of byOwner) for (const w of await this.wires(list, ownerId === admin.id)) wire.set(w.id, w);
+    for (const [ownerId, list] of byOwner) for (const w of await this.wires(list, admin, ownerId === admin.id)) wire.set(w.id, w);
+    const spaces = new Map((await this.prisma.space.findMany({
+      where: { id: { in: [...new Set(shares.map((s) => s.spaceId))] } }, select: { id: true, name: true, kind: true },
+    })).map((sp) => [sp.id, sp]));
     const out: AdminShareWire[] = [];
     for (const s of shares) {
       const w = wire.get(s.id);
-      if (w) out.push({ ...w, owner: s.owner });
+      const sp = spaces.get(s.spaceId);
+      if (w) out.push({ ...w, owner: s.owner, ...(sp ? { space: { id: sp.id, name: sp.name, kind: sp.kind === 'team' ? 'shared' : sp.kind } } : {}) });
     }
     return out;
   }
@@ -223,7 +243,7 @@ export class SharesService {
       where: { id: share.id },
       data: { tokenHash: hashToken(token), tokenEnc: await this.auth.sealToken(token, share.id) },
     });
-    return this.toWire(updated, item);
+    return this.toWire(updated, item, user);
   }
 
   async patch(user: IndexUser, id: string, patch: SharePatch): Promise<ShareLinkWire> {
@@ -235,7 +255,7 @@ export class SharesService {
     if (patch.allowDownload !== undefined) data.allowDownload = patch.allowDownload;
     if (patch.allowUpload !== undefined) data.allowUpload = patch.allowUpload;
     const updated = await this.prisma.shareLink.update({ where: { id: share.id }, data });
-    return this.toWire(updated, item);
+    return this.toWire(updated, item, user);
   }
 
   async revoke(user: IndexUser, id: string): Promise<void> {
