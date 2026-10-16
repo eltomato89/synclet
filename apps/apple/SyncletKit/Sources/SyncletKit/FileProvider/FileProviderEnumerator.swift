@@ -211,16 +211,30 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
         }
     }
 
-    /// An error of a non-personal space's feed that must not stop the other spaces: 400/404
-    /// (a server without spaces, a lost membership) and 503 `space_unavailable`.
+    /// An error of a non-personal space's feed that must not stop the other spaces: 404 (a lost
+    /// membership, a removed space) and 503 `space_unavailable`. A 400 is not skipped: see
+    /// `isRejectedCursor`.
     static func isSkippable(_ error: Error, space: SyncSpace) -> Bool {
         guard space.id != SyncAPIClient.personalSpaceID, let error = error as? SyncAPIError else { return false }
         switch error {
-        case .notFound, .invalidRequest: return true
-        case .http(let status, let code, _): return status == 400 || (status == 503 && code == "space_unavailable")
+        case .notFound: return true
+        case .http(let status, let code, _): return isSpaceUnavailable(status: status, code: code)
         default: return false
         }
     }
+
+    /// 400 on a non-personal feed: the server does not accept that cursor. Skipping it would keep
+    /// the cursor (and freeze the feed) forever, so it becomes a full re-enumeration.
+    static func isRejectedCursor(_ error: Error, space: SyncSpace) -> Bool {
+        guard space.id != SyncAPIClient.personalSpaceID, let error = error as? SyncAPIError else { return false }
+        switch error {
+        case .invalidRequest: return true
+        case .http(let status, _, _): return status == 400
+        default: return false
+        }
+    }
+
+    static func isSpaceUnavailable(status: Int, code: String?) -> Bool { status == 503 && code == "space_unavailable" }
 
     public func enumerateChanges(for observer: any NSFileProviderChangeObserver, from anchor: NSFileProviderSyncAnchor) {
         let box = UncheckedBox(observer)
@@ -254,6 +268,9 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
                     let page: SyncChangesPage
                     do {
                         page = try await client.changes(space: space.id, since: cursor, limit: limit)
+                    } catch where Self.isRejectedCursor(error, space: space) {
+                        Log.fileProvider.info("cursor of space \(space.id, privacy: .public) rejected: full re-enumeration")
+                        throw SyncAPIError.cursorExpired
                     } catch where Self.isSkippable(error, space: space) {
                         // Try again next round from the same cursor.
                         Log.fileProvider.info("change feed of space \(space.id, privacy: .public) unavailable: \(String(describing: error), privacy: .public)")
@@ -303,8 +320,9 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
 
     /// The deleted ids of a round that really are gone. A single space: every delete. More
     /// spaces: an id upserted by any feed of the round moved (dropped); every other id is
-    /// checked with `GET /items/:id` – 404/403 ⇒ gone, found ⇒ moved to another space (its
-    /// upsert comes with that feed, maybe later) ⇒ dropped. Other errors are thrown.
+    /// checked with `GET /items/:id` – 404/403 ⇒ gone, found or 503 `space_unavailable` ⇒
+    /// still exists (moved to another space, its upsert comes with that feed, maybe later; or in
+    /// a space that is unavailable for now) ⇒ dropped. Other errors are thrown.
     static func confirmedDeletes(_ changes: [SyncChange], layout: SpaceLayout, client: SyncAPIClient) async throws -> Set<String> {
         var upserted: Set<String> = []
         var deletes: [String] = []
@@ -330,6 +348,9 @@ public final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator, @
                         return (id, false)
                     } catch SyncAPIError.notFound, SyncAPIError.forbidden {
                         return (id, true)
+                    } catch SyncAPIError.http(let status, let code, _) where isSpaceUnavailable(status: status, code: code) {
+                        // Its space's storage is gone for now: it still exists, keep it.
+                        return (id, false)
                     }
                 }
             }

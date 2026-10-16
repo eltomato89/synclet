@@ -72,7 +72,19 @@ final class TrashModel {
         await load()
     }
 
-    /// `DELETE /api/trash`.
+    /// Entries of „Meine Dateien“ (entries of servers before spaces carry no space id). Only these
+    /// are emptied by `DELETE /api/trash`: other spaces' entries stay.
+    var personalEntries: [TrashEntry] {
+        entries.filter { ($0.spaceId ?? SyncAPIClient.personalSpaceID) == SyncAPIClient.personalSpaceID }
+    }
+
+    /// „Papierkorb leeren“ is offered only when it would delete something (like the web).
+    var canEmpty: Bool { state == .loaded && !personalEntries.isEmpty }
+
+    /// The confirmation text for emptying (a key of Localizable.xcstrings).
+    static let emptyMessageKey = "All items deleted from “My Files” will be deleted forever. Deleted items of other spaces stay in the trash. This can’t be undone."
+
+    /// `DELETE /api/trash`: empties the personal space only (the server's default).
     func empty() async {
         do {
             _ = try await api.emptyTrash()

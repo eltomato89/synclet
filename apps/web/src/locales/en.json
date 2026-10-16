@@ -934,6 +934,7 @@
       "loadError": "Share links couldn't be loaded",
       "owner": "Owner",
       "allUsers": "All users",
+      "space": "Space",
       "none": {
         "active": "No active links",
         "expired": "No expired links",

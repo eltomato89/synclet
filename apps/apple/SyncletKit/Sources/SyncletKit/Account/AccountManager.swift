@@ -225,16 +225,6 @@ public final class AccountManager: Sendable {
         try accounts.upsert(account)
         return true
     }
-
-    /// `GET /account` with the device token and ``updateSpaces(key:spaces:)`` (SSE `account`,
-    /// periodic refresh). Returns `true` when the spaces changed (the caller then signals the
-    /// root container and the working set).
-    @discardableResult
-    public func refreshSpaces(key: String) async throws -> Bool {
-        guard let client = client(for: key) else { throw SyncAPIError.unauthorized(message: "account removed") }
-        let account = try await client.account()
-        return try updateSpaces(key: key, spaces: account.spaces)
-    }
 }
 
 #if os(iOS)

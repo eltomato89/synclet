@@ -42,7 +42,8 @@ private struct TrashList: View {
                     Button("Empty Trash", systemImage: "trash.slash", role: .destructive) {
                         confirmsEmpty = true
                     }
-                    .disabled(model.state != .loaded || model.entries.isEmpty)
+                    // The server empties only „Meine Dateien“: other spaces' entries stay.
+                    .disabled(!model.canEmpty)
                     .accessibilityIdentifier("trash.empty")
                 }
             }
@@ -65,7 +66,7 @@ private struct TrashList: View {
                 .accessibilityIdentifier("trash.confirmEmpty")
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("All items in the trash will be deleted forever. This can’t be undone.")
+                Text(LocalizedStringKey(TrashModel.emptyMessageKey))
             }
     }
 

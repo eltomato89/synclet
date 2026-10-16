@@ -184,11 +184,9 @@ final class EnumeratorTests: XCTestCase {
     /// A server without spaces answers `?space=` with 400/404: the personal feed keeps working
     /// and the other space keeps its cursor (or stays out of the anchor) for a later round.
     func testOldServerWithoutSpaceSupportKeepsThePersonalFeed() async {
-        for status in [400, 404] {
+        for status in [404] {
             MockURLProtocol.reset { request in
-                if request.query["space"] != nil {
-                    return status == 400 ? .error(400, "invalid_request") : .error(404, "not_found")
-                }
+                if request.query["space"] != nil { return .error(404, "not_found") }
                 if request.path.hasPrefix("/api/sync/v1/items/") { return .error(404, "not_found") }
                 return request.path.hasSuffix("/cursor")
                     ? .json(200, #"{"cursor":"5"}"#)
@@ -345,6 +343,35 @@ final class EnumeratorTests: XCTestCase {
         let error = observer.error as NSError?
         XCTAssertEqual(error?.domain, NSFileProviderErrorDomain)
         XCTAssertEqual(error?.code, NSFileProviderError.Code.syncAnchorExpired.rawValue)
+    }
+
+    /// 400 on a non-personal feed (a cursor that feed does not accept) is a full
+    /// re-enumeration: skipping it would freeze that space's feed for good.
+    func testBadCursorOfATeamFeedIsSyncAnchorExpired() async {
+        MockURLProtocol.reset { request in
+            request.query["space"] == nil
+                ? .json(200, #"{"changes":[],"cursor":"11","hasMore":false}"#)
+                : .error(400, "invalid_request")
+        }
+        let observer = await drainOnce(FileProviderEnumerator(containerIdentifier: .workingSet, client: Fixtures.client(), layout: twoSpaces))
+        let error = observer.error as NSError?
+        XCTAssertEqual(error?.domain, NSFileProviderErrorDomain)
+        XCTAssertEqual(error?.code, NSFileProviderError.Code.syncAnchorExpired.rawValue)
+    }
+
+    /// A delete whose check answers 503 `space_unavailable` (the item lives in a space whose
+    /// storage is gone for now): kept, and the batch does not fail.
+    func testDeleteCheckOfAnUnavailableSpaceKeepsTheItem() async {
+        MockURLProtocol.reset { request in
+            if request.path == "/api/sync/v1/items/f_1" { return .error(503, "space_unavailable") }
+            return request.query["space"] == nil
+                ? .json(200, #"{"changes":[{"op":"delete","id":"f_1"}],"cursor":"11","hasMore":false}"#)
+                : .json(200, #"{"changes":[],"cursor":"51","hasMore":false}"#)
+        }
+        let observer = await drainOnce(FileProviderEnumerator(containerIdentifier: .workingSet, client: Fixtures.client(), layout: twoSpaces))
+        XCTAssertNil(observer.error)
+        XCTAssertEqual(observer.deleted, [])
+        XCTAssertEqual(anchorMap(observer.anchor), ["personal": "11", Self.teamID: "51"])
     }
 
     /// `space_unavailable` (503) of one space does not stop the others.
