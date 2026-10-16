@@ -210,6 +210,8 @@ Optional. Edit `docx`, `xlsx`, `pptx`, `odt`, `ods` and `odp` files in the brows
 
 Both settings are needed: `OFFICE_JWT_SECRET` turns office editing on in Synclet and the `/documentserver` route in Caddy (without it, `/documentserver` answers 404), the profile starts the container. `COMPOSE_PROFILES=office` without a secret starts a Document Server that nothing uses (it still takes its RAM). The server uses `OFFICE_URL=${SYNCLET_PUBLIC_URL}/documentserver`; set `SYNCLET_OFFICE_PUBLIC_URL` to override it. The Document Server's welcome, example and admin pages (`/documentserver/welcome/`, `/documentserver/example/`, `/documentserver/admin/`) are not needed and answer 404; `SYNCLET_OFFICE_WELCOME=on` serves them anyway (e.g. to check the installation).
 
+**Saving.** The Document Server keeps edits in its editing session and writes them to the file when the last editor closes (about 10 seconds later), when someone clicks Save, and, while the document stays open, every 5 minutes if it has unsaved edits. So other devices and the sync clients see edits at most a few minutes late. Change the interval with `OFFICE_AUTOSAVE_INTERVAL` (e.g. `1m`, `30m`); `OFFICE_AUTOSAVE=false` turns the periodic save off.
+
 **Behind an outer reverse proxy** (nginx, Traefik, Nginx Proxy Manager) that terminates TLS, the proxy must, for the Synclet host:
 
 - pass **WebSocket** upgrades (Nginx Proxy Manager: "Websockets Support"),
