@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name" translatable="false">Synclet</string>
+    <string name="share_target_label">Save to Synclet</string>
+</resources>
