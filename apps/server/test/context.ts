@@ -29,7 +29,7 @@ export async function createTestApp(overrides: Partial<AppConfig> = {}): Promise
   // Never the real /teams and /storage of the test host.
   const teamsRoot = await mkdtemp(path.join(os.tmpdir(), 'synclet-teams-'));
   const storageRoot = await mkdtemp(path.join(os.tmpdir(), 'synclet-storage-'));
-  const config: AppConfig = { ...loadConfig({}), dataRoot, metaRoot, teamsRoot, storageRoot, background: false, ...overrides };
+  const config: AppConfig = { ...loadConfig({}), dataRoot, metaRoot, teamsRoot, storageRoot, background: false, updateCheck: false, ...overrides };
   const moduleRef = await Test.createTestingModule({ imports: [AppModule.forRoot(config)] }).compile();
   const app = moduleRef.createNestApplication<NestFastifyApplication>(new FastifyAdapter());
   await configureApp(app);

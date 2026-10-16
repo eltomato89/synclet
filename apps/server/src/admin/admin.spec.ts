@@ -245,7 +245,7 @@ describe('admin backend', () => {
         { sha: 'a', kind: 'text', status: 'failed' }, { sha: 'c', kind: 'text', status: 'done' },
       ] });
       const s = (await call('GET', '/admin/status')).json();
-      expect(s.version).toMatch(/^\d+\.\d+\.\d+/);
+      expect(s.version).toEqual({ installed: 'dev', revision: null, latest: null, latestUrl: null, checkedAt: null, status: 'development' });
       expect(s.users).toEqual({ total: 2, disabled: 1 });
       expect(s.disk.data.totalBytes).toBeGreaterThan(0);
       expect(s.disk.data.freeBytes).toBeGreaterThan(0);
@@ -256,6 +256,42 @@ describe('admin backend', () => {
       expect(s.office).toEqual({ enabled: false, reachable: null });
       expect(s).toMatchObject({ watch: 'off', lastFullScanAt: null, versions: false });
       expect(s.uptimeSec).toBeGreaterThanOrEqual(0);
+    });
+
+    it('reports the installed and the latest release (GitHub mocked)', async () => {
+      await ctx.close();
+      ctx = await createTestApp({ buildVersion: '0.1.2', buildRevision: 'abcdef0', updateCheck: true, updateRepo: 'me/fork' });
+      adminToken = (await ctx.app.inject({ method: 'POST', url: '/api/setup', payload: { username: 'jens', displayName: 'Jens', password: 'correct horse battery' } })).json().accessToken;
+      const gh = jest.spyOn(global, 'fetch').mockImplementation(async () => new Response(
+        JSON.stringify({ tag_name: 'v0.1.10', html_url: 'https://github.com/me/fork/releases/tag/v0.1.10' }), { status: 200 },
+      ));
+      try {
+        const s = (await call('GET', '/admin/status')).json();
+        expect(s.version).toMatchObject({
+          installed: '0.1.2', revision: 'abcdef0', latest: '0.1.10', latestUrl: 'https://github.com/me/fork/releases/tag/v0.1.10', status: 'update-available',
+        });
+        expect(Date.parse(s.version.checkedAt)).not.toBeNaN();
+        expect(gh).toHaveBeenCalledTimes(1);
+        expect(gh.mock.calls[0][0]).toBe('https://api.github.com/repos/me/fork/releases/latest');
+        // Cached: the next status request does not ask GitHub again.
+        await call('GET', '/admin/status');
+        expect(gh).toHaveBeenCalledTimes(1);
+      } finally {
+        gh.mockRestore();
+      }
+    });
+
+    it('makes no outbound request with the update check off', async () => {
+      await ctx.close();
+      ctx = await createTestApp({ buildVersion: '0.1.2', updateCheck: false });
+      adminToken = (await ctx.app.inject({ method: 'POST', url: '/api/setup', payload: { username: 'jens', displayName: 'Jens', password: 'correct horse battery' } })).json().accessToken;
+      const gh = jest.spyOn(global, 'fetch');
+      try {
+        expect((await call('GET', '/admin/status')).json().version).toMatchObject({ installed: '0.1.2', status: 'disabled', latest: null });
+        expect(gh).not.toHaveBeenCalled();
+      } finally {
+        gh.mockRestore();
+      }
     });
 
     it('checks office reachability with a 1 minute cache', async () => {
