@@ -313,5 +313,17 @@ describe('GET /api/sync/v1/events (SSE)', () => {
       await sleep(1500); // includes a ping catch-up
       expect(s.of('changes')).toEqual([]);
     });
+
+    it('a LISTEN reconnect (wakeAll) re-follows without `account` unless the space set changed', async () => {
+      const s = await opened();
+      const notifier = ctx.app.get(ChangeNotifier);
+      notifier.wakeAll();
+      await sleep(600);
+      expect(s.of('account')).toEqual([]);
+      const team = await createTestSpace(ctx, 'Neu');
+      await ctx.prisma.spaceMember.create({ data: { spaceId: team.id, userId, role: 'read' } });
+      notifier.wakeAll();
+      await s.until(() => s.of('account').length > 0, 3000, 'account after a changed set');
+    });
   });
 });

@@ -356,6 +356,7 @@ paths:
               schema: { $ref: '#/components/schemas/ChangesPage' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '410':
           description: '`cursor_expired` – re-enumerate from scratch.'
@@ -416,6 +417,7 @@ paths:
               schema: { $ref: '#/components/schemas/SyncItem' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/NameConflict' }
   /sync/v1/items/{id}:
@@ -433,6 +435,7 @@ paths:
               schema: { $ref: '#/components/schemas/SyncItem' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
     patch:
       tags: [items]
@@ -457,6 +460,7 @@ paths:
               schema: { $ref: '#/components/schemas/SyncItem' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/NameConflict' }
@@ -469,6 +473,7 @@ paths:
         '204': { description: Deleted. }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
   /sync/v1/items/{id}/children:
@@ -489,6 +494,7 @@ paths:
               schema: { $ref: '#/components/schemas/ChildrenPage' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
   /sync/v1/items/upload:
     post:
@@ -514,6 +520,7 @@ paths:
               schema: { $ref: '#/components/schemas/SyncItem' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/NameConflict' }
         '413': { $ref: '#/components/responses/TooLarge' }
@@ -555,6 +562,7 @@ paths:
         '304': { description: '`If-None-Match` matched (`"v<version>"` or `*`).' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '416':
           description: '`range_not_satisfiable`, with `Content-Range: bytes */<size>`.'
@@ -588,6 +596,7 @@ paths:
               schema: { $ref: '#/components/schemas/SyncItem' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '412': { $ref: '#/components/responses/Conflict' }
         '413': { $ref: '#/components/responses/TooLarge' }
@@ -614,6 +623,7 @@ paths:
               schema: { $ref: '#/components/schemas/DownloadToken' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
   /sync/v1/items/{id}/thumbnail:
     parameters:
@@ -640,6 +650,7 @@ paths:
         '304': { description: Not modified. }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
   /sync/v1/items/{id}/preview-text:
     parameters:
@@ -656,6 +667,7 @@ paths:
               schema: { $ref: '#/components/schemas/PreviewText' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '415':
           description: '`invalid_request` (status 415) – the file type has no text preview.'
@@ -811,6 +823,7 @@ paths:
               schema: { $ref: '#/components/schemas/SyncItem' }
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/NameConflict' }
         '412': { $ref: '#/components/responses/Conflict' }

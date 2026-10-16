@@ -132,7 +132,13 @@ export class EventsController implements OnModuleDestroy {
       write('event: account\ndata: {}\n\n', true);
     };
 
-    const unsubscribeAccount = this.notifier.subscribeAccount(user.id, () => enqueue(accountChanged));
+    /** Notifications may have been lost: tell the client only if the space set really changed. */
+    const resync = async () => {
+      if (closed) return;
+      if (await follow()) write('event: account\ndata: {}\n\n', true);
+    };
+
+    const unsubscribeAccount = this.notifier.subscribeAccount(user.id, () => enqueue(accountChanged), () => enqueue(resync));
     const ping = setInterval(() => enqueue(async () => {
       if (closed) return;
       try {
@@ -146,7 +152,7 @@ export class EventsController implements OnModuleDestroy {
       }
       // Safety net: should the LISTEN connection be dead without anybody noticing (or never get
       // notifications, e.g. behind a transaction pooler), a change still arrives within one ping.
-      if (await follow()) write('event: account\ndata: {}\n\n', true);
+      await resync();
       await catchUpAll();
       write(': ping\n\n');
     }), this.config.eventsPingSeconds * 1000);

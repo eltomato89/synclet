@@ -4,7 +4,7 @@ import { SyncError } from '../common/sync-error';
 import type { IndexSpace } from '../common/types';
 import { PrismaService } from '../prisma/prisma.service';
 import { SpaceAccess, type Role } from '../spaces/space-access.service';
-import { apiSpaceId, PERSONAL_API_ID } from '../spaces/space-ids';
+import { apiSpaceId, spaceIdFromApi } from '../spaces/space-ids';
 import type { ItemView } from './serializer.service';
 import { parseRootId, parseSyncId, ROOT_ID } from './sync-ids';
 
@@ -30,8 +30,14 @@ export class ItemResolver {
 
   async resolve(user: { id: string }, rawId: string | undefined | null, need: Role): Promise<Resolved> {
     const id = (rawId ?? '').trim();
-    const rootSpace = id === ROOT_ID ? PERSONAL_API_ID : parseRootId(id);
-    if (rootSpace) return { ...(await this.require(user, rootSpace, need)), item: null };
+    if (id === ROOT_ID) return { ...(await this.require(user, user.id, need)), item: null };
+    const rootSpace = parseRootId(id);
+    if (rootSpace) {
+      const r = await this.require(user, rootSpace, need);
+      // The personal root has exactly one id, `root`: `r_<user id>` does not exist.
+      if (r.space.kind === 'personal') throw new SyncError('not_found');
+      return { ...r, item: null };
+    }
     const parsed = parseSyncId(id);
     if (!parsed || parsed.kind === 'root') throw new SyncError('invalid_request', 'invalid id');
     const row = await this.prisma.item.findFirst({ where: { id: parsed.uuid, deletedAt: null, type: parsed.kind } });
@@ -41,7 +47,9 @@ export class ItemResolver {
 
   /** Like resolve(), for a space given by its API id (`personal` or uuid); malformed → 404. */
   async space(user: { id: string }, apiId: string, need: Role): Promise<Omit<Resolved, 'item'>> {
-    return this.require(user, apiId, need);
+    const spaceId = spaceIdFromApi(user, apiId);
+    if (!spaceId) throw new SyncError('not_found');
+    return this.require(user, spaceId, need);
   }
 
   private async require(user: { id: string }, spaceId: string, need: Role): Promise<Omit<Resolved, 'item'>> {

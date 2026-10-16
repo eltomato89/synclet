@@ -86,6 +86,8 @@ export class ChangeNotifier implements OnModuleInit, OnModuleDestroy {
   private readonly log = new Logger(ChangeNotifier.name);
   private readonly changes: Fanout;
   private readonly accounts: Fanout;
+  /** Per user: "notifications may have been lost" (after a reconnect), see subscribeAccount(). */
+  private readonly resyncs: Fanout;
   private client: ListenClient | null = null;
   private retryTimer: NodeJS.Timeout | null = null;
   private attempt = 0;
@@ -108,6 +110,7 @@ export class ChangeNotifier implements OnModuleInit, OnModuleDestroy {
     this.healthTimeoutMs = opts.healthTimeoutMs ?? 5000;
     this.changes = new Fanout(this.coalesceMs, this.log);
     this.accounts = new Fanout(this.coalesceMs, this.log);
+    this.resyncs = new Fanout(this.coalesceMs, this.log);
   }
 
   onModuleInit(): void {
@@ -129,9 +132,15 @@ export class ChangeNotifier implements OnModuleInit, OnModuleDestroy {
     this.changes.notify(spaceId);
   }
 
-  /** Registers `cb` for "account changed" wake-ups of `userId`; returns the unsubscribe function. */
-  subscribeAccount(userId: string, cb: Callback): () => void {
-    return this.accounts.subscribe(userId, cb);
+  /**
+   * Registers `cb` for "account changed" wake-ups of `userId`, and `onResync` for "account
+   * notifications may have been lost" (after a LISTEN reconnect): the subscriber should re-check
+   * its space set itself rather than tell the client. Returns the unsubscribe function.
+   */
+  subscribeAccount(userId: string, cb: Callback, onResync?: Callback): () => void {
+    const off = this.accounts.subscribe(userId, cb);
+    const offResync = onResync ? this.resyncs.subscribe(userId, onResync) : () => {};
+    return () => { off(); offResync(); };
   }
 
   /**
@@ -151,7 +160,7 @@ export class ChangeNotifier implements OnModuleInit, OnModuleDestroy {
   /** Wakes every subscriber (after a reconnect: notifications may have been missed). */
   wakeAll(): void {
     for (const key of this.changes.subs.keys()) this.changes.notify(key);
-    for (const key of this.accounts.subs.keys()) this.accounts.notify(key);
+    for (const key of this.resyncs.subs.keys()) this.resyncs.notify(key);
   }
 
   async stop(): Promise<void> {
@@ -162,6 +171,7 @@ export class ChangeNotifier implements OnModuleInit, OnModuleDestroy {
     this.healthTimer = null;
     this.changes.clear();
     this.accounts.clear();
+    this.resyncs.clear();
     const c = this.client;
     this.client = null;
     if (c) await c.end().catch(() => undefined);

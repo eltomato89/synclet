@@ -112,4 +112,15 @@ describe('Sync API spaces (account, roots, per-space changes)', () => {
     expect(page.cursor).toBe((await api('GET', '/cursor')).json().cursor);
     expect((await api('GET', '/account')).json().cursor).toBe(page.cursor);
   });
+
+  it('foreign personal spaces and r_<personal id> do not exist', async () => {
+    const bob = await createTestUser(ctx, 'bob');
+    expect((await api('GET', `/cursor?space=${bob.id}`)).statusCode).toBe(404);
+    expect((await api('GET', `/changes?space=${bob.id}&cursor=0`)).statusCode).toBe(404);
+    expect((await api('GET', `/items/r_${bob.id}`)).statusCode).toBe(404);
+    expect((await api('GET', `/items/r_${bob.id}/children`)).statusCode).toBe(404);
+    // The personal root has one id: `root`.
+    expect((await api('GET', `/items/r_${alice.id}`)).statusCode).toBe(404);
+    expect((await api('POST', `/items/upload?parentId=r_${alice.id}&name=x.txt`, { body: 'x' })).statusCode).toBe(404);
+  });
 });
