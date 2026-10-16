@@ -77,14 +77,17 @@ rendered from the macOS icon: `cd apps/ios && swift render-app-icon.swift`.
 ## Archive (App Store Connect / TestFlight)
 
 ```sh
-cd apps/ios && ./build_archive.sh
+cd apps/ios && ./build_archive.sh            # export to build/export
+cd apps/ios && ./build_archive.sh --upload   # upload to App Store Connect (TestFlight)
 ```
 
 `xcodegen generate`, `xcodebuild archive` (Release, `generic/platform=iOS`,
 `-allowProvisioningUpdates`) and the export with `ExportOptions.plist` (method `app-store-connect`,
-team `JC32M95WLZ`) into `build/export`. The script needs an "Apple Distribution" certificate of the
-team in the keychain and otherwise stops with exit code 2 ("No Apple Distribution certificate - create
-one in Xcode → Settings → Accounts"). Uploading the build is done by hand (Organizer or Transporter).
+team `JC32M95WLZ`), either into `build/export` or, with `--upload`, straight to App Store Connect.
+Signing uses Xcode's cloud-managed distribution certificate, so no local "Apple Distribution"
+certificate is needed, only an Xcode account of the team (Xcode → Settings → Accounts). The build
+number is a UTC timestamp (`YYYYMMDDHHMM`), so every run can be uploaded; the version shown to users is
+`MARKETING_VERSION` in `project.yml`.
 
 ## Device checklist (manual)
 

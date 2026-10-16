@@ -2,25 +2,34 @@
 # Archives the iOS app (Release, generic iOS device) and exports an App Store Connect build
 # (ExportOptions.plist: method app-store-connect, team JC32M95WLZ, automatic signing).
 #
-#   cd apps/ios && ./build_archive.sh
+#   cd apps/ios && ./build_archive.sh            # build/export/Synclet.ipa
+#   cd apps/ios && ./build_archive.sh --upload   # upload straight to App Store Connect (TestFlight)
 #
-# Result: build/Synclet.xcarchive and build/export/Synclet.ipa (upload with Xcode's Organizer
-# or Transporter). Needs an "Apple Distribution" certificate of the team in the keychain;
-# without it the script stops (exit 2) before archiving.
+# Signing: with -allowProvisioningUpdates Xcode signs with cloud-managed distribution certificates,
+# so no local "Apple Distribution" certificate is needed, only an Xcode account of the team
+# (Xcode → Settings → Accounts). Uploading uses that account too.
+# The build number (CFBundleVersion) is a UTC timestamp, so every archive can be uploaded; the
+# version shown to users is MARKETING_VERSION in project.yml.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-# Captured first: `grep -q` closing the pipe early must not fail `security` under pipefail.
-IDENTITIES=$(security find-identity -v -p codesigning)
-if ! grep -q "Apple Distribution" <<<"$IDENTITIES"; then
-  echo "No Apple Distribution certificate - create one in Xcode → Settings → Accounts" >&2
-  exit 2
-fi
+DESTINATION=export
+if [ "${1:-}" = "--upload" ]; then DESTINATION=upload; fi
+BUILD_NUMBER=$(date -u +%Y%m%d%H%M)
 
 xcodegen generate
 rm -rf build/Synclet.xcarchive build/export
 xcodebuild archive -scheme Synclet -configuration Release -destination 'generic/platform=iOS' \
-  -archivePath build/Synclet.xcarchive -allowProvisioningUpdates
-xcodebuild -exportArchive -archivePath build/Synclet.xcarchive -exportOptionsPlist ExportOptions.plist \
+  -archivePath build/Synclet.xcarchive -allowProvisioningUpdates CURRENT_PROJECT_VERSION="$BUILD_NUMBER"
+
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+OPTIONS="$TMP/ExportOptions.plist"
+sed "s#<string>export</string>#<string>$DESTINATION</string>#" ExportOptions.plist > "$OPTIONS"
+xcodebuild -exportArchive -archivePath build/Synclet.xcarchive -exportOptionsPlist "$OPTIONS" \
   -exportPath build/export -allowProvisioningUpdates
-echo "== exported: $(pwd)/build/export"
+if [ "$DESTINATION" = upload ]; then
+  echo "== uploaded build $BUILD_NUMBER; it shows up in TestFlight after processing"
+else
+  echo "== exported build $BUILD_NUMBER: $(pwd)/build/export"
+fi
