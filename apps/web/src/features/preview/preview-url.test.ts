@@ -93,7 +93,26 @@ describe('thumbnail URLs', () => {
     expect(await thumbnailUrl(file('f_a', 'v1', false), 256)).toBeNull();
     expect(await thumbnailUrl({ id: 'f_b', etag: 'v1', type: 'file' }, 256)).toBeNull();
     expect(await thumbnailUrl({ id: 'd_c', etag: 't0', type: 'folder' }, 256)).toBeNull();
+    expect(await thumbnailUrl({ id: 'd_c', etag: 't0', type: 'folder' }, 256, { folders: true })).toBeNull();
     expect(apiMock).not.toHaveBeenCalled();
     expect(hasThumbnail(file('f_a'))).toBe(true);
+  });
+
+  const folder = (key = 'k1') => ({
+    id: 'd_f', etag: 't0', type: 'folder' as const, preview: { kind: 'none' as const, thumbnail: true, thumbnailKey: key },
+  });
+
+  it('folder mosaics only when asked for: composite URL, busted by the thumbnail key', async () => {
+    expect(hasThumbnail(folder())).toBe(false);
+    expect(await thumbnailUrl(folder(), 256)).toBeNull();
+    expect(apiMock).not.toHaveBeenCalled();
+
+    expect(hasThumbnail(folder(), { folders: true })).toBe(true);
+    const url = await thumbnailUrl(folder('k1'), 256, { folders: true });
+    expect(apiMock).toHaveBeenCalledWith('/sync/v1/items/d_f/download-token?purpose=preview', { method: 'POST' });
+    expect(url).toBe(`/api/sync/v1/items/d_f/thumbnail?size=256&composite=1&v=k1&dt=tok${n}`);
+    // New children → new key → new URL (the folder's etag does not change); same token.
+    expect(await thumbnailUrl(folder('k2'), 1024, { folders: true })).toBe(`/api/sync/v1/items/d_f/thumbnail?size=1024&composite=1&v=k2&dt=tok${n}`);
+    expect(apiMock).toHaveBeenCalledTimes(1);
   });
 });

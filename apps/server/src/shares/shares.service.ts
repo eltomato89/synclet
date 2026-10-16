@@ -3,6 +3,8 @@ import type { Item, ShareLink } from '@prisma/client';
 import type { AdminShareWire, CreateShareInput, PublicShareEntry, PublicShareInfo, ShareLinkWire } from '@synclet/shared';
 import * as argon2 from 'argon2';
 import { randomUUID } from 'node:crypto';
+import { constants } from 'node:fs';
+import { type FileHandle, open } from 'node:fs/promises';
 import type { Readable } from 'node:stream';
 import { hashToken, randomToken } from '../auth/crypto';
 import { assignDisplayNames } from '../common/names';
@@ -11,6 +13,7 @@ import type { IndexUser } from '../common/types';
 import { APP_CONFIG, AppConfig } from '../config';
 import { DerivativesGc } from '../derivatives/derivatives-gc';
 import { DerivedStore } from '../derivatives/derived-store';
+import { chooseFolderThumbs, FolderThumbnails } from '../derivatives/folder-thumbnails';
 import { FilesService } from '../files/files.service';
 import { ItemStore } from '../journal/item-store';
 import { SpaceAccess, type Role } from '../spaces/space-access.service';
@@ -53,6 +56,7 @@ export class SharesService {
     private readonly derived: DerivedStore,
     private readonly gc: DerivativesGc,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
+    private readonly folderThumbs: FolderThumbnails,
   ) {}
 
   // ---------------------------------------------------------------- owner API
@@ -298,11 +302,12 @@ export class SharesService {
     return new Set(jobs.map((j) => j.sha));
   }
 
+  /** `thumbs`: content hashes with a thumbnail, and ids of folders with a mosaic of their children. */
   private entry(i: Item, name: string, thumbs: Set<string>): PublicShareEntry {
     const isFile = i.type === 'file';
     return {
       id: toSyncId(i), name, type: i.type, size: isFile ? Number(i.size) : 0, mime: isFile ? mimeFor(i.name) : null,
-      modifiedAt: i.mtime.toISOString(), hasThumbnail: isFile && !!i.contentHash && thumbs.has(i.contentHash),
+      modifiedAt: i.mtime.toISOString(), hasThumbnail: isFile ? !!i.contentHash && thumbs.has(i.contentHash) : thumbs.has(i.id),
     };
   }
 
@@ -314,6 +319,9 @@ export class SharesService {
     const rows = await this.prisma.item.findMany({ where: { spaceId: rs.share.spaceId, parentId: folder.id, deletedAt: null } });
     const names = assignDisplayNames(rows);
     const thumbs = await this.thumbShas(rows);
+    // Subfolders are inside the share, and so are their children (the mosaic's pictures).
+    const folders = await chooseFolderThumbs(this.prisma, rs.share.spaceId, rows.filter((r) => r.type === 'folder').map((r) => r.id));
+    for (const id of folders.keys()) thumbs.add(id);
     return rows
       .map((r) => this.entry(r, names.get(r.id) ?? r.name, thumbs))
       .sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'folder' ? -1 : 1));
@@ -327,19 +335,28 @@ export class SharesService {
     return { item: row, abs };
   }
 
-  /** Thumbnail file path if the worker has produced one for the item's current content. */
-  async thumbnail(rs: ResolvedShare, rawItem: string, size: 256 | 1024): Promise<{ path: string; sha: string }> {
-    const item = await this.auth.target(rs, rawItem, 'file');
+  /**
+   * The opened thumbnail if the worker has produced one for the item's current content; for a
+   * folder in the share, the mosaic of its children's thumbnails (folder-thumbnails.ts) with an
+   * ETag (its picture changes with the children).
+   */
+  async thumbnail(rs: ResolvedShare, rawItem: string, size: 256 | 1024): Promise<{ fh: FileHandle; etag?: string }> {
+    const item = await this.auth.target(rs, rawItem);
+    if (item.type === 'folder') {
+      await this.auth.realPathOf(rs, item); // like browsing it: not through a symlinked folder
+      const mosaic = await this.folderThumbs.open(rs.share.spaceId, item.id, size);
+      if (!mosaic) throw new SyncError('not_found');
+      return { fh: mosaic.fh, etag: `${mosaic.key}-${size}` };
+    }
     const sha = item.contentHash;
     if (!sha) throw new SyncError('not_found');
     const job = await this.prisma.derivativeJob.findUnique({ where: { sha_kind: { sha, kind: 'thumb' } } });
     if (job?.status !== 'done') throw new SyncError('not_found');
-    const file = this.derived.pathFor(sha, 'thumb', size);
-    if (!(await this.derived.has(file))) {
-      await this.gc.requeueThumb(sha); // derived files lost: regenerate
+    const fh = await open(this.derived.pathFor(sha, 'thumb', size), constants.O_RDONLY | constants.O_NOFOLLOW).catch(async (e: NodeJS.ErrnoException) => {
+      if (e.code === 'ENOENT') await this.gc.requeueThumb(sha); // derived files lost: regenerate
       throw new SyncError('not_found');
-    }
-    return { path: file, sha };
+    });
+    return { fh };
   }
 
   /** Entries of a ZIP of `folder` (in scope): all live descendants in path order, names relative to it. */

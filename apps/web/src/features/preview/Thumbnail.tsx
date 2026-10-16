@@ -1,14 +1,14 @@
 import type { SyncItem } from '@synclet/shared';
 import { type ReactNode, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
-import { useNearViewport, useThumbnailUrl } from './thumbnails';
+import { type ThumbOptions, useNearViewport, useThumbnailUrl } from './thumbnails';
 
 /**
  * An item's thumbnail over its fallback (the file icon). The icon stays until the image has
  * decoded, then the image fades in on top; a failed image (e.g. an expired token after a long
  * night) leaves the icon. Items without `preview.thumbnail` never request anything.
  */
-export function Thumbnail({ item, size = 256, className, imgClassName, children, overlay }: {
+export function Thumbnail({ item, size = 256, className, imgClassName, children, overlay, folders = false }: {
   item: SyncItem;
   size?: 256 | 1024;
   className?: string;
@@ -17,10 +17,13 @@ export function Thumbnail({ item, size = 256, className, imgClassName, children,
   children: ReactNode;
   /** Drawn over the loaded image (e.g. a play badge for videos). */
   overlay?: ReactNode;
+  /** Folders show the server's mosaic of their children's thumbnails (if there is one). */
+  folders?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const near = useNearViewport(ref);
-  const url = useThumbnailUrl(item, size, near);
+  const options: ThumbOptions = { folders };
+  const url = useThumbnailUrl(item, size, near, options);
   const [loaded, setLoaded] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const shown = !!url && loaded === url && failed !== url;

@@ -122,6 +122,11 @@ export interface PreviewInfo {
   kind: 'image' | 'pdf' | 'text' | 'markdown' | 'code' | 'video' | 'audio' | 'none';
   thumbnail: boolean;     // a thumbnail exists now
   language?: string;      // highlight.js language for kind === 'code'
+  /**
+   * Folders only: identifies the folder's thumbnail (a mosaic of its children's thumbnails,
+   * `GET items/:id/thumbnail?composite=1`); it changes whenever the picture changes.
+   */
+  thumbnailKey?: string; // only in `children` listings with `folderThumbnails=1`
 }
 
 // ---- Phase 1c: versions, office, SSO, admin

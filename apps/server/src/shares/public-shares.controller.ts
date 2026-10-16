@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { SyncError } from '../common/sync-error';
 import { ZodPipe } from '../common/zod.pipe';
 import { APP_CONFIG, AppConfig } from '../config';
-import { attachmentDisposition, first, HeaderMap, openNoFollow, rawBody, sendFile } from '../sync/http-content';
+import { attachmentDisposition, etagList, first, HeaderMap, openNoFollow, rawBody, sendFile } from '../sync/http-content';
 import { mimeFor } from '../sync/serializer.service';
 import { ipKey } from '../common/ip-key';
 import { ResolvedShare, ShareAuth, ShareRateLimits, UNLOCK_TTL_SEC, unlockCookieName } from './share-auth';
@@ -89,14 +89,23 @@ export class PublicSharesController {
     const rs = await this.open(token, req, reply);
     const size = sizeRaw === undefined || sizeRaw === '256' ? 256 : sizeRaw === '1024' ? 1024 : null;
     if (size === null) throw new SyncError('invalid_request', 'size must be 256 or 1024');
-    const thumb = await this.shares.thumbnail(rs, itemId, size);
-    const fh = await openNoFollow(thumb.path);
-    const length = await fh.stat().then((st) => st.size, async (e) => { await fh.close(); throw e; });
-    return reply
-      .header('Content-Type', 'image/webp').header('X-Content-Type-Options', 'nosniff')
-      .header('Content-Security-Policy', "default-src 'none'; sandbox").header('Cache-Control', 'private, no-store')
-      .header('Content-Length', length)
-      .send(fh.createReadStream());
+    const { fh, etag } = await this.shares.thumbnail(rs, itemId, size);
+    let handedOver = false;
+    try {
+      const length = (await fh.stat()).size;
+      reply.header('X-Content-Type-Options', 'nosniff').header('Content-Security-Policy', "default-src 'none'; sandbox");
+      if (etag) {
+        // Folder mosaics: cacheable but revalidated on every use (the share is checked each time).
+        reply.header('ETag', `"${etag}"`).header('Cache-Control', 'private, no-cache');
+        if (etagList(req.headers['if-none-match']).includes(etag)) return reply.status(304).send();
+      } else {
+        reply.header('Cache-Control', 'private, no-store');
+      }
+      handedOver = true;
+      return reply.header('Content-Type', 'image/webp').header('Content-Length', length).send(fh.createReadStream());
+    } finally {
+      if (!handedOver) await fh.close();
+    }
   }
 
   @Get(':token/zip')

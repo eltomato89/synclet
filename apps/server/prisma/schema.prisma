@@ -5,6 +5,7 @@
 //   - index "Item_name_trgm_idx"   (GIN trigram, partial: live items)
 //   - index "Item_space_mtime_idx" (partial: live files; Item_owner_mtime_idx before 20261016120000_phase_4_spaces)
 //   - index "Item_contentHash_idx" (partial: live items)
+//   - index "Item_children_mtime_idx" (partial: live files; 20261016200000_item_children_mtime_idx)
 //   - unique index "Item_space_path_live_key"     (20261015131742_init, partial: live items; Item_owner_path_live_key before phase 4)
 // test/schema-drift.spec.ts asserts that migrations and this schema stay in sync.
 

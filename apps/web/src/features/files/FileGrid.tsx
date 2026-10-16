@@ -4,7 +4,7 @@ import { Thumbnail } from '@/features/preview/Thumbnail';
 import { formatBytes, formatDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { ItemMenuButton } from './FileActions';
-import { FileIcon, fileKind, kindStyle } from './FileIcon';
+import { FileIcon, fileKind, FolderBadge, kindStyle } from './FileIcon';
 import { itemTabIndex, useItemPointer, type ViewProps } from './FileList';
 
 /** Marks a video thumbnail as playable. */
@@ -49,9 +49,10 @@ export function FileGrid({ items, label, selectedId, onSelect, onOpen, actions }
           >
             <Thumbnail
               item={item}
+              folders
               className="aspect-[4/3] overflow-hidden rounded-lg"
               imgClassName={cn('object-cover', item.preview?.kind === 'pdf' && 'object-top')}
-              overlay={item.preview?.kind === 'video' && <PlayBadge />}
+              overlay={item.type === 'folder' ? <FolderBadge /> : item.preview?.kind === 'video' && <PlayBadge />}
             >
               <div
                 style={kindStyle(fileKind(item))}

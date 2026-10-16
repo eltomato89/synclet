@@ -6,6 +6,7 @@ import path from 'node:path';
 const SHA_RE = /^[0-9a-f]{64}$/;
 /** Temp files/dirs older than this are crash leftovers (no write takes that long). */
 const STALE_TMP_MS = 3600_000;
+const FOLDERS_DIR = 'folders';
 
 /** Content-addressed store for derivatives below `<metaRoot>/derived` (never inside the data root). */
 @Injectable()
@@ -24,6 +25,22 @@ export class DerivedStore {
     if (kind === 'poster') return path.join(dir, 'poster.webp');
     if (size !== 256 && size !== 1024) throw new Error('invalid thumbnail size');
     return path.join(dir, `thumb-${size}.webp`);
+  }
+
+  /**
+   * Folder mosaic (folder-thumbnails.ts) by its cache key: `<root>/folders/<k2>/<key>-<size>.webp`.
+   * Outside the `<sha>` directories, so the content GC (`gc`) never sees them; `gcFolderThumbs`
+   * removes them by age.
+   */
+  folderThumbPath(key: string, size: 256 | 1024): string {
+    if (!SHA_RE.test(key)) throw new Error('invalid folder thumbnail key');
+    if (size !== 256 && size !== 1024) throw new Error('invalid thumbnail size');
+    return path.join(this.root, FOLDERS_DIR, key.slice(0, 2), `${key}-${size}.webp`);
+  }
+
+  /** Modification time (ms) of a regular file, or null. */
+  async mtimeOf(file: string): Promise<number | null> {
+    return stat(file).then((s) => (s.isFile() ? s.mtimeMs : null), () => null);
   }
 
   async has(file: string): Promise<boolean> {
@@ -76,6 +93,29 @@ export class DerivedStore {
     }
     await flush();
     await this.cleanTemp();
+    return removed;
+  }
+
+  /**
+   * Removes folder mosaics whose mtime (refreshed while they are served) is older than `maxAgeMs`,
+   * and stale temp files of interrupted writes among them. Returns the number of removed files.
+   */
+  async gcFolderThumbs(maxAgeMs: number, now = Date.now()): Promise<number> {
+    let removed = 0;
+    const base = path.join(this.root, FOLDERS_DIR);
+    for (const prefix of await readdir(base).catch(() => [] as string[])) {
+      if (!/^[0-9a-f]{2}$/.test(prefix)) continue;
+      const dir = path.join(base, prefix);
+      for (const f of await readdir(dir).catch(() => [] as string[])) {
+        const tmp = f.startsWith('.tmp-');
+        if (!tmp && !/^[0-9a-f]{64}-(256|1024)\.webp$/.test(f)) continue;
+        const p = path.join(dir, f);
+        const st = await lstat(p).catch(() => null);
+        if (!st || now - st.mtimeMs < (tmp ? STALE_TMP_MS : maxAgeMs)) continue;
+        await rm(p, { force: true });
+        removed++;
+      }
+    }
     return removed;
   }
 

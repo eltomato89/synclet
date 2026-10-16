@@ -369,7 +369,9 @@ Clients **must** honor the flags: a write the flags do not allow answers `403 fo
 
 - `GET /sync/v1/items/:id` → `SyncItem`. `404` when unknown, trashed or in a space without access;
   `503 space_unavailable` while its space is missing.
-- `GET /sync/v1/items/:id/children?pageToken=&limit=` → `{ items: SyncItem[], nextPageToken: string | null, cursor: string }`
+- `GET /sync/v1/items/:id/children?pageToken=&limit=&folderThumbnails=1` → `{ items: SyncItem[], nextPageToken: string | null, cursor: string }`
+  - `folderThumbnails=1` (optional, meant for grid views): folders on the page carry their mosaic
+    thumbnail info (§9.1). Costs an extra query per page; sync clients should not send it.
   - `limit`: `floor(limit)`; missing, non-numeric or `0` (also `0.x`) → the default 500; then
     clamped to 1..1000 (negative → 1, above 1000 → 1000).
   - Order: all folders, then all files; within each group by id. `pageToken` is an opaque keyset
@@ -535,7 +537,7 @@ list changed. It never carries the changes themselves.
 
 ### 6.2 Download tokens (URLs without `Authorization`)
 
-`POST /sync/v1/items/:id/download-token?purpose=download|preview` (files only) →
+`POST /sync/v1/items/:id/download-token?purpose=download|preview` (files; folders with `preview` only) →
 `201 { url, token, expiresAt }`.
 
 - `download` (default): valid 60 s; `url = /api/sync/v1/items/<id>/content?download=1&dt=<token>`
@@ -546,7 +548,9 @@ list changed. It never carries the changes themselves.
   `url` form (the server does not check the purpose on these routes).
 - The token is bound to the item id; for any other item it answers `401 unauthorized`. It is only
   accepted on those content/thumbnail/version-content routes. `url` is path-only: prefix it with the origin.
-- A folder → `400 invalid_request`; an unknown `purpose` → `400`.
+- A folder with `purpose=download` (the default) → `400 invalid_request`; with `purpose=preview` the
+  token is for the folder's thumbnail (§9.1): `url = /api/sync/v1/items/<id>/thumbnail?composite=1&dt=<token>`.
+  An unknown `purpose` → `400`.
 
 ### 6.3 Replace
 
@@ -729,6 +733,22 @@ folders → `400`) – accepts a download token of the same item (`?dt=`, either
 - `preview.thumbnail` in a `SyncItem` tells whether a thumbnail existed when the item was
   serialized. It turning `true` is not journaled: clients that want a thumbnail poll this route
   with backoff (e.g. after 2 s, 5 s, 15 s, then on the next metadata read).
+
+**Folder thumbnails.** With `composite=1` the route also accepts folders (without it, folders stay
+`400`, so clients asking for every item see no change): a mosaic of the thumbnails of up to four
+direct children (live files with a finished thumbnail, one per distinct content, most recently
+modified first; only the folder's 200 most recently modified files are considered, so a folder whose
+newest 200 files have no thumbnail gets no mosaic) – one picture fills the tile, two sit side by side, three are one large on the left
+and two stacked on the right, four form a 2×2 grid. Landscape 4:3 (`256×192` / `1024×768`), webp,
+transparent gaps. `404 not_found` when no child has a thumbnail.
+
+- `ETag: "<thumbnailKey>-<size>"`, `Cache-Control: private, no-cache` (the folder's URL shows a new
+  picture when its children change; revalidate with `If-None-Match` → `304`).
+- In `children` listings requested with `folderThumbnails=1` (only there – not in `GET /items/:id`,
+  `changes`, `search` or `recent`), a folder with a mosaic carries
+  `preview: { kind: "none", thumbnail: true, thumbnailKey }` (folders without one have no `preview`). `thumbnailKey` changes whenever the picture
+  changes (a child added, removed, replaced, or its thumbnail finished); like `preview.thumbnail` this
+  is not journaled. The mosaic is composed on the first request and cached on the server.
 
 ### 9.2 Text preview
 
