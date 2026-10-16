@@ -15,14 +15,21 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
     override suspend fun doWork(): Result {
         val accountKey = inputData.getString(KEY_ACCOUNT) ?: return Result.failure()
         val env = (applicationContext as? UploadEnvironment.Owner)?.uploadEnvironment ?: return Result.failure()
+        // Cold start by WorkManager: accounts (and their sessions) may still be loading. Before the gate opens a
+        // missing session means nothing; afterwards it means the account is gone.
+        try {
+            env.awaitReady()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return Result.retry()
+        }
         val queue = env.uploadQueue
         queue.load()
         queue.prune()                             // finished entries vanish after 24 h even without new uploads
-        val uploader = env.uploader(accountKey)
-        if (uploader == null) {                   // account signed out meanwhile
-            queue.removeAccount(accountKey)
-            return Result.success()
-        }
+        // Account gone: nothing to do. Its entries were removed by the sign-out itself (AppGraph.forgetAccount);
+        // the worker never deletes queued uploads.
+        val uploader = env.uploader(accountKey) ?: return Result.success()
         foreground(null, 0)
         while (true) {
             val entry = queue.claimNext(accountKey) ?: break
