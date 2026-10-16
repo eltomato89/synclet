@@ -6,12 +6,13 @@ import { APP_CONFIG, AppConfig } from '../config';
 import { AppEvents } from '../common/events';
 import { isTempName } from '../common/names';
 import { DerivativesGc } from '../derivatives/derivatives-gc';
-import type { IndexSpace, IndexUser } from '../common/types';
+import type { IndexUser } from '../common/types';
 import { FilesService } from '../files/files.service';
 import { ItemStore } from '../journal/item-store';
 import { JournalService } from '../journal/journal.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { SpacesRepo } from '../spaces/spaces.repo';
+import { DiscoveryService } from '../spaces/discovery.service';
+import { IndexableSpace, SpacesRepo } from '../spaces/spaces.repo';
 import { TrashService } from '../trash/trash.service';
 import { TusService } from '../uploads/tus';
 import { VersionsService } from '../versions/versions.service';
@@ -20,12 +21,20 @@ import { WatcherService } from './watcher.service';
 
 const DAY = 24 * 3600 * 1000;
 const SESSION_RETENTION_DAYS = 30;
+/** Shortest pause between scan cycles, whatever a space's own interval says. */
+const MIN_CYCLE_MS = 10_000;
 
 @Injectable()
 export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly log = new Logger(SchedulerService.name);
   private timers: NodeJS.Timeout[] = [];
+  private scanTimer?: NodeJS.Timeout;
+  private stopped = false;
   private scanning = false;
+  /** Start of the last scan attempt per space id (per-space scan intervals). */
+  private readonly lastScan = new Map<string, number>();
+  /** Pause until the next cycle: the global interval, or a shorter per-space interval. */
+  private cycleMs = 0;
   lastFullScanAt: Date | null = null;
 
   constructor(
@@ -40,6 +49,7 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     private readonly derivativesGc: DerivativesGc,
     private readonly versions: VersionsService,
     private readonly spaces: SpacesRepo,
+    private readonly discovery: DiscoveryService,
     events: AppEvents,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {
@@ -55,9 +65,17 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     await this.watcher.start();
     // Maintenance also runs once right after the first scan: hosts that restart daily would
     // otherwise never reach the 24 h timer.
-    this.initialRun = this.scanAll().then(() => this.runMaintenance());
-    this.timers.push(setInterval(() => void this.scanAll(), this.config.scanIntervalSec * 1000));
+    this.stopped = false;
+    this.initialRun = this.scanAll().then(() => { this.scheduleNextScan(); return this.runMaintenance(); });
     this.timers.push(setInterval(() => void this.runMaintenance(), DAY));
+  }
+
+  /** Periodic cycles: only spaces whose own interval (default: the global one) has elapsed. */
+  private scheduleNextScan(): void {
+    if (this.stopped) return;
+    this.scanTimer = setTimeout(() => {
+      void this.scanAll({ dueOnly: true }).finally(() => this.scheduleNextScan());
+    }, this.cycleMs || this.config.scanIntervalSec * 1000);
   }
 
   /** First scan + first maintenance after boot (awaitable for tests). */
@@ -67,15 +85,15 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     return this.maintenance().catch((e) => this.log.error(`maintenance failed: ${(e as Error).message}`));
   }
 
-  onModuleDestroy() { this.timers.forEach(clearInterval); }
+  onModuleDestroy() {
+    this.stopped = true;
+    this.timers.forEach(clearInterval);
+    clearTimeout(this.scanTimer);
+  }
 
-  /** Personal spaces of enabled users, with their name (= username) for logs. */
-  private async personalSpaces(): Promise<Array<{ space: IndexSpace; name: string }>> {
-    const rows = await this.prisma.space.findMany({
-      where: { kind: 'personal', user: { disabledAt: null } },
-      select: { id: true, kind: true, rootPath: true, name: true },
-    });
-    return rows.map((r) => ({ space: this.spaces.toIndexSpace(r), name: r.name }));
+  private async discover(): Promise<void> {
+    const res = await this.discovery.discover().catch((e) => { this.log.error(`space discovery failed: ${(e as Error).message}`); return null; });
+    if (res?.created.length) this.log.log(`discovered ${res.created.length} new space(s)`);
   }
 
   /**
@@ -84,6 +102,7 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
    * crash before commit left vacated but whose delete never happened.
    */
   async startup(): Promise<void> {
+    await this.discover();
     await this.startupCleanup();
     await this.files.recoverStagedTrash().catch((e) => this.log.error(`trash recovery failed: ${(e as Error).message}`));
   }
@@ -112,20 +131,35 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
         }
       }
     };
-    for (const { space, name } of await this.personalSpaces().catch(() => [])) await walk(space.rootPath, name);
+    const spaces = await this.spaces.indexable().catch((e) => { this.log.error(`startup cleanup: ${(e as Error).message}`); return [] as IndexableSpace[]; });
+    for (const { space, name, readOnly } of spaces) if (!readOnly) await walk(space.rootPath, name);
     return removed;
   }
 
-  async scanAll(): Promise<void> {
+  /**
+   * Discovers team/storage folders, then scans every indexable space (missing ones are skipped).
+   * `dueOnly` (periodic cycles): only spaces whose scan interval has elapsed since their last scan.
+   */
+  async scanAll(opts: { dueOnly?: boolean } = {}): Promise<void> {
     if (this.scanning) return;
     this.scanning = true;
     try {
-      await this.watcher.refreshUsers().catch((e) => this.log.warn(`user refresh failed: ${(e as Error).message}`));
+      await this.discover();
+      await this.watcher.refresh().catch((e) => this.log.warn(`space refresh failed: ${(e as Error).message}`));
+      const globalMs = this.config.scanIntervalSec * 1000;
+      const spaces = await this.spaces.indexable();
+      this.cycleMs = Math.max(MIN_CYCLE_MS, Math.min(globalMs, ...spaces.map((s) => (s.scanIntervalSec ?? Infinity) * 1000)));
       let allScanned = true;
-      for (const { space, name } of await this.personalSpaces()) {
-        const stats = await this.indexer.fullScan(space).catch((e) => { this.log.error(`scan ${name}: ${(e as Error).message}`); return null; });
+      for (const { space, name, scanIntervalSec } of spaces) {
+        const now = Date.now();
+        const last = this.lastScan.get(space.id);
+        // Small slack: a cycle timer firing a few ms early must not skip a space for a whole cycle.
+        if (opts.dueOnly && last !== undefined && now - last < (scanIntervalSec ?? this.config.scanIntervalSec) * 1000 - 1000) continue;
+        this.lastScan.set(space.id, now);
+        const label = `${space.kind} ${name}`;
+        const stats = await this.indexer.fullScan(space).catch((e) => { this.log.error(`scan ${label}: ${(e as Error).message}`); return null; });
         if (!stats) { allScanned = false; continue; }
-        if (stats.created || stats.updated || stats.moved || stats.deleted) this.log.log(`scan ${name}: ${JSON.stringify(stats)}`);
+        if (stats.created || stats.updated || stats.moved || stats.deleted) this.log.log(`scan ${label}: ${JSON.stringify(stats)}`);
       }
       // A refused or failed scan (e.g. unmounted volume) must not count as a completed one.
       if (allScanned) this.lastFullScanAt = new Date();
@@ -143,7 +177,7 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
 
   async maintenance(): Promise<void> {
     const before = new Date(Date.now() - this.config.journalRetentionDays * DAY);
-    for (const { space } of await this.personalSpaces()) await this.journal.trim(space.id, before);
+    for (const { id } of await this.prisma.space.findMany({ select: { id: true } })) await this.journal.trim(id, before);
     await this.store.purgeTombstones(new Date(Date.now() - Math.max(this.config.tombstoneWindowSec * 1000, DAY)));
     // Expired or revoked web sessions are kept for a while (refresh-token reuse detection), then dropped.
     const sessionCutoff = new Date(Date.now() - SESSION_RETENTION_DAYS * DAY);

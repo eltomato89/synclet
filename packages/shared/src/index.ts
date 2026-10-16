@@ -6,7 +6,8 @@ export type SyncErrorCode =
   | 'invalid_move' | 'invalid_name' | 'invalid_request' | 'cursor_expired' | 'conflict'
   | 'precondition_required' | 'too_large' | 'range_not_satisfiable' | 'setup_done'
   | 'share_password_required' | 'share_expired' | 'rate_limited' | 'upload_not_allowed'
-  | 'office_disabled' | 'sso_not_allowed' | 'password_login_disabled' | 'insufficient_storage';
+  | 'office_disabled' | 'sso_not_allowed' | 'password_login_disabled' | 'insufficient_storage'
+  | 'space_unavailable';
 
 export interface SyncCapabilities {
   read: true; write: boolean; rename: boolean; move: boolean; delete: boolean; addChildren: boolean;

@@ -1,6 +1,12 @@
 import { loadConfig } from './config';
 
 describe('loadConfig', () => {
+  it('phase 4: teams and storage roots default to /teams and /storage', () => {
+    expect(loadConfig({})).toMatchObject({ teamsRoot: '/teams', storageRoot: '/storage' });
+    expect(loadConfig({ SYNCLET_TEAMS_ROOT: '', SYNCLET_STORAGE_ROOT: '' })).toMatchObject({ teamsRoot: '/teams', storageRoot: '/storage' });
+    expect(loadConfig({ SYNCLET_TEAMS_ROOT: '/srv/t', SYNCLET_STORAGE_ROOT: '/srv/s' })).toMatchObject({ teamsRoot: '/srv/t', storageRoot: '/srv/s' });
+  });
+
   it('treats empty values (compose `${VAR:-}`) as unset', () => {
     const c = loadConfig({
       SYNCLET_MASS_DELETE_THRESHOLD: '', SYNCLET_TOMBSTONE_WINDOW: '', SYNCLET_JOURNAL_RETENTION_DAYS: '',

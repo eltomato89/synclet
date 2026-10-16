@@ -655,7 +655,9 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
    */
   async recoverStagedTrash(): Promise<number> {
     let handled = 0;
+    // Missing spaces too: an unreadable root simply lists nothing, and a returned mount is handled then.
     for (const row of await this.prisma.space.findMany({ select: { id: true, kind: true, rootPath: true } })) {
+      if (!row.rootPath) continue; // personal root not synced yet (never after SpacesRepo init)
       const space = this.spaces.toIndexSpace(row);
       const root = space.rootPath;
       const names = await readdir(root).catch(() => [] as string[]);
