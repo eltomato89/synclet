@@ -1,6 +1,6 @@
 # Synclet for macOS
 
-A menu bar app plus a File Provider extension (`NSFileProviderReplicatedExtension`). Each signed-in account appears in Finder under **Locations** as "Synclet – `<user>@<host>`". Inside it, "Meine Dateien" (the personal space) holds your files, which download on demand. The shared core (Sync API client, transfers, live events, pinning, the extension base class) is the Swift package [`apps/apple/SyncletKit`](../apple/SyncletKit), which the later iOS app reuses.
+A menu bar app plus a File Provider extension (`NSFileProviderReplicatedExtension`). Each signed-in account appears in Finder under **Locations** as "Synclet – `<user>@<host>`". Inside it, "My Files" (the personal space) holds your files, which download on demand. The shared core (Sync API client, transfers, live events, pinning, the extension base class) is the Swift package [`apps/apple/SyncletKit`](../apple/SyncletKit), which the later iOS app reuses.
 
 - **Requirements:** macOS 26 or later; Xcode 26 or later; [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
 - **Identifiers:**
@@ -153,42 +153,42 @@ Some steps decide rulings that are still open. They are marked **(ruling)**.
    - **Expected:** after the image build, it prints "Throwaway server ready: http://localhost:18181" (or the next free port when 18181 is taken; use the printed address below), user `maclive`, the password and the compose project name. Keep this terminal open; Ctrl-C removes the stack.
    - **Report if different:** the last 30 lines of the output.
 2. **Build and start the app** as in "Build and run". In a second terminal, start the `log stream` command from above.
-   - **Expected:** a menu bar icon (two circling arrows). The window "Konto hinzufügen" opens because there is no account.
+   - **Expected:** a menu bar icon (two circling arrows). The window "Add Account" opens because there is no account.
    - **Report if different:** whether the icon is missing, and any crash report from Console.app.
 
 ### Sign-in and the extension
 
-3. **Sign in.** In "Konto hinzufügen", enter `http://localhost:18181` and click "Anmelden". The default browser opens `/app-login`; sign in as `maclive`.
+3. **Sign in.** In "Add Account", enter `http://localhost:18181` and click "Sign In". The default browser opens `/app-login`; sign in as `maclive`.
    - **Expected:**
      - The browser hands back to the app.
      - The window closes, and the menu shows the section "maclive@localhost:18181".
-     - In Finder's sidebar under **Orte/Locations**, "Synclet – maclive@localhost:18181" appears, and it contains exactly one folder, "Meine Dateien".
+     - In Finder's sidebar under **Locations**, "Synclet – maclive@localhost:18181" appears, and it contains exactly one folder, "My Files".
    - **Report if different:** the error text in the login window or the browser, and whether the redirect asked for permission to open "Synclet".
 4. **Does the extension need enabling in System Settings? (ruling)** Look at the sidebar entry and at System Settings → General → Login Items & Extensions → File Providers (macOS 26: "Extensions" → "File Providers").
    - **Expected:** one of two outcomes.
      - (a) The domain works right away, and Synclet is listed and enabled.
-     - (b) macOS asks you to allow it. In that case the app shows "Bitte erlaube Synclet in den Systemeinstellungen unter „Allgemein > Anmeldeobjekte & Erweiterungen“", and after you enable it, the domain appears.
+     - (b) macOS asks you to allow it. In that case the app shows "Please allow Synclet in System Settings under General > Login Items & Extensions.", and after you enable it, the domain appears.
    - **Report:** which of (a) or (b) happened. For (b), also report whether the app's hint appeared and whether the domain appeared without restarting the app.
 
 ### Finder basics
 
-5. **Browsing.** Upload two files and a folder with a file inside through the web UI (same server and user). Open "Meine Dateien" in Finder.
+5. **Browsing.** Upload two files and a folder with a file inside through the web UI (same server and user). Open "My Files" in Finder.
    - **Expected:** all items are listed with a cloud icon (not downloaded). Opening a file downloads it, then the cloud icon disappears and the content is correct.
    - **Report if different:** missing items, wrong names (umlauts), the error dialog text.
-6. **Create, rename, move, delete inside "Meine Dateien".** Do each of these in Finder:
+6. **Create, rename, move, delete inside "My Files".** Do each of these in Finder:
    - Create a folder.
    - Copy a file into it.
    - Rename the file.
-   - Move it to another folder of "Meine Dateien".
+   - Move it to another folder of "My Files".
    - Delete it (Finder asks to delete immediately).
    - **Expected:** after each step, the web UI shows the same state within a few seconds. A deleted item is in the web trash. Nothing ends up with a "(2)" name.
    - **Report if different:** which step, what the web UI shows, and any Finder badge (exclamation mark, "waiting to sync").
-7. **Writes into the virtual top level (root drop) (ruling: `.cannotSynchronize` vs `.fileWriteNoPermission`).** Try each of these on the account root "Synclet – maclive@…", next to "Meine Dateien":
+7. **Writes into the virtual top level (root drop) (ruling: `.cannotSynchronize` vs `.fileWriteNoPermission`).** Try each of these on the account root "Synclet – maclive@…", next to "My Files":
    - (a) Drag a file from the Desktop onto the root (copy).
    - (b) Drag with ⌘ (move) onto the root.
    - (c) Create a new folder at the root.
-   - (d) Rename "Meine Dateien".
-   - (e) Move "Meine Dateien" to the Trash.
+   - (d) Rename "My Files".
+   - (e) Move "My Files" to the Trash.
    - **Expected:**
      - All five fail cleanly: Finder refuses or shows an error. No item is created on the server (web UI unchanged).
      - For (b), the file stays on the Desktop, so nothing is lost.
@@ -198,19 +198,19 @@ Some steps decide rulings that are still open. They are marked **(ruling)**.
      - the exact Finder message for each of (a)–(e)
      - whether any item remained at the root with "waiting to sync" or a retrying spinner (a stuck item means the code must switch to `.fileWriteNoPermission`)
      - whether the Desktop file of (b) is still there
-8. **Moving between two folders of the same space** (drag a file from folder A to folder B inside "Meine Dateien").
+8. **Moving between two folders of the same space** (drag a file from folder A to folder B inside "My Files").
    - **Expected:** this works; the web UI shows the file in B with the same item (its version history is kept).
    - **Report if different:** the error text.
 
 ### Live changes (SSE)
 
-9. **Web change appears within 3 seconds.** Keep a Finder window on "Meine Dateien" open, then create a folder in the web UI and count seconds.
+9. **Web change appears within 3 seconds.** Keep a Finder window on "My Files" open, then create a folder in the web UI and count seconds.
    - **Expected:** it appears in Finder in ≤ 3 s. The log shows `changes` and a working-set signal.
    - **Report:** the measured time. If it is more than 3 s, also report whether it came after about 60 s (fallback polling).
 10. **Server down and up.** In a terminal, run `docker compose -p <project from step 1> stop server` and watch the menu for 30 s. Then run `… start server`, and once it is up, create a folder in the web UI.
    - **Expected:**
-     - While the server is down, the menu line reads "Offline" or "Verbinde…", and cached files in Finder still open.
-     - After the start, it is "Verbunden · Synchronisiert vor …" again within about 60 s, and a web change appears without any action.
+     - While the server is down, the menu line reads "Offline" or "Connecting…", and cached files in Finder still open.
+     - After the start, it is "Connected · Synced … ago" again within about 60 s, and a web change appears without any action.
    - **Report:** the menu texts you saw and the reconnect time.
 11. **Network change or sleep.** Put the Mac to sleep for 1 minute and wake it, or toggle Wi-Fi off and on.
    - **Expected:** the log shows "network or wake: reconnecting", and a web change made right after wake appears at once.
@@ -225,7 +225,7 @@ Some steps decide rulings that are still open. They are marked **(ruling)**.
    - **Expected:**
      - The original keeps the web version.
      - Next to it appears "`<name> (Konflikt <Mac name> <yyyy-MM-dd HH-mm>).txt`" with your text, on the server too.
-     - The menu shows the info entry "Anderswo geändert – deine Fassung wurde als „… (Konflikt …)“ gespeichert." with no "Fehler" and no badge. Clicking the entry selects the copy in Finder.
+     - The menu shows the info entry "Changed elsewhere – your version was saved as “… (Conflict …)”." with no "Error" and no badge. Clicking the entry selects the copy in Finder.
    - **Report:** the names of both files, and their content.
 13. **Local edit + server delete.**
    1. Download a file.
@@ -244,7 +244,7 @@ Some steps decide rulings that are still open. They are marked **(ruling)**.
 
 14. **Large upload with an interruption.**
    1. Create a 500 MB file with `mkfile -n 500m ~/Desktop/big.bin`, or better with real content: `head -c 500000000 /dev/urandom > ~/Desktop/big.bin`.
-   2. Copy it into "Meine Dateien".
+   2. Copy it into "My Files".
    3. When Finder's progress is at about 40 %, run `docker compose -p <project> restart server`.
    - **Expected:**
      - The upload continues after the restart.
@@ -253,7 +253,7 @@ Some steps decide rulings that are still open. They are marked **(ruling)**.
      - `shasum -a 256 ~/Desktop/big.bin` matches the sha256 in `curl -s -H "Authorization: Bearer <token>" http://localhost:18181/api/sync/v1/items/<id>`, or simply compare a re-download.
    - **Report:** the "resuming upload" line, or "starting over" / "discarding the stored upload" lines. Also report the final file count and size.
 15. **tus resume key across `createItem` retries.**
-   1. Start another 500 MB copy into "Meine Dateien".
+   1. Start another 500 MB copy into "My Files".
    2. At about 40 %, kill only the extension process: `kill -9 $(pgrep -x SyncletFileProvider)`. This targets this exact process name only.
    - **Expected:** macOS relaunches the extension and retries `createItem`. The log shows "resuming upload at N/…" with N > 0. This means the system kept the same template identifier and content version, so the stored upload was found. One file ends up on the server.
    - **Report:** whether the retry resumed (N > 0) or started at 0. If it started at 0, report the "local file or target changed" or "starting over" lines. A restart is correct but costly, and it means the resume key (item identifier + content version) is not stable across retries.
@@ -270,7 +270,7 @@ Some steps decide rulings that are still open. They are marked **(ruling)**.
    2. In Finder (icon view, large icons), look at them without opening them.
    - **Expected:**
      - Thumbnails appear while the cloud icon is still shown.
-     - A `.txt` shows the generic icon. Folders and "Meine Dateien" show folder icons.
+     - A `.txt` shows the generic icon. Folders and "My Files" show folder icons.
      - A freshly uploaded image may show the generic icon first and its thumbnail shortly after (scroll, or reopen the window).
    - **Report:** which types show no thumbnail after about 1 minute.
 18. **Thumbnail cache.**
@@ -295,7 +295,7 @@ Open Settings → Offline, or start the app with `-SyncletShowOffline`.
      - the time until the new file was local
      - whether the log shows "requested N pinned downloads" (the app's fallback had to act) or not (macOS acted on the policy itself)
 20. **Pin a normal folder.** First create a folder "Fotos" with some images in the web UI, then pin "Fotos".
-   - **Expected:** every file inside is downloaded. Settings shows "Offline-Inhalte ≈ …", and the menu's account section shows "Offline-Inhalte ≈ …".
+   - **Expected:** every file inside is downloaded. Settings shows "Offline content ≈ …", and the menu's account section shows "Offline content ≈ …".
    - **Report if different:** what the footer and the menu show.
 21. **Rename a pinned folder in the web UI.**
    - **Expected:** the toggle stays on, and new files in it still download.
@@ -309,30 +309,30 @@ Open Settings → Offline, or start the app with `-SyncletShowOffline`.
 23. **Delete a pinned folder in the web UI.**
    - **Expected:** its toggle disappears, and the pin is gone from `accounts/<key16>/spaces/personal/pins.json`.
    - **Report if different:** the file content.
-24. **Whole space.** Turn on "Ganzer Bereich offline".
+24. **Whole space.** Turn on "Entire space offline".
    - **Expected:** everything is downloaded, and the folder toggles show on and disabled. Moving a folder into a pinned folder in the web UI downloads its files.
    - **Report if different:** what stays in the cloud.
 
 ### Menu states and problems
 
 25. **Menu states.** While doing the steps above and below, note which status lines appeared for the account:
-   - "Verbunden · Synchronisiert vor …"
-   - "Verbinde…"
+   - "Connected · Synced … ago"
+   - "Connecting…"
    - "Offline"
-   - "Anmeldung erforderlich", plus the "Erneut anmelden…" item
-   - "Fehler" (with a problem from the last hour)
-   - "Status unbekannt"
+   - "Sign-in required", plus the "Sign In Again…" item
+   - "Error" (with a problem from the last hour)
+   - "Status unknown"
 
    Also note whether the menu bar icon gets the exclamation badge.
-   - **Expected:** each state appears in its situation (steps 10, 26, 28 and 30). The badge shows only for "Anmeldung erforderlich" or for a problem from the last hour, not for conflict info entries. "Im Finder öffnen" and "Web öffnen" work.
+   - **Expected:** each state appears in its situation (steps 10, 26, 28 and 30). The badge shows only for "Sign-in required" or for a problem from the last hour, not for conflict info entries. "Open in Finder" and "Open Web" work.
    - **Report:** any state text that was wrong for the situation, or a badge that did not go away within 1 hour.
 26. **Upload too large (413) and the problem list.**
    1. Start a second server with a small limit: `SYNCLET_MACLIVE_PORT=18182 SYNCLET_MACLIVE_TLS_PORT=18545 SYNCLET_MACLIVE_MAX_UPLOAD_BYTES=1000000 scripts/macos-live-tests.sh --serve`.
-   2. Sign in to it ("Konto hinzufügen…", `http://localhost:18182`, user `maclive`). This is also the **two-accounts** check of step 27.
-   3. Copy a 5 MB file into its "Meine Dateien".
+   2. Sign in to it ("Add Account…", `http://localhost:18182`, user `maclive`). This is also the **two-accounts** check of step 27.
+   3. Copy a 5 MB file into its "My Files".
    - **Expected:**
-     - "Letzte Probleme" shows "<file> – Zu groß für den Server – nicht hochgeladen."
-     - The account line reads "Fehler", and the badge is shown. Clicking the entry selects the file.
+     - "Recent Problems" shows "<file> – Too large for the server – not uploaded."
+     - The account line reads "Error", and the badge is shown. Clicking the entry selects the file.
      - Copying again gives no second entry.
      - "Liste leeren" empties the section.
    - **Report if different:** the entries shown.
@@ -348,13 +348,13 @@ Open Settings → Offline, or start the app with `-SyncletShowOffline`.
 
 28. **Re-login after a device revoke.**
    1. Pin a folder and wait until it is downloaded.
-   2. In the web UI (Admin → Benutzer → maclive → "Sitzungen und Geräte"), revoke the Mac's device.
+   2. In the web UI (Admin → Users → maclive → "Sessions and devices"), revoke the Mac's device.
    3. Edit a file in Finder.
    - **Expected:**
-     - The menu shows "Anmeldung erforderlich" with "Erneut anmelden…" and the badge.
+     - The menu shows "Sign-in required" with "Sign In Again…" and the badge.
      - The `events` log shows `bye unauthorized` and then no reconnect loop.
      - The edit stays pending, with no data loss.
-   4. Then click "Erneut anmelden…" and sign in.
+   4. Then click "Sign In Again…" and sign in.
    - **Expected:**
      - The same domain is reused (no second sidebar entry).
      - The pending edit uploads without restarting anything.
@@ -368,10 +368,10 @@ Open Settings → Offline, or start the app with `-SyncletShowOffline`.
      - the menu texts
 29. **Sign out with pending changes.**
    1. Stop the server of step 1 (`docker compose -p <project> stop server`).
-   2. Create a file in its "Meine Dateien".
+   2. Create a file in its "My Files".
    3. Choose Settings → Konten → "Abmelden…".
    - **Expected:**
-     - The confirmation warns: "1 lokale Änderungen … gehen verloren", or the generic "Nicht hochgeladene Änderungen gehen verloren."
+     - The confirmation warns: "1 local changes … will be lost", or the generic "Changes that have not been uploaded will be lost."
      - After you confirm:
        - The domain disappears from the sidebar, and the menu section and its problem entries are gone.
        - `~/Library/Group Containers/JC32M95WLZ.group.tech.jensk.synclet/accounts/` no longer has the account's folder, and the keychain item is gone.
@@ -381,23 +381,23 @@ Open Settings → Offline, or start the app with `-SyncletShowOffline`.
    1. Create and attach a small disk image: `hdiutil create -size 64m -fs HFS+ -volname SyncletFull ~/Desktop/SyncletFull.dmg && hdiutil attach ~/Desktop/SyncletFull.dmg`.
    2. Start another server whose files folder is on it: `SYNCLET_MACLIVE_DATA_DIR=/Volumes/SyncletFull/files scripts/macos-live-tests.sh --serve`, and sign in to it (the printed address).
    3. Fill the image outside the files folder: `dd if=/dev/zero of=/Volumes/SyncletFull/filler bs=1m` (it stops with "No space left on device").
-   4. Copy a 5 MB file and a 40 MB file (tus) into this account's "Meine Dateien".
+   4. Copy a 5 MB file and a 40 MB file (tus) into this account's "My Files".
    - **Expected:** "Letzte Probleme" shows "<file> – Der Speicher des Servers ist voll – neuer Versuch folgt." The files stay pending (cloud icon with an error badge), nothing is lost.
    5. Free the space: `rm /Volumes/SyncletFull/filler`. Note the time.
    - **Expected:** both files upload within about 1 minute, without restarting the app or signing in again, and the server has exactly one copy of each (no "(2)"). The app lifts the system's throttling (`signalErrorResolved` for `.insufficientQuota` and `.serverUnreachable`) on every new SSE connection and after every successful `/account` refresh (every 15 minutes). If nothing happens within 1 minute, wait up to 15 minutes; if it still does not upload, run `docker compose -p <project> restart server` (a new SSE `hello` lifts the throttling as well).
    - **Report:** the time from `rm` until the upload, and which of the three cases it took (by itself within 1 minute, at the 15-minute refresh, only after the server restart). Also report the `transfer` log lines.
    6. Sign out of this account, stop the server with Ctrl-C, then `hdiutil detach /Volumes/SyncletFull && rm ~/Desktop/SyncletFull.dmg`.
-31. **Spaces (Team-Ordner und externe Speicher).** Voraussetzung: ein Server mit einem Team-Ordner "Familie" (Schreibrechte für den Benutzer), einem schreibgeschützten Space (z. B. `/storage/Archiv` mit `:ro`) und einem zweiten Benutzer als Mitglied von "Familie".
-   1. **Team-Ordner erscheint.** Finder → Synclet-Konto öffnen.
-      - **Expected:** neben "Meine Dateien" erscheint "Familie"; eine Datei aus dem Web ist sichtbar.
-   2. **Schreibgeschützter Space.** Im Space "Archiv" eine Datei hineinkopieren, eine vorhandene umbenennen und löschen.
-      - **Expected:** jede Aktion wird abgelehnt (Finder-Fehler "Schreibzugriff verweigert"), nichts ändert sich auf dem Server.
-   3. **Verschieben zwischen Spaces.** Eine Datei aus "Meine Dateien" nach "Familie" ziehen.
-      - **Expected:** die Datei liegt in "Familie", ist aus "Meine Dateien" verschwunden und im Web bei "Familie" zu sehen.
-   4. **Zugriff entfernen.** Im Web (Admin-Bereich → Spaces) den Benutzer aus "Familie" entfernen.
-      - **Expected:** "Familie" verschwindet binnen weniger Sekunden aus dem Finder, ohne Neuanmeldung.
-   5. **Fehlender Mount.** `docker compose -p <project> stop server`, den Mount von `/storage/Archiv` abziehen (oder die Freigabe trennen), Server starten.
-      - **Expected:** Der Inhalt des Space lässt sich im Finder nicht öffnen (Fehler, der Server antwortet 503; die macOS-App hat dafür keine eigene Anzeige). Vorhandene Dateien bleiben auf dem Server und werden nicht gelöscht. Nach dem Wiederanhängen und einem Scan sind die Dateien wieder da.
+31. **Spaces (team folders and external storage).** Prerequisite: a server with a team folder "Familie" (write access for the user), a read-only space (e.g. `/storage/Archiv` with `:ro`) and a second user who is a member of "Familie".
+   1. **Team folder appears.** Finder → open the Synclet account.
+      - **Expected:** "Familie" appears next to "My Files"; a file from the web is visible.
+   2. **Read-only space.** In the space "Archiv", copy a file into it, rename an existing one and delete it.
+      - **Expected:** every action is rejected (Finder error "permission denied" / no write access), and nothing changes on the server.
+   3. **Moving between spaces.** Drag a file from "My Files" to "Familie".
+      - **Expected:** the file is in "Familie", has disappeared from "My Files" and is visible in the web under "Familie".
+   4. **Removing access.** In the web (admin area → Spaces), remove the user from "Familie".
+      - **Expected:** "Familie" disappears from Finder within a few seconds, without signing in again.
+   5. **Missing mount.** `docker compose -p <project> stop server`, remove the mount of `/storage/Archiv` (or disconnect the share), start the server.
+      - **Expected:** The space's content can't be opened in Finder (an error; the server answers 503; the macOS app has no display of its own for this). Existing files stay on the server and are not deleted. After remounting and a scan, the files are back.
 32. **Clean up.**
    1. Run `DerivedData/Build/Products/Debug/Synclet.app/Contents/MacOS/Synclet -SyncletSignOutAll`.
    2. Press Ctrl-C in all server terminals.
@@ -406,10 +406,10 @@ Open Settings → Offline, or start the app with `-SyncletShowOffline`.
 
 ## Known limitations
 
-- **Spaces:** "Meine Dateien", team folders and external storages appear as folders at the top level of the account. Read-only spaces reject writes; a space with a missing mount is unavailable but nothing is deleted (see deploy/README.md).
+- **Spaces:** "My Files", team folders and external storages appear as folders at the top level of the account. Read-only spaces reject writes; a space with a missing mount is unavailable but nothing is deleted (see deploy/README.md).
 - **No push.** When the menu bar app is not running, server changes reach Finder only when macOS asks the extension again, for example on the next Finder access. While the app runs, changes arrive through `GET /api/sync/v1/events` (SSE). It falls back to polling every 60 s when the stream is down.
 - **Proxies.** SSE needs a reverse proxy without buffering and with an idle timeout above 25 s. Shorter timeouts break the stream, and polling then takes over. See SYNC_API.md §5a.
-- **The virtual top level is read-only.** Files go into "Meine Dateien". Nothing can be created, renamed or deleted at the account root or on the space folder.
+- **The virtual top level is read-only.** Files go into "My Files". Nothing can be created, renamed or deleted at the account root or on the space folder.
 - **Files above 32 MiB** go through tus, which is resumable. Replacing a large file needs a server with tus replace (Synclet ≥ Phase 2).
 - **Conflicts** are not merged. The local version becomes a "(Konflikt …)" copy next to the server version.
 - **Pinning** downloads only into macOS's File Provider storage. Free space is managed by macOS, and unpinned files can be evicted.

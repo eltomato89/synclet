@@ -1,7 +1,7 @@
 import SwiftUI
 import SyncletKit
 
-/// The accounts: status, „Neu anmelden“ and „Abmelden“ (with confirmation), „Konto hinzufügen“.
+/// The accounts: status, "Sign In Again" and "Sign Out" (with confirmation), "Add Account".
 struct AccountsView: View {
     let accounts: AccountsModel
     @Environment(\.dismiss) private var dismiss

@@ -65,7 +65,7 @@ actor ThumbnailCache {
         return data.flatMap { remember($0, as: state) }
     }
 
-    /// Removes every stored thumbnail (settings „Cache leeren“).
+    /// Removes every stored thumbnail (settings "Clear Cache").
     func clear() {
         memory.removeAllObjects()
         validated.removeAll()

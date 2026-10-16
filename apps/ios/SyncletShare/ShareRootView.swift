@@ -48,7 +48,7 @@ final class ShareModel {
         target.flatMap { target in accounts.first { $0.key == target.accountKey } }
     }
 
-    /// Choosing another account starts at its „Meine Dateien“.
+    /// Choosing another account starts at its "My Files".
     func select(accountKey: String) {
         guard accountKey != target?.accountKey, let account = accounts.first(where: { $0.key == accountKey }) else { return }
         target = ShareTarget.root(of: account)
@@ -72,7 +72,7 @@ final class ShareModel {
         context?.cancelRequest(withError: NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
     }
 
-    /// „Hochladen“: copies every attachment into the queue while its file is valid, starts the
+    /// "Upload": copies every attachment into the queue while its file is valid, starts the
     /// extension's own background session and completes the request.
     func upload() async {
         guard let target, phase == .choosing else { return }
@@ -134,7 +134,7 @@ final class ShareModel {
     }
 }
 
-/// Account, target folder and „Hochladen“.
+/// Account, target folder and "Upload".
 struct ShareRootView: View {
     @Bindable var model: ShareModel
     @State private var showsFolderPicker = false

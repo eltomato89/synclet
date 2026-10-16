@@ -6,7 +6,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// Picked photos and videos as files for the upload queue: the original (HEIC, MOV …) or,
-/// with the setting „Fotos als JPEG hochladen“, photos converted to JPEG.
+/// with the setting "Upload Photos as JPEG", photos converted to JPEG.
 enum PhotoImport {
     /// The picker's file, copied out of the transfer (whose file disappears afterwards).
     struct ImportedFile: Transferable {
@@ -30,7 +30,7 @@ enum PhotoImport {
     }
 
     /// Writes the item into its own folder below `dir` and returns the file. Keeps the original
-    /// file name when the picker provides one, otherwise „Foto <yyyy-MM-dd HH.mm.ss>.<ext>“.
+    /// file name when the picker provides one, otherwise "Photo <yyyy-MM-dd HH.mm.ss>.<ext>".
     static func export(_ item: PhotosPickerItem, asJPEG: Bool, to dir: URL) async throws -> URL {
         guard let imported = try await item.loadTransferable(type: ImportedFile.self) else { throw ExportError.noFile }
         let fm = FileManager.default

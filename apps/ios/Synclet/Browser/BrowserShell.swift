@@ -1,8 +1,8 @@
 import SwiftUI
 import SyncletKit
 
-/// Top-level places of the browser. Later tasks add cases (Task 8: „Zuletzt“, „Suche“,
-/// „Papierkorb“; Task 9: „Uploads“): the case, its label, its place in ``tabs``/``more``/
+/// Top-level places of the browser. Later tasks add cases (Task 8: "Recent", "Search",
+/// "Trash"; Task 9: "Uploads"): the case, its label, its place in ``tabs``/``more``/
 /// ``sidebar`` and its view in ``DestinationView``.
 enum BrowserDestination: String, Hashable, Identifiable, CaseIterable {
     case files
@@ -13,9 +13,9 @@ enum BrowserDestination: String, Hashable, Identifiable, CaseIterable {
 
     var id: String { rawValue }
 
-    /// iPhone tabs (before „Mehr“).
+    /// iPhone tabs (before "More").
     static let tabs: [BrowserDestination] = [.files, .recent, .search]
-    /// iPhone „Mehr“ tab, above „Konten“.
+    /// iPhone "More" tab, above "Accounts".
     static let more: [BrowserDestination] = [.trash, .uploads]
     /// iPad sidebar, below each account.
     static let sidebar: [BrowserDestination] = [.files, .recent, .search, .trash, .uploads]
@@ -66,10 +66,10 @@ enum BrowserDestination: String, Hashable, Identifiable, CaseIterable {
 struct SidebarSelection: Hashable {
     let accountKey: String
     let destination: BrowserDestination
-    /// A team folder or storage (destination `.files`); `nil` = „Meine Dateien“.
+    /// A team folder or storage (destination `.files`); `nil` = "My Files".
     var spaceId: String?
 
-    /// The selection while its space still exists; otherwise the account's „Meine Dateien“
+    /// The selection while its space still exists; otherwise the account's "My Files"
     /// (access removed, space deleted).
     func validated(spaces: [SyncSpace]) -> SidebarSelection {
         guard let spaceId, !spaces.contains(where: { $0.id == spaceId && $0.kind != .personal }) else { return self }
@@ -170,7 +170,7 @@ struct BrowserShell: View {
                                 .tag(SidebarSelection(accountKey: entry.id, destination: destination))
                                 .accessibilityIdentifier("sidebar.\(destination.rawValue).\(entry.account.username)")
                             if destination == .files {
-                                // The account's team folders and storages right below „Meine Dateien“.
+                                // The account's team folders and storages right below "My Files".
                                 ForEach(SpaceDirectory(spaces: entry.account.spaces).others) { space in
                                     SpaceLabel(entry: space)
                                         .padding(.leading, 12)
@@ -248,7 +248,7 @@ struct DestinationView: View {
     let destination: BrowserDestination
     /// The account menu for the top of the root (iPhone).
     var accountMenu: AccountMenu?
-    /// Pushed inside another `NavigationStack` (iPhone „Mehr“): no stack of its own.
+    /// Pushed inside another `NavigationStack` (iPhone "More"): no stack of its own.
     var embedded = false
     /// `.files` of a team folder or storage (iPad sidebar).
     var spaceId: String?
@@ -275,9 +275,9 @@ struct DestinationView: View {
 }
 
 /// The files of an account with their folder navigation. iPhone: an account with team
-/// folders or storages starts at the list of its spaces (``SpaceList``), otherwise at „Meine
-/// Dateien“. iPad: the sidebar lists the spaces, so this shows one space (`space`, `nil` =
-/// „Meine Dateien“).
+/// folders or storages starts at the list of its spaces (``SpaceList``), otherwise at "My
+/// Files". iPad: the sidebar lists the spaces, so this shows one space (`space`, `nil` =
+/// "My Files").
 struct FolderStack: View {
     let environment: AppEnvironment
     let entry: AccountEntry
@@ -340,7 +340,7 @@ struct FolderStack: View {
     }
 }
 
-/// Account switch at the top of the iPhone browser, with „Konten …“.
+/// Account switch at the top of the iPhone browser, with "Accounts …".
 struct AccountMenu: View {
     @Bindable var accounts: AccountsModel
     let showAccounts: () -> Void

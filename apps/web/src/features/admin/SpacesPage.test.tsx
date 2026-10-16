@@ -104,7 +104,7 @@ it('lists spaces with status, read-only badge and members; external ones link to
   const ext = screen.getByText('nas').closest('tr')!;
   expect(within(ext).getByText('Unavailable')).toBeInTheDocument();
   expect(within(ext).getByText('Read only')).toBeInTheDocument();
-  expect(screen.getByRole('link', { name: /mount/i })).toHaveAttribute('href', expect.stringContaining('deploy/README.md#team-ordner-und-externe-speicher'));
+  expect(screen.getByRole('link', { name: /mount/i })).toHaveAttribute('href', expect.stringContaining('deploy/README.md#team-folders-and-external-storage'));
 });
 
 it('edits a team folder: rename and member list in one PATCH', async () => {

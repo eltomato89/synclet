@@ -56,7 +56,7 @@ actor FileCache {
         }
     }
 
-    /// Removes every cached file (settings „Cache leeren“).
+    /// Removes every cached file (settings "Clear Cache").
     func clear() {
         try? FileManager.default.removeItem(at: directory)
     }

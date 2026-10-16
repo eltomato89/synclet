@@ -1,7 +1,7 @@
 import SwiftUI
 import SyncletKit
 
-/// Root of the app. Without accounts: the empty state with „Konto hinzufügen“. With
+/// Root of the app. Without accounts: the empty state with "Add Account". With
 /// accounts: the browser (``BrowserShell``).
 struct RootView: View {
     let environment: AppEnvironment

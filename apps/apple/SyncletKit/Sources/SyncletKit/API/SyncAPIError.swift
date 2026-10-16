@@ -91,7 +91,7 @@ public enum SyncAPIError: Error, Sendable, Equatable {
         }
     }
 
-    /// `503 space_unavailable`: the space's storage is missing (Phase 4); shown as „Nicht verfügbar“.
+    /// `503 space_unavailable`: the space's storage is missing (Phase 4); shown as "Not Available".
     public var isSpaceUnavailable: Bool {
         if case .http(503, "space_unavailable", _) = self { return true }
         return false

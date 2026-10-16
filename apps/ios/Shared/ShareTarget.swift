@@ -10,16 +10,16 @@ struct ShareTarget: Codable, Equatable, Sendable {
     var accountKey: String
     var folderId: String
     var folderName: String
-    /// Space of the folder; `nil` = „Meine Dateien“ (also every target stored before Phase 4).
+    /// Space of the folder; `nil` = "My Files" (also every target stored before Phase 4).
     var spaceId: String?
 
-    /// „Meine Dateien“ of an account.
+    /// "My Files" of an account.
     static func root(of account: StoredAccount) -> ShareTarget {
         let rootId = account.spaces.first { $0.kind == .personal }?.rootId ?? SyncItem.rootID
         return ShareTarget(accountKey: account.key, folderId: rootId, folderName: String(localized: "My Files"))
     }
 
-    /// The roots the folder picker offers: „Meine Dateien“ and every space with write access
+    /// The roots the folder picker offers: "My Files" and every space with write access
     /// whose storage is there.
     static func spaceTargets(of account: StoredAccount) -> [ShareTarget] {
         SpaceDirectory(spaces: account.spaces).writable.map { entry in
@@ -31,7 +31,7 @@ struct ShareTarget: Codable, Equatable, Sendable {
     }
 
     /// The stored target while its account (and its space, with write access) still exists;
-    /// otherwise the first account's „Meine Dateien“; `nil` without accounts.
+    /// otherwise the first account's "My Files"; `nil` without accounts.
     static func resolve(stored: ShareTarget?, accounts: [StoredAccount]) -> ShareTarget? {
         if let stored, let account = accounts.first(where: { $0.key == stored.accountKey }) {
             guard let spaceId = stored.spaceId else { return stored }

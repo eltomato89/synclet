@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Settings: photo format of uploads and „Cache leeren“.
+/// Settings: photo format of uploads and "Clear Cache".
 struct SettingsView: View {
     @AppStorage(UploadCenter.photosAsJPEGKey) private var photosAsJPEG = false
     @Environment(\.dismiss) private var dismiss

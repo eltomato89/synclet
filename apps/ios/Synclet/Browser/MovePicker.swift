@@ -8,7 +8,7 @@ struct FolderRoute: Hashable {
     /// Space of the folder (`nil` = unknown, e.g. an older server).
     var spaceId: String?
     /// Uploads and new folders are allowed here (the folder's `addChildren` capability, or the
-    /// space's write access for a space root). Read-only folders hide the „+“ menu.
+    /// space's write access for a space root). Read-only folders hide the "+" menu.
     var canAddChildren = true
 
     init(id: String, title: String, spaceId: String? = nil, canAddChildren: Bool = true) {
@@ -25,7 +25,7 @@ struct FolderRoute: Hashable {
 }
 
 extension SpaceDirectory {
-    /// Whether uploads and new folders are allowed in `route` right now (the „+“ menu): a space
+    /// Whether uploads and new folders are allowed in `route` right now (the "+" menu): a space
     /// root follows the live space list (write access and storage present); a folder inside a
     /// space is read-only as soon as its space is (or is gone), otherwise its reloaded
     /// `folder` item decides, before that the route's value from navigation time.
@@ -45,9 +45,9 @@ extension SpaceEntry {
     }
 }
 
-/// „Verschieben“: pick the target folder. With spaces it starts at the list of spaces with
-/// write access („Meine Dateien“ and team folders/storages; the server moves between spaces),
-/// otherwise at „Meine Dateien“. The moved folders are hidden (no move into itself); the
+/// "Move": pick the target folder. With spaces it starts at the list of spaces with
+/// write access ("My Files" and team folders/storages; the server moves between spaces),
+/// otherwise at "My Files". The moved folders are hidden (no move into itself); the
 /// current folder and read-only folders can't be picked.
 struct MovePicker: View {
     let api: SyncAPIClient

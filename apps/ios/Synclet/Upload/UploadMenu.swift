@@ -2,14 +2,14 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Where picked files go: the folder the „+“ menu belongs to.
+/// Where picked files go: the folder the "+" menu belongs to.
 struct UploadTarget: Equatable {
     let accountKey: String
     let parentId: String
     let parentName: String
 }
 
-/// „Fotos“ and „Dateien“ for the folder's „+“ menu. The pickers themselves hang off the folder
+/// "Photos" and "Files" for the folder's "+" menu. The pickers themselves hang off the folder
 /// view (``SwiftUI/View/uploadPickers(photos:files:target:)``): a menu closes before it could
 /// present them.
 struct UploadMenu: View {
@@ -38,7 +38,7 @@ struct UploadMenu: View {
 }
 
 #if DEBUG
-/// DEBUG builds only (UI tests): `-SyncletTestUpload <path>` makes „Dateien“ enqueue that file
+/// DEBUG builds only (UI tests): `-SyncletTestUpload <path>` makes "Files" enqueue that file
 /// into the menu's folder instead of opening the file importer (which UI tests can't drive
 /// reliably on the simulator).
 enum TestUpload {

@@ -13,7 +13,7 @@ cd "$(dirname "$0")"
 # Captured first: `grep -q` closing the pipe early must not fail `security` under pipefail.
 IDENTITIES=$(security find-identity -v -p codesigning)
 if ! grep -q "Apple Distribution" <<<"$IDENTITIES"; then
-  echo "Kein Apple-Distribution-Zertifikat – in Xcode → Settings → Accounts anlegen" >&2
+  echo "No Apple Distribution certificate - create one in Xcode → Settings → Accounts" >&2
   exit 2
 fi
 
