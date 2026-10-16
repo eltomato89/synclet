@@ -12,17 +12,17 @@ describe('paths', () => {
     expect(baseName('a/b/c.txt')).toBe('c.txt');
   });
 
-  it('builds absolute paths below the user root', () => {
-    expect(absPath('/data', 'alice', '')).toBe(path.join('/data', 'alice'));
-    expect(absPath('/data', 'alice', 'x/y.txt')).toBe(path.join('/data', 'alice', 'x', 'y.txt'));
+  it('builds absolute paths below the space root', () => {
+    expect(absPath(path.join('/data', 'alice'), '')).toBe(path.join('/data', 'alice'));
+    expect(absPath(path.join('/data', 'alice'), 'x/y.txt')).toBe(path.join('/data', 'alice', 'x', 'y.txt'));
     expect(userRoot('/data', 'alice')).toBe(path.join('/data', 'alice'));
   });
 
   it('rejects traversal segments', () => {
-    expect(() => absPath('/data', 'alice', '../bob')).toThrow();
-    expect(() => absPath('/data', 'alice', 'a/../../x')).toThrow();
-    expect(() => absPath('/data', 'alice', 'a/./b')).toThrow();
-    expect(() => absPath('/data', 'alice', '/etc')).toThrow();
+    expect(() => absPath(path.join('/data', 'alice'), '../bob')).toThrow();
+    expect(() => absPath(path.join('/data', 'alice'), 'a/../../x')).toThrow();
+    expect(() => absPath(path.join('/data', 'alice'), 'a/./b')).toThrow();
+    expect(() => absPath(path.join('/data', 'alice'), '/etc')).toThrow();
   });
 
   it('realpathInside rejects symlink escapes', async () => {

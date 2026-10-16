@@ -3,7 +3,7 @@ import { Item, Prisma } from '@prisma/client';
 import type { SearchHit, SearchResponse, SyncItem } from '@synclet/shared';
 import { parentRel } from '../common/paths';
 import { SyncError } from '../common/sync-error';
-import type { IndexUser } from '../common/types';
+import type { IndexSpace } from '../common/types';
 import { PrismaService } from '../prisma/prisma.service';
 import { SerializerService } from '../sync/serializer.service';
 import { parseSyncId } from '../sync/sync-ids';
@@ -47,16 +47,16 @@ export class SearchService {
 
   /**
    * Name (trigram, accent- and case-insensitive) and content (full text over ItemText) search
-   * across the caller's live items. Every branch filters `ownerId` and `deletedAt IS NULL` on the
+   * across the caller's live items. Every branch filters `spaceId` and `deletedAt IS NULL` on the
    * Item row itself – ItemText is shared by content hash across users and never returned alone.
    *
    * The name predicates use exactly the expression of `Item_name_trgm_idx`
    * (`synclet_unaccent(lower(name))`, partial on `"deletedAt" IS NULL`) so the index applies.
    */
-  async search(user: IndexUser, rawQ: string, opts: { limit: number; offset: number; folderId?: string }): Promise<SearchResponse> {
+  async search(space: IndexSpace, rawQ: string, opts: { limit: number; offset: number; folderId?: string }): Promise<SearchResponse> {
     const q = (rawQ ?? '').trim();
     if (q.length < 1 || q.length > MAX_QUERY_CHARS) throw new SyncError('invalid_request', `q must be 1..${MAX_QUERY_CHARS} characters`);
-    const scope = await this.scope(user, opts.folderId);
+    const scope = await this.scope(space, opts.folderId);
     const lang = await this.lang.get();
     const nameExpr = Prisma.sql`synclet_unaccent(lower(i.name))`;
     const nq = Prisma.sql`synclet_unaccent(lower(${q}))`;
@@ -73,7 +73,7 @@ export class SearchService {
         WITH name_hits AS (
           SELECT i.id, GREATEST(similarity(${nameExpr}, ${nq}), word_similarity(${nq}, ${nameExpr})) AS score
           FROM "Item" i
-          WHERE i."ownerId" = ${user.id}::uuid AND i."deletedAt" IS NULL ${scope}
+          WHERE i."spaceId" = ${space.id}::uuid AND i."deletedAt" IS NULL ${scope}
             AND (${nameExpr} % ${nq} OR ${nq} <% ${nameExpr} OR ${nameExpr} LIKE ${like})
         ),
         content_hits AS (
@@ -81,7 +81,7 @@ export class SearchService {
           FROM "ItemText" t
           JOIN "Item" i ON i."contentHash" = t.sha
           WHERE t.tsv @@ ${tsq}
-            AND i."ownerId" = ${user.id}::uuid AND i."deletedAt" IS NULL AND i.type = 'file' ${scope}
+            AND i."spaceId" = ${space.id}::uuid AND i."deletedAt" IS NULL AND i.type = 'file' ${scope}
         ),
         hits AS (
           SELECT coalesce(n.id, c.id) AS id, n.score AS name_score, c.score AS content_score,
@@ -104,10 +104,10 @@ export class SearchService {
 
     const total = Number(rows[0]?.total ?? 0);
     const pageRows = rows.filter((r): r is HitRow & { id: string } => r.id !== null);
-    const items = await this.prisma.item.findMany({ where: { id: { in: pageRows.map((r) => r.id) }, ownerId: user.id, deletedAt: null } });
+    const items = await this.prisma.item.findMany({ where: { id: { in: pageRows.map((r) => r.id) }, spaceId: space.id, deletedAt: null } });
     const byId = new Map(items.map((r) => [r.id, r]));
     const ordered = pageRows.flatMap((r) => (byId.has(r.id) ? [{ row: byId.get(r.id)!, hit: r }] : []));
-    const serialized = await this.serializer.toSyncItems(user, ordered.map((o) => o.row));
+    const serialized = await this.serializer.toSyncItems(space, ordered.map((o) => o.row));
     const hits: SearchHit[] = ordered.map(({ row, hit }, i) => this.hit(row, serialized[i], hit));
     return { hits, total };
   }
@@ -118,13 +118,13 @@ export class SearchService {
   }
 
   /** Path-prefix restriction to a folder subtree (root or no folder = everything). */
-  private async scope(user: IndexUser, folderId: string | undefined): Promise<Prisma.Sql> {
+  private async scope(space: IndexSpace, folderId: string | undefined): Promise<Prisma.Sql> {
     if (!folderId) return Prisma.empty;
     const parsed = parseSyncId(folderId);
     if (!parsed) throw new SyncError('invalid_request', 'invalid folder id');
     if (parsed.kind === 'root') return Prisma.empty;
     if (parsed.kind !== 'folder') throw new SyncError('invalid_request', 'not a folder');
-    const folder = await this.prisma.item.findFirst({ where: { id: parsed.uuid, ownerId: user.id, deletedAt: null, type: 'folder' } });
+    const folder = await this.prisma.item.findFirst({ where: { id: parsed.uuid, spaceId: space.id, deletedAt: null, type: 'folder' } });
     if (!folder) throw new SyncError('not_found');
     return Prisma.sql`AND i.path LIKE ${`${escapeLike(folder.path)}/%`}`;
   }

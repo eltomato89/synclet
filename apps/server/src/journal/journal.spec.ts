@@ -14,7 +14,7 @@ describe('JournalService', () => {
 
   const ref = (n: number) => ({ id: `00000000-0000-4000-8000-${String(n).padStart(12, '0')}`, type: 'file' as const });
   const rec = (refs: ReturnType<typeof ref>[], op: 'upsert' | 'delete' = 'upsert') =>
-    ctx.prisma.$transaction(async (tx) => { await journal.lockUser(tx, user.id); await journal.record(tx, user.id, refs, op); }, TX_OPTS);
+    ctx.prisma.$transaction(async (tx) => { await journal.lockSpace(tx, user.id); await journal.record(tx, user.id, refs, op); }, TX_OPTS);
 
   it('starts at cursor 0 and advances one seq per distinct item', async () => {
     expect(await journal.currentCursor(user.id)).toBe('0');

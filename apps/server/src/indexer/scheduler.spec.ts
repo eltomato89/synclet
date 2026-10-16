@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readdir, readFile, rename, rm, symlink, writeFile } fro
 import os from 'node:os';
 import { Readable } from 'node:stream';
 import path from 'node:path';
-import { createTestApp, createTestUser, TestContext } from '../../test/context';
+import { createTestApp, createTestUser, personalSpace, TestContext } from '../../test/context';
 import { trashStagingName } from '../common/names';
 import { FilesService } from '../files/files.service';
 import { TrashService } from '../trash/trash.service';
@@ -31,7 +31,7 @@ describe('SchedulerService', () => {
 
   it('maintenance purges old tombstones', async () => {
     const user = await createTestUser(ctx);
-    await ctx.prisma.item.create({ data: { ownerId: user.id, type: 'file', name: 'x', nameKey: 'x', path: 'x', mtime: new Date(), deletedAt: new Date(Date.now() - 48 * 3600 * 1000) } });
+    await ctx.prisma.item.create({ data: { spaceId: user.id, type: 'file', name: 'x', nameKey: 'x', path: 'x', mtime: new Date(), deletedAt: new Date(Date.now() - 48 * 3600 * 1000) } });
     await ctx.app.get(SchedulerService).maintenance();
     expect(await ctx.prisma.item.count()).toBe(0);
   });
@@ -111,8 +111,8 @@ describe('SchedulerService', () => {
     const user = await createTestUser(ctx);
     const root = path.join(ctx.config.dataRoot, user.username);
     const files = ctx.app.get(FilesService);
-    const a = await files.createFolder(user, null, 'A');
-    const x = await files.upload(user, a.id, 'x.txt', Readable.from([Buffer.from('x')]), {});
+    const a = await files.createFolder(personalSpace(ctx, user), null, 'A');
+    const x = await files.upload(personalSpace(ctx, user), a.id, 'x.txt', Readable.from([Buffer.from('x')]), {});
     // Crash between staging rename and commit: rows live, path vacated, intent on /meta.
     const trashId = '11111111-2222-4333-8444-777777777777';
     await mkdir(path.join(ctx.config.metaRoot, 'staging'), { recursive: true });
@@ -127,7 +127,7 @@ describe('SchedulerService', () => {
     let restoredWhenScanStarted: boolean | null = null;
     jest.spyOn(s, 'scanAll').mockImplementation(() => {
       restoredWhenScanStarted = existsSync(path.join(root, 'A', 'x.txt'));
-      scan = indexer.fullScan(user);
+      scan = indexer.fullScan(personalSpace(ctx, user));
       return scan.then(() => undefined);
     });
     ctx.config.background = true;

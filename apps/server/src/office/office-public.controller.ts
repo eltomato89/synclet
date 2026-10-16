@@ -28,8 +28,8 @@ export class OfficePublicController {
   @Get(':id/content')
   async content(@Param('id') id: string, @Query('t') t: string | undefined, @Req() req: FastifyRequest, @Res() reply: FastifyReply) {
     this.limit(req, reply);
-    const { user, itemId } = await this.office.contentTarget(id, t);
-    const { item, abs } = await this.files.openRead(user, itemId);
+    const { space, itemId } = await this.office.contentTarget(id, t);
+    const { item, abs } = await this.files.openRead(space, itemId);
     return sendFile(req, reply, item, abs, { download: false });
   }
 

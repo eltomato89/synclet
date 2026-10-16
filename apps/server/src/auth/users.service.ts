@@ -9,6 +9,7 @@ import { isIgnored, validateName } from '../common/names';
 import { userRoot } from '../common/paths';
 import { SyncError } from '../common/sync-error';
 import { PrismaService } from '../prisma/prisma.service';
+import { SpacesRepo } from '../spaces/spaces.repo';
 
 export interface CreateUserInput {
   username: string;
@@ -30,6 +31,7 @@ export class UsersService {
     private readonly prisma: PrismaService,
     private readonly events: AppEvents,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
+    private readonly spaces: SpacesRepo,
   ) {}
 
   /** Username = folder name below the data root; must be a safe, visible folder name. */
@@ -70,7 +72,8 @@ export class UsersService {
         data: { username: input.username, displayName: input.displayName, email: input.email?.toLowerCase() ?? null, role: input.role },
       });
       await tx.identity.create({ data: { userId: created.id, ...identity } });
-      await tx.syncScope.create({ data: { userId: created.id } });
+      await this.spaces.createPersonal(tx, created);
+      await tx.syncScope.create({ data: { spaceId: created.id } });
       return created;
     });
     this.events.emit('user.created', { id: user.id, username: user.username });

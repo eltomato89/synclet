@@ -6,6 +6,7 @@ import { HashBackfill } from './derivatives/hash';
 import { JobsService } from './derivatives/jobs.service';
 import { TextIndexer } from './derivatives/text-index';
 import { Thumbnailer } from './derivatives/thumbnails';
+import { SpacesModule } from './spaces/spaces.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { SearchLanguage } from './search/search-language';
 import { WorkerRunner } from './worker/worker-runner';
@@ -16,7 +17,7 @@ export class WorkerModule {
   static forRoot(config: AppConfig): DynamicModule {
     return {
       module: WorkerModule,
-      imports: [CoreModule.forRoot(config), PrismaModule, DerivativesModule],
+      imports: [CoreModule.forRoot(config), PrismaModule, SpacesModule, DerivativesModule],
       providers: [JobsService, HashBackfill, Thumbnailer, SearchLanguage, TextIndexer, WorkerRunner],
       exports: [WorkerRunner, JobsService, HashBackfill, Thumbnailer],
     };

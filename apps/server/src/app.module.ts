@@ -1,6 +1,7 @@
 import { DynamicModule, Module } from '@nestjs/common';
 import { AppConfig } from './config';
 import { CoreModule } from './core.module';
+import { SpacesModule } from './spaces/spaces.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { AuthModule } from './auth/auth.module';
 import { JournalModule } from './journal/journal.module';
@@ -22,7 +23,7 @@ export class AppModule {
   static forRoot(config: AppConfig): DynamicModule {
     return {
       module: AppModule,
-      imports: [CoreModule.forRoot(config), PrismaModule, AuthModule, JournalModule, IndexerModule, FilesModule, SyncModule, TrashModule, UploadsModule, SharesModule, SearchModule, AdminModule, OfficeModule, SsoModule, EventsModule],
+      imports: [CoreModule.forRoot(config), PrismaModule, SpacesModule, AuthModule, JournalModule, IndexerModule, FilesModule, SyncModule, TrashModule, UploadsModule, SharesModule, SearchModule, AdminModule, OfficeModule, SsoModule, EventsModule],
       controllers: [HealthController],
     };
   }

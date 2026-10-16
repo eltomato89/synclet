@@ -3,7 +3,7 @@ import { mkdir, rename, symlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import * as yauzl from 'yauzl';
-import { createTestApp, createTestUser, TestContext } from '../../test/context';
+import { createTestApp, createTestUser, personalSpace, TestContext } from '../../test/context';
 import { RateLimiter } from '../auth/rate-limit';
 import { DerivedStore } from '../derivatives/derived-store';
 import { FilesService } from '../files/files.service';
@@ -171,9 +171,9 @@ describe('Share links', () => {
       expect((await api('POST', '/shares', { payload: { itemId: 'd_3f2b8c1e-1d2a-4c3b-9a8b-0123456789ab' } })).statusCode).toBe(404);
       expect((await api('POST', '/shares', { payload: { itemId: t.a.id, allowUpload: true } })).statusCode).toBe(400);
       const bob = await createTestUser(ctx, 'bob');
-      const bobFile = await ctx.app.get(FilesService).upload(bob, null, 'b.txt', Readable.from([Buffer.from('bob')]), {});
+      const bobFile = await ctx.app.get(FilesService).upload(personalSpace(ctx, bob), null, 'b.txt', Readable.from([Buffer.from('bob')]), {});
       expect((await api('POST', '/shares', { payload: { itemId: `f_${bobFile.id}` } })).statusCode).toBe(404);
-      const bobShare = await ctx.prisma.shareLink.create({ data: { ownerId: bob.id, itemId: bobFile.id, tokenHash: 'x', tokenEnc: 'y' } });
+      const bobShare = await ctx.prisma.shareLink.create({ data: { ownerId: bob.id, spaceId: bob.id, itemId: bobFile.id, tokenHash: 'x', tokenEnc: 'y' } });
       expect((await api('GET', '/shares')).json()).toEqual([]);
       expect((await api('PATCH', `/shares/${bobShare.id}`, { payload: { allowDownload: false } })).statusCode).toBe(404);
       expect((await api('DELETE', `/shares/${bobShare.id}`)).statusCode).toBe(404);
@@ -314,7 +314,7 @@ describe('Share links', () => {
       const t = await tree();
       const s = await share(t.A.id);
       const bob = await createTestUser(ctx, 'bob');
-      const bobFile = await ctx.app.get(FilesService).upload(bob, null, 'b.txt', Readable.from([Buffer.from('bob')]), {});
+      const bobFile = await ctx.app.get(FilesService).upload(personalSpace(ctx, bob), null, 'b.txt', Readable.from([Buffer.from('bob')]), {});
       const outside = [t.secret.id, t.bx.id, t.ax.id, t.top.id, `f_${bobFile.id}`, bobFile.id];
       for (const id of outside) {
         expect((await pub('GET', `${s.token}/items/${id}/content`)).statusCode).toBe(404);
@@ -356,7 +356,7 @@ describe('Share links', () => {
       const s = await share(t.A.id);
       // A symlink created on the host is never indexed, hence never listed.
       await symlink(path.join(userRoot(), 'P', 'B'), path.join(userRoot(), 'P', 'A', 'link'));
-      await ctx.app.get(IndexerService).fullScan({ id: userId, username: 'jens' });
+      await ctx.app.get(IndexerService).fullScan(personalSpace(ctx, { id: userId, username: 'jens' }));
       const names = (await pub('GET', `${s.token}/items`)).json().map((e: { name: string }) => e.name);
       expect(names).not.toContain('link');
       // An indexed subfolder swapped for a symlink to outside (before the indexer notices) is not served.
@@ -438,7 +438,7 @@ describe('Share links', () => {
         console.warn('skipped: file system does not allow backslashes in names');
         return;
       }
-      await ctx.app.get(IndexerService).fullScan({ id: userId, username: 'jens' });
+      await ctx.app.get(IndexerService).fullScan(personalSpace(ctx, { id: userId, username: 'jens' }));
       const s = await share(t.A.id);
       const entries = await unzip((await pub('GET', `${s.token}/zip`)).rawPayload);
       expect(entries.get('.._.._x.bat')).toBe('bat');
@@ -557,7 +557,7 @@ describe('Share links', () => {
     it('a shared folder created on the host is shareable after indexing', async () => {
       await mkdir(path.join(userRoot(), 'Host'), { recursive: true });
       await writeFile(path.join(userRoot(), 'Host', 'h.txt'), 'host');
-      await ctx.app.get(IndexerService).fullScan({ id: userId, username: 'jens' });
+      await ctx.app.get(IndexerService).fullScan(personalSpace(ctx, { id: userId, username: 'jens' }));
       const host = await ctx.prisma.item.findFirstOrThrow({ where: { name: 'Host' } });
       const s = await share(`d_${host.id}`);
       const [entry] = (await pub('GET', `${s.token}/items`)).json();

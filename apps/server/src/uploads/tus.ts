@@ -15,8 +15,9 @@ import { APP_CONFIG, AppConfig } from '../config';
 import { validateName } from '../common/names';
 import { InsufficientStorageError, isStorageFull } from '../common/storage-errors';
 import { SyncError } from '../common/sync-error';
-import type { AuthUser } from '../common/types';
+import type { AuthUser, IndexSpace } from '../common/types';
 import { FilesService, OnConflict } from '../files/files.service';
+import { SpacesRepo } from '../spaces/spaces.repo';
 import { PrismaService } from '../prisma/prisma.service';
 import { importEsm } from '../common/import-esm';
 import { SerializerService } from '../sync/serializer.service';
@@ -87,6 +88,7 @@ export class TusService implements OnModuleInit {
     private readonly files: FilesService,
     private readonly prisma: PrismaService,
     private readonly serializer: SerializerService,
+    private readonly spaces: SpacesRepo,
     private readonly adapterHost: HttpAdapterHost,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {
@@ -116,7 +118,7 @@ export class TusService implements OnModuleInit {
       onUploadCreate: async (req, upload) => {
         const raw = this.rawRequest(req);
         if (raw) this.created.set(raw, upload.id);
-        const meta = await this.validateMeta(this.caller(req), upload.metadata);
+        const meta = await this.validateMeta(await this.spaces.personalFor(this.caller(req).id), upload.metadata);
         if ('itemId' in meta) return { metadata: upload.metadata };
         return { metadata: { ...upload.metadata, parentId: meta.parentId, onConflict: meta.onConflict } };
       },
@@ -134,8 +136,7 @@ export class TusService implements OnModuleInit {
         if (!(err instanceof SyncError)) return undefined;
         const body: Record<string, unknown> = { statusCode: err.status, message: err.message, code: err.code };
         if (err.itemRow) {
-          const owner = await this.prisma.user.findUniqueOrThrow({ where: { id: err.itemRow.ownerId } });
-          body.item = (await this.serializer.toSyncItems(owner, [err.itemRow]))[0];
+          body.item = (await this.serializer.toSyncItems({ id: err.itemRow.spaceId }, [err.itemRow]))[0];
         }
         return { status_code: err.status, body: JSON.stringify(body) };
       },
@@ -193,12 +194,12 @@ export class TusService implements OnModuleInit {
     return user;
   }
 
-  private async resolveParent(user: AuthUser, rawId: string): Promise<string | null> {
+  private async resolveParent(space: IndexSpace, rawId: string): Promise<string | null> {
     const parsed = parseSyncId(rawId);
     if (!parsed) throw new SyncError('invalid_request', 'invalid parentId');
     if (parsed.kind === 'root') return null;
     if (parsed.kind !== 'folder') throw new SyncError('invalid_request', 'parent is not a folder');
-    const row = await this.prisma.item.findFirst({ where: { id: parsed.uuid, ownerId: user.id, deletedAt: null, type: 'folder' } });
+    const row = await this.prisma.item.findFirst({ where: { id: parsed.uuid, spaceId: space.id, deletedAt: null, type: 'folder' } });
     if (!row) throw new SyncError('not_found', 'parent not found');
     return row.id;
   }
@@ -211,7 +212,7 @@ export class TusService implements OnModuleInit {
   }
 
   /** Replace of an existing file: same checks as `PUT /items/:id/content` with If-Match, at creation time. */
-  private async validateReplaceMeta(user: AuthUser, m: NonNullable<Upload['metadata']>): Promise<ReplaceMeta> {
+  private async validateReplaceMeta(space: IndexSpace, m: NonNullable<Upload['metadata']>): Promise<ReplaceMeta> {
     for (const key of ['name', 'parentId', 'onConflict']) {
       if (m[key] !== undefined) throw new SyncError('invalid_request', `${key} cannot be combined with itemId`);
     }
@@ -220,7 +221,7 @@ export class TusService implements OnModuleInit {
     const ifMatch = m.ifMatch;
     if (!ifMatch) throw new SyncError('precondition_required', 'ifMatch required with itemId');
     const modifiedAt = this.parseModifiedAt(m.modifiedAt);
-    const row = await this.prisma.item.findFirst({ where: { id: parsed.uuid, ownerId: user.id, deletedAt: null, type: 'file' } });
+    const row = await this.prisma.item.findFirst({ where: { id: parsed.uuid, spaceId: space.id, deletedAt: null, type: 'file' } });
     if (!row) throw new SyncError('not_found', 'item not found');
     const match = /^v(\d+)$/.exec(ifMatch);
     if (!match) throw new SyncError('conflict', 'unknown etag', row);
@@ -229,17 +230,17 @@ export class TusService implements OnModuleInit {
     return { itemId: row.id, version, modifiedAt };
   }
 
-  private async validateMeta(user: AuthUser, metadata: Upload['metadata']): Promise<UploadMeta | ReplaceMeta> {
+  private async validateMeta(space: IndexSpace, metadata: Upload['metadata']): Promise<UploadMeta | ReplaceMeta> {
     const m = metadata ?? {};
     if (m.itemId !== undefined || m.ifMatch !== undefined) {
       if (m.itemId === undefined) throw new SyncError('invalid_request', 'ifMatch requires itemId');
-      return this.validateReplaceMeta(user, m);
+      return this.validateReplaceMeta(space, m);
     }
     const name = m.name ?? '';
     const nameError = validateName(name);
     if (nameError) throw new SyncError('invalid_name', `invalid name (${nameError})`);
     const parentId = m.parentId || ROOT_ID;
-    const parent = await this.resolveParent(user, parentId);
+    const parent = await this.resolveParent(space, parentId);
     const onConflict = m.onConflict || 'rename';
     if (onConflict !== 'fail' && onConflict !== 'rename') throw new SyncError('invalid_request', 'invalid onConflict');
     const modifiedAt = this.parseModifiedAt(m.modifiedAt);
@@ -254,13 +255,14 @@ export class TusService implements OnModuleInit {
     this.finishing.add(upload.id);
     let item: SyncItem;
     try {
-      const meta = await this.validateMeta(user, upload.metadata);
+      const space = await this.spaces.personalFor(user.id);
+      const meta = await this.validateMeta(space, upload.metadata);
       const source = createReadStream(path.join(this.directory, upload.id));
       // A replace re-checks the base version under the user lock (412 → upload dropped below).
       const row = 'itemId' in meta
-        ? await this.files.replaceContent(user, meta.itemId, source, { ifMatchVersion: meta.version, modifiedAt: meta.modifiedAt })
-        : await this.files.upload(user, meta.parent, meta.name, source, { onConflict: meta.onConflict, modifiedAt: meta.modifiedAt });
-      item = (await this.serializer.toSyncItems(user, [row]))[0];
+        ? await this.files.replaceContent(space, meta.itemId, source, { ifMatchVersion: meta.version, modifiedAt: meta.modifiedAt, by: user.id })
+        : await this.files.upload(space, meta.parent, meta.name, source, { onConflict: meta.onConflict, modifiedAt: meta.modifiedAt });
+      item = (await this.serializer.toSyncItems(space, [row]))[0];
     } catch (e) {
       // Client errors (conflict, parent gone) cannot be fixed by retrying this upload: drop it.
       // Anything else (I/O, database, full disk = 507) keeps it; an empty PATCH at the final offset retries.

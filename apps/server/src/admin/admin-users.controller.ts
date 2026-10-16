@@ -36,9 +36,10 @@ export class AdminUsersController {
   private async wires(where?: { id: string }): Promise<AdminUserWire[]> {
     const rows = await this.prisma.user.findMany({ where, orderBy: { createdAt: 'asc' }, include: { identities: true } });
     const ids = rows.map((r) => r.id);
-    const sizes = await this.prisma.item.groupBy({ by: ['ownerId'], where: { ownerId: { in: ids }, type: 'file', deletedAt: null }, _sum: { size: true } });
+    // Personal space id = user id.
+    const sizes = await this.prisma.item.groupBy({ by: ['spaceId'], where: { spaceId: { in: ids }, type: 'file', deletedAt: null }, _sum: { size: true } });
     const devices = await this.prisma.syncDevice.groupBy({ by: ['userId'], where: { userId: { in: ids }, revokedAt: null }, _count: { _all: true } });
-    const used = new Map(sizes.map((s) => [s.ownerId, Number(s._sum.size ?? 0n)]));
+    const used = new Map(sizes.map((s) => [s.spaceId, Number(s._sum.size ?? 0n)]));
     const dev = new Map(devices.map((d) => [d.userId, d._count._all]));
     return rows.map((u) => ({
       ...this.users.toPublic(u), disabled: u.disabledAt !== null, createdAt: u.createdAt.toISOString(), lastLoginAt: u.lastLoginAt?.toISOString() ?? null,

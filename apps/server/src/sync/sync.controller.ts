@@ -11,7 +11,7 @@ import { AllowDownloadToken, CurrentUser } from '../auth/current-user.decorator'
 import { ServerConfigService } from '../auth/server-config.service';
 import { APP_CONFIG, AppConfig } from '../config';
 import { SyncError } from '../common/sync-error';
-import type { AuthUser } from '../common/types';
+import type { AuthUser, IndexSpace } from '../common/types';
 import { ZodPipe } from '../common/zod.pipe';
 import { DerivativesGc } from '../derivatives/derivatives-gc';
 import { DerivedStore } from '../derivatives/derived-store';
@@ -21,6 +21,7 @@ import { FilesService, itemEtag, OnConflict } from '../files/files.service';
 import { JournalService } from '../journal/journal.service';
 import { OfficeService } from '../office/office.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { SpacesRepo } from '../spaces/spaces.repo';
 import { etagList, first, HeaderMap, rawBody, SANDBOX_CSP, sendFile, unquote } from './http-content';
 import { mimeFor, SerializerService } from './serializer.service';
 import { parseSyncId, ROOT_ID, toSyncId, UUID } from './sync-ids';
@@ -52,32 +53,33 @@ export class SyncController {
     private readonly derived: DerivedStore,
     private readonly gc: DerivativesGc,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
+    private readonly spaces: SpacesRepo,
   ) {}
 
   /** Resolves a sync id to a live row (null for root). */
-  private async resolve(user: AuthUser, rawId: string): Promise<Item | null> {
+  private async resolve(space: IndexSpace, rawId: string): Promise<Item | null> {
     const parsed = parseSyncId(rawId);
     if (!parsed) throw new SyncError('invalid_request', 'invalid id');
     if (parsed.kind === 'root') return null;
-    const row = await this.prisma.item.findFirst({ where: { id: parsed.uuid, ownerId: user.id, deletedAt: null, type: parsed.kind } });
+    const row = await this.prisma.item.findFirst({ where: { id: parsed.uuid, spaceId: space.id, deletedAt: null, type: parsed.kind } });
     if (!row) throw new SyncError('not_found');
     return row;
   }
 
-  private async resolveFile(user: AuthUser, rawId: string): Promise<Item> {
-    const row = await this.resolve(user, rawId);
+  private async resolveFile(space: IndexSpace, rawId: string): Promise<Item> {
+    const row = await this.resolve(space, rawId);
     if (!row || row.type !== 'file') throw new SyncError('invalid_request', 'not a file');
     return row;
   }
 
-  private async resolveParent(user: AuthUser, rawId: string): Promise<string | null> {
-    const row = await this.resolve(user, rawId);
+  private async resolveParent(space: IndexSpace, rawId: string): Promise<string | null> {
+    const row = await this.resolve(space, rawId);
     if (row && row.type !== 'folder') throw new SyncError('invalid_request', 'parent is not a folder');
     return row?.id ?? null;
   }
 
-  private async one(user: AuthUser, row: Item): Promise<SyncItem> {
-    return (await this.serializer.toSyncItems(user, [row]))[0];
+  private async one(space: IndexSpace, row: Item): Promise<SyncItem> {
+    return (await this.serializer.toSyncItems(space, [row]))[0];
   }
 
   private rawBody(body: unknown, headers: HeaderMap) {
@@ -86,8 +88,9 @@ export class SyncController {
 
   @Get('account')
   async account(@CurrentUser() user: AuthUser): Promise<SyncAccount> {
+    const space = await this.spaces.personalFor(user.id);
     const u = await this.prisma.user.findUniqueOrThrow({ where: { id: user.id } });
-    const used = await this.prisma.item.aggregate({ where: { ownerId: user.id, deletedAt: null }, _sum: { size: true } });
+    const used = await this.prisma.item.aggregate({ where: { spaceId: space.id, deletedAt: null }, _sum: { size: true } });
     const { serverId } = await this.serverConfig.get();
     return {
       userId: u.id, email: u.email, displayName: u.displayName,
@@ -96,7 +99,7 @@ export class SyncController {
       spaces: [{ id: 'personal', kind: 'personal', name: 'Meine Dateien', rootId: ROOT_ID, canWrite: true }],
       areas: { personal: true, shared: false, customers: false, projects: false },
       quotaBytes: 0, usedBytes: Number(used._sum.size ?? 0n), maxUploadBytes: this.config.maxUploadBytes,
-      cursor: await this.journal.currentCursor(user.id),
+      cursor: await this.journal.currentCursor(space.id),
     };
   }
 
@@ -110,15 +113,17 @@ export class SyncController {
 
   @Get('cursor')
   async cursor(@CurrentUser() user: AuthUser) {
-    return { cursor: await this.journal.currentCursor(user.id) };
+    const space = await this.spaces.personalFor(user.id);
+    return { cursor: await this.journal.currentCursor(space.id) };
   }
 
   @Get('changes')
   async changes(@CurrentUser() user: AuthUser, @Query('cursor') cursor = '', @Query('limit') limitRaw?: string): Promise<SyncChangesPage> {
-    const page = await this.journal.changesSince(user.id, cursor, clampLimit(limitRaw));
+    const space = await this.spaces.personalFor(user.id);
+    const page = await this.journal.changesSince(space.id, cursor, clampLimit(limitRaw));
     const ids = page.entries.map((e) => e.itemId);
-    const rows = await this.prisma.item.findMany({ where: { id: { in: ids }, ownerId: user.id, deletedAt: null } });
-    const items = await this.serializer.toSyncItems(user, rows);
+    const rows = await this.prisma.item.findMany({ where: { id: { in: ids }, spaceId: space.id, deletedAt: null } });
+    const items = await this.serializer.toSyncItems(space, rows);
     const live = new Map(rows.map((r, i) => [r.id, items[i]]));
     // Tombstones are purged long before the journal is trimmed: a missing row is a delete,
     // its sync id comes from the journal's itemType.
@@ -131,14 +136,16 @@ export class SyncController {
 
   @Get('items/:id')
   async item(@CurrentUser() user: AuthUser, @Param('id') id: string): Promise<SyncItem> {
-    const row = await this.resolve(user, id);
-    return row ? this.one(user, row) : this.serializer.rootItem(user);
+    const space = await this.spaces.personalFor(user.id);
+    const row = await this.resolve(space, id);
+    return row ? this.one(space, row) : this.serializer.rootItem(user);
   }
 
   @Get('items/:id/children')
   async children(@CurrentUser() user: AuthUser, @Param('id') id: string, @Query('pageToken') pageToken?: string, @Query('limit') limitRaw?: string): Promise<SyncChildrenPage> {
-    const cursor = await this.journal.currentCursor(user.id); // state before reading the first page
-    const parent = await this.resolve(user, id);
+    const space = await this.spaces.personalFor(user.id);
+    const cursor = await this.journal.currentCursor(space.id); // state before reading the first page
+    const parent = await this.resolve(space, id);
     if (parent && parent.type !== 'folder') throw new SyncError('invalid_request', 'not a folder');
     const limit = clampLimit(limitRaw);
     // Keyset: "<0|1>:<uuid>" – folders (0) before files (1), then by id.
@@ -150,7 +157,7 @@ export class SyncController {
       rank = Number(m[1]);
       afterId = m[2];
     }
-    const where = { ownerId: user.id, parentId: parent?.id ?? null, deletedAt: null };
+    const where = { spaceId: space.id, parentId: parent?.id ?? null, deletedAt: null };
     const folders = rank <= 0
       ? await this.prisma.item.findMany({ where: { ...where, type: 'folder', ...(rank === 0 ? { id: { gt: afterId } } : {}) }, orderBy: { id: 'asc' }, take: limit + 1 })
       : [];
@@ -162,7 +169,7 @@ export class SyncController {
     const pageRows = all.slice(0, limit);
     const last = pageRows[pageRows.length - 1];
     const nextPageToken = all.length > limit && last ? `${last.type === 'folder' ? 0 : 1}:${last.id}` : null;
-    return { items: await this.serializer.toSyncItems(user, pageRows), nextPageToken, cursor };
+    return { items: await this.serializer.toSyncItems(space, pageRows), nextPageToken, cursor };
   }
 
   /**
@@ -172,8 +179,9 @@ export class SyncController {
    */
   @Post('items/:id/download-token')
   async downloadToken(@CurrentUser() user: AuthUser, @Param('id') id: string, @Query('purpose') purpose?: string) {
+    const space = await this.spaces.personalFor(user.id);
     if (purpose !== undefined && purpose !== 'download' && purpose !== 'preview') throw new SyncError('invalid_request', 'invalid purpose');
-    const row = await this.resolveFile(user, id);
+    const row = await this.resolveFile(space, id);
     const syncId = toSyncId(row);
     const preview = purpose === 'preview';
     const ttl = preview ? PREVIEW_TOKEN_TTL_S : DOWNLOAD_TOKEN_TTL_S;
@@ -189,10 +197,11 @@ export class SyncController {
   @Get('items/:id/content')
   @AllowDownloadToken()
   async content(@CurrentUser() user: AuthUser, @Param('id') id: string, @Query('download') download: string | undefined, @Req() req: FastifyRequest, @Res() reply: FastifyReply) {
+    const space = await this.spaces.personalFor(user.id);
     const parsed = parseSyncId(id);
     if (!parsed) throw new SyncError('invalid_request', 'invalid id');
     if (parsed.kind !== 'file') throw new SyncError('invalid_request', 'not a file');
-    const { item, abs } = await this.files.openRead(user, parsed.uuid);
+    const { item, abs } = await this.files.openRead(space, parsed.uuid);
     return sendFile(req, reply, item, abs, { download: download === '1' });
   }
 
@@ -203,9 +212,10 @@ export class SyncController {
   @Get('items/:id/thumbnail')
   @AllowDownloadToken()
   async thumbnail(@CurrentUser() user: AuthUser, @Param('id') id: string, @Query('size') sizeRaw: string | undefined, @Req() req: FastifyRequest, @Res() reply: FastifyReply) {
+    const space = await this.spaces.personalFor(user.id);
     const size = sizeRaw === undefined || sizeRaw === '256' ? 256 : sizeRaw === '1024' ? 1024 : null;
     if (size === null) throw new SyncError('invalid_request', 'size must be 256 or 1024');
-    const row = await this.resolveFile(user, id);
+    const row = await this.resolveFile(space, id);
     const sha = row.contentHash;
     if (!sha) throw new SyncError('not_found', 'no thumbnail');
     const job = await this.prisma.derivativeJob.findUnique({ where: { sha_kind: { sha, kind: 'thumb' } }, select: { status: true } });
@@ -237,11 +247,12 @@ export class SyncController {
    */
   @Get('items/:id/preview-text')
   async previewText(@CurrentUser() user: AuthUser, @Param('id') id: string, @Res({ passthrough: true }) reply: FastifyReply): Promise<{ text: string; truncated: boolean; encoding: TextEncodingName }> {
-    const row = await this.resolveFile(user, id);
+    const space = await this.spaces.personalFor(user.id);
+    const row = await this.resolveFile(space, id);
     if (!TEXT_PREVIEW_KINDS.has(previewKind(row.name, mimeFor(row.name)))) {
       throw new SyncError('invalid_request', 'no text preview for this file type', undefined, 415);
     }
-    const { abs } = await this.files.openRead(user, row.id);
+    const { abs } = await this.files.openRead(space, row.id);
     const { buf, size } = await readPrefix(abs, PREVIEW_TEXT_BYTES).catch(() => { throw new SyncError('not_found'); });
     const { text, encoding } = decodeText(buf);
     reply.header('Cache-Control', 'no-store');
@@ -250,7 +261,8 @@ export class SyncController {
 
   @Put('items/:id/content')
   async replace(@CurrentUser() user: AuthUser, @Param('id') id: string, @Headers() headers: HeaderMap, @Body() body: unknown): Promise<SyncItem> {
-    const row = await this.resolveFile(user, id);
+    const space = await this.spaces.personalFor(user.id);
+    const row = await this.resolveFile(space, id);
     const ifMatch = unquote(first(headers['if-match']));
     if (!ifMatch) throw new SyncError('precondition_required', 'If-Match required');
     // `*` = any current version. An unindexed edit on the host still yields 412 (it is recorded
@@ -258,8 +270,8 @@ export class SyncController {
     const m = ifMatch === '*' ? null : /^v(\d+)$/.exec(ifMatch);
     if (ifMatch !== '*' && !m) throw new SyncError('conflict', 'unknown etag', row);
     const stream = this.rawBody(body, headers);
-    const updated = await this.files.replaceContent(user, row.id, stream, { ifMatchVersion: m ? Number(m[1]) : null, modifiedAt: modifiedAt(headers) });
-    return this.one(user, updated);
+    const updated = await this.files.replaceContent(space, row.id, stream, { ifMatchVersion: m ? Number(m[1]) : null, modifiedAt: modifiedAt(headers), by: user.id });
+    return this.one(space, updated);
   }
 
   @Post('items/upload')
@@ -272,25 +284,28 @@ export class SyncController {
     @Headers() headers: HeaderMap,
     @Body() body: unknown,
   ): Promise<SyncItem> {
+    const space = await this.spaces.personalFor(user.id);
     if (onConflict !== 'fail' && onConflict !== 'rename') throw new SyncError('invalid_request', 'invalid onConflict');
-    const pid = await this.resolveParent(user, parentId);
+    const pid = await this.resolveParent(space, parentId);
     const stream = this.rawBody(body, headers);
-    const row = await this.files.upload(user, pid, name, stream, { onConflict: onConflict as OnConflict, modifiedAt: modifiedAt(headers) });
-    return this.one(user, row);
+    const row = await this.files.upload(space, pid, name, stream, { onConflict: onConflict as OnConflict, modifiedAt: modifiedAt(headers) });
+    return this.one(space, row);
   }
 
   @Post('items')
   @HttpCode(201)
   async create(@CurrentUser() user: AuthUser, @Body(new ZodPipe(CreateBody)) body: z.infer<typeof CreateBody>): Promise<SyncItem> {
-    const pid = await this.resolveParent(user, body.parentId);
-    return this.one(user, await this.files.createFolder(user, pid, body.name, body.onConflict ?? 'fail'));
+    const space = await this.spaces.personalFor(user.id);
+    const pid = await this.resolveParent(space, body.parentId);
+    return this.one(space, await this.files.createFolder(space, pid, body.name, body.onConflict ?? 'fail'));
   }
 
   @Patch('items/:id')
   async patch(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body(new ZodPipe(PatchBody)) body: z.infer<typeof PatchBody>, @Headers('if-match') ifMatchRaw?: string): Promise<SyncItem> {
-    const row = await this.resolve(user, id);
+    const space = await this.spaces.personalFor(user.id);
+    const row = await this.resolve(space, id);
     if (!row) throw new SyncError('forbidden', 'root cannot be changed');
-    const current = await this.one(user, row);
+    const current = await this.one(space, row);
     // The client's If-Match is checked against the etag it was served (for folders not derived
     // from updatedAt, see folderEtag). The row's internal etag is then handed to FilesService,
     // which re-checks it under the user lock, so a change in between still yields 412.
@@ -300,25 +315,26 @@ export class SyncController {
       if (ifMatch !== current.etag) throw new SyncError('conflict', 'etag mismatch', row);
       guard = { ifMatchEtag: itemEtag(row) };
     }
-    const parentId = body.parentId === undefined ? undefined : await this.resolveParent(user, body.parentId);
+    const parentId = body.parentId === undefined ? undefined : await this.resolveParent(space, body.parentId);
     // Sending the current display name (possibly with a "(2)" suffix) keeps the stored name …
     const keepsDisplayName = body.name !== undefined && body.name === current.name;
     const name = body.name === undefined || keepsDisplayName ? undefined : body.name;
     try {
-      return await this.one(user, await this.files.update(user, row.id, { name, parentId }, guard));
+      return await this.one(space, await this.files.update(space, row.id, { name, parentId }, guard));
     } catch (e) {
       // … except on a move where the stored name is taken at the target but the display name is free.
       const retry = e instanceof SyncError && e.code === 'name_conflict' && keepsDisplayName && current.name !== row.name && parentId !== undefined;
       if (!retry) throw e;
-      return this.one(user, await this.files.update(user, row.id, { name: current.name, parentId }, guard));
+      return this.one(space, await this.files.update(space, row.id, { name: current.name, parentId }, guard));
     }
   }
 
   @Delete('items/:id')
   @HttpCode(204)
   async remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    const row = await this.resolve(user, id);
+    const space = await this.spaces.personalFor(user.id);
+    const row = await this.resolve(space, id);
     if (!row) throw new SyncError('forbidden', 'root cannot be deleted');
-    await this.files.remove(user, row.id);
+    await this.files.remove(space, row.id);
   }
 }

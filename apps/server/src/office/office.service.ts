@@ -7,10 +7,11 @@ import { Readable } from 'node:stream';
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import { splitExt } from '../common/names';
 import { SyncError } from '../common/sync-error';
-import type { AuthUser, IndexUser } from '../common/types';
+import type { AuthUser, IndexSpace } from '../common/types';
 import { APP_CONFIG, AppConfig } from '../config';
 import { FilesService } from '../files/files.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { SpacesRepo } from '../spaces/spaces.repo';
 import { toSyncId, UUID } from '../sync/sync-ids';
 
 // Euro-Office (ONLYOFFICE-compatible Document Server) integration, ported from Buro:
@@ -47,6 +48,7 @@ const CONTENT_TOKEN_TTL = '1d';
 const CALLBACK_TOKEN_TTL = '7d';
 
 export type FileTokenPurpose = 'content' | 'callback';
+/** `u`: the item's space id (= the owner's user id for a personal space). */
 interface FileToken { i: string; u: string; p: FileTokenPurpose }
 
 export function extOf(name: string): string {
@@ -81,6 +83,7 @@ export class OfficeService {
 
   constructor(
     private readonly prisma: PrismaService,
+    private readonly spaces: SpacesRepo,
     private readonly files: FilesService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
@@ -114,7 +117,7 @@ export class OfficeService {
   }
 
   fileToken(item: Item, p: FileTokenPurpose): string {
-    return this.sign({ i: item.id, u: item.ownerId, p } satisfies FileToken, p === 'callback' ? CALLBACK_TOKEN_TTL : CONTENT_TOKEN_TTL);
+    return this.sign({ i: item.id, u: item.spaceId, p } satisfies FileToken, p === 'callback' ? CALLBACK_TOKEN_TTL : CONTENT_TOKEN_TTL);
   }
 
   /**
@@ -170,12 +173,12 @@ export class OfficeService {
 
   /* ------------------------------------------------------------------ for the Document Server */
 
-  /** Owner (enabled account) and live file row a content token points at; 404 otherwise. */
-  async contentTarget(syncId: string, token: string | undefined): Promise<{ user: IndexUser; itemId: string }> {
+  /** Space of the owner (enabled account) and live file row a content token points at; 404 otherwise. */
+  async contentTarget(syncId: string, token: string | undefined): Promise<{ space: IndexSpace; itemId: string }> {
     const t = this.verifyFileToken(token, syncId, 'content');
-    const owner = await this.prisma.user.findUnique({ where: { id: t.u }, select: { id: true, username: true, disabledAt: true } });
+    const owner = await this.prisma.user.findUnique({ where: { id: t.u }, select: { id: true, disabledAt: true } });
     if (!owner || owner.disabledAt) throw new SyncError('not_found');
-    return { user: { id: owner.id, username: owner.username }, itemId: t.i };
+    return { space: await this.spaces.personalFor(owner.id), itemId: t.i };
   }
 
   /**
@@ -207,8 +210,9 @@ export class OfficeService {
     const baseVersion = Number(m[2]);
     if (t.expired) this.log.warn(`office callback for ${syncId} with an expired callback token accepted (signed by the document server)`);
 
-    const owner = await this.prisma.user.findUnique({ where: { id: t.u }, select: { id: true, username: true } });
-    if (!owner) {
+    // The personal space is deleted together with its owner.
+    const space = await this.spaces.byId(t.u);
+    if (!space) {
       // Only a vanished owner drops the save (otherwise the Document Server retries forever). A
       // trashed or deleted file still gets the edits, as a conflict copy (see saveOfficeContent).
       this.log.warn(`office save for ${syncId} discarded: owner gone`);
@@ -235,7 +239,7 @@ export class OfficeService {
       }
       const stream = Readable.fromWeb(res.body as unknown as WebReadableStream<Uint8Array>);
       const ext = typeof data.filetype === 'string' && /^[a-z0-9]{1,8}$/i.test(data.filetype) ? `.${data.filetype.toLowerCase()}` : '';
-      const result = await this.files.saveOfficeContent(owner, t.i, stream, {
+      const result = await this.files.saveOfficeContent(space, t.i, stream, {
         key, baseVersion, by: editor, conflictName: (name) => conflictName(name, new Date()), fallbackName: `Office${ext}`,
       });
       if (result.outcome === 'retry') {
