@@ -13,6 +13,7 @@ import { IndexerService } from './indexer.service';
 export interface RawEvent { type: 'create' | 'update' | 'delete'; path: string }
 
 const IGNORE = ['**/.synclet-tmp-*', '**/.synclet-trash-*'];
+const SUBSCRIBE_TIMEOUT_MS = 60_000;
 
 /**
  * File events → debounced directory reconciles, per space (spec §2.3). Subscriptions: the data
@@ -20,12 +21,19 @@ const IGNORE = ['**/.synclet-tmp-*', '**/.synclet-trash-*'];
  * and every external storage with `watch auto` on its own. Routing goes through a root → space
  * table keyed by space id; unknown paths are ignored. A failing subscription leaves the spaces
  * below it scan-only (periodic scans still cover them).
+ *
+ * Subscriptions are set up in the background, each on its own: startup, scans and the API never
+ * wait for them. One still pending after `subscribeTimeoutMs` is logged and reported scan-only,
+ * but kept: when it completes after all it is used (the periodic scan covers the gap either way,
+ * and dropping it would only restart the same slow tree walk). Whoever settles is checked against
+ * the current state, so a subscription completing after shutdown, after its storage was dropped
+ * or for a superseded attempt is unsubscribed right away.
  */
 @Injectable()
 export class WatcherService implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly log = new Logger(WatcherService.name);
   /** State of the data root subscription (reported in the admin status). */
-  mode: 'active' | 'scan-only' | 'off' = 'off';
+  mode: 'starting' | 'active' | 'scan-only' | 'off' = 'off';
   /** Routable spaces by id. */
   private spaces = new Map<string, IndexSpace>();
   /** Parent folder (data root, teams root) → first path segment → space id. */
@@ -38,6 +46,13 @@ export class WatcherService implements OnApplicationBootstrap, OnModuleDestroy {
   private started = false;
   private refreshing: Promise<void> = Promise.resolve();
   private readonly debouncer: DirDebouncer;
+  /**
+   * Subscriptions still being set up (@parcel/watcher walks the whole tree first, which can take
+   * very long on big network shares). The entry is the identity token checked when it settles.
+   */
+  private readonly pending = new Map<string, { done: Promise<void>; timedOut: boolean }>();
+  /** After this, a pending subscription is reported and treated as scan-only (it may still complete). */
+  subscribeTimeoutMs = SUBSCRIBE_TIMEOUT_MS;
 
   constructor(
     private readonly indexer: IndexerService,
@@ -103,10 +118,15 @@ export class WatcherService implements OnApplicationBootstrap, OnModuleDestroy {
     if (!this.config.background || this.started) return;
     this.started = true;
     if (!this.config.watch) { this.mode = 'scan-only'; return; }
-    // Typical failure cause: inotify watch limit (raise fs.inotify.max_user_watches on the host).
-    this.mode = (await this.watch(this.config.dataRoot)) ? 'active' : 'scan-only';
-    if (await isRealDir(this.config.teamsRoot)) await this.watch(this.config.teamsRoot);
+    this.mode = 'starting';
+    this.watch(this.config.dataRoot);
+    if (await isRealDir(this.config.teamsRoot)) this.watch(this.config.teamsRoot);
     await this.syncExternalSubs();
+  }
+
+  /** Resolves once no subscription is pending any more (tests). */
+  async whenSettled(): Promise<void> {
+    while (this.pending.size) await Promise.all([...this.pending.values()].map((p) => p.done));
   }
 
   /** 'active' when events of the space arrive through a healthy subscription, else 'scan-only'. */
@@ -123,24 +143,52 @@ export class WatcherService implements OnApplicationBootstrap, OnModuleDestroy {
     return watcher.subscribe(dir, onEvents, { ignore: IGNORE });
   }
 
-  private async watch(dir: string): Promise<boolean> {
-    if (this.subs.has(dir)) return this.healthy.has(dir);
-    try {
-      const sub = await this.subscribe(dir, (err, events) => {
-        if (err) {
-          if (this.healthy.delete(dir)) this.log.error(`watcher error on ${dir}, falling back to periodic scans: ${err.message}`);
-          if (dir === this.config.dataRoot) this.mode = 'scan-only';
-          return;
-        }
-        this.handleEvents(events);
-      });
-      this.subs.set(dir, sub);
+  /** Starts subscribing `dir` in the background (no-op when subscribed or pending). */
+  private watch(dir: string): void {
+    if (this.subs.has(dir) || this.pending.has(dir)) return;
+    const entry = { done: Promise.resolve(), timedOut: false };
+    this.pending.set(dir, entry);
+    const timer = setTimeout(() => {
+      if (this.pending.get(dir) !== entry) return;
+      entry.timedOut = true;
+      this.log.warn(`file watcher for ${dir} not ready after ${Math.round(this.subscribeTimeoutMs / 1000)} s, using periodic scans until it is`);
+      if (dir === this.config.dataRoot) this.mode = 'scan-only';
+    }, this.subscribeTimeoutMs);
+    timer.unref();
+    let sub: AsyncSubscription | undefined;
+    entry.done = this.subscribe(dir, (err, events) => {
+      if (err) {
+        if (!sub || this.subs.get(dir) !== sub) return; // not (or no longer) in use
+        if (this.healthy.delete(dir)) this.log.error(`watcher error on ${dir}, falling back to periodic scans: ${err.message}`);
+        if (dir === this.config.dataRoot) this.mode = 'scan-only';
+        return;
+      }
+      this.handleEvents(events);
+    }).then((s) => {
+      sub = s;
+      if (this.pending.get(dir) !== entry || !this.wanted(dir)) {
+        if (this.pending.get(dir) === entry) this.pending.delete(dir);
+        void s.unsubscribe().catch(() => {});
+        return;
+      }
+      this.pending.delete(dir);
+      this.subs.set(dir, s);
       this.healthy.add(dir);
-      return true;
-    } catch (e) {
-      this.log.error(`file watcher unavailable for ${dir}, falling back to periodic scans: ${(e as Error).message}`);
-      return false;
-    }
+      if (dir === this.config.dataRoot) this.mode = 'active';
+      if (entry.timedOut) this.log.log(`file watcher for ${dir} is ready after all`);
+    }, (e: Error) => {
+      if (this.pending.get(dir) !== entry) return;
+      this.pending.delete(dir);
+      // Typical failure cause: inotify watch limit (raise fs.inotify.max_user_watches on the host).
+      this.log.error(`file watcher unavailable for ${dir}, falling back to periodic scans: ${e.message}`);
+      if (dir === this.config.dataRoot) this.mode = 'scan-only';
+    }).finally(() => clearTimeout(timer));
+  }
+
+  /** Whether a subscription of `dir` is (still) wanted. */
+  private wanted(dir: string): boolean {
+    if (!this.started) return false;
+    return dir === this.config.dataRoot || dir === this.config.teamsRoot || this.externals.has(dir);
   }
 
   private async syncExternalSubs(): Promise<void> {
@@ -152,9 +200,8 @@ export class WatcherService implements OnApplicationBootstrap, OnModuleDestroy {
       this.healthy.delete(dir);
       await sub.unsubscribe().catch(() => {});
     }
-    for (const dir of wanted) {
-      if (!this.subs.has(dir)) await this.watch(dir);
-    }
+    // Not awaited: a slow subscription (big network share) must not hold up the scan cycle.
+    for (const dir of wanted) this.watch(dir);
   }
 
   /** Maps an absolute path to its space and the path relative to the space root. */
@@ -190,6 +237,8 @@ export class WatcherService implements OnApplicationBootstrap, OnModuleDestroy {
     const subs = [...this.subs.values()];
     this.subs.clear();
     this.healthy.clear();
+    // Pending subscriptions are not awaited: each one unsubscribes itself when it settles.
+    this.pending.clear();
     this.started = false;
     for (const s of subs) await s.unsubscribe().catch(() => {});
   }

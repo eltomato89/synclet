@@ -211,7 +211,7 @@ export interface VersionInfoWire {
 }
 export interface AdminStatusWire {
   version: VersionInfoWire; uptimeSec: number;
-  watch: 'active' | 'scan-only' | 'off'; lastFullScanAt: string | null;
+  watch: 'starting' | 'active' | 'scan-only' | 'off'; lastFullScanAt: string | null;
   users: { total: number; disabled: number };
   disk: { data: DiskUsage; meta: DiskUsage };
   meta: { derivedBytes: number; trashBytes: number; versionsBytes: number; uploadsBytes: number };

@@ -870,11 +870,13 @@
       "stale": "Die letzte Aktualisierung ist fehlgeschlagen. Die Werte unten sind eventuell veraltet.",
       "watcher": "Dateiüberwachung",
       "watch": {
+        "starting": "Startet",
         "active": "Aktiv",
         "scan-only": "Nur Scans",
         "off": "Aus"
       },
       "watchHint": {
+        "starting": "Wird eingerichtet; bis dahin erscheinen Änderungen in /data beim nächsten Scan",
         "active": "Änderungen in /data erscheinen sofort",
         "scan-only": "Änderungen in /data erscheinen beim nächsten Scan",
         "off": "Direkte Änderungen in /data werden nicht erkannt"
