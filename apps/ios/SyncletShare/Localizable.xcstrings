@@ -201,6 +201,16 @@
         }
       }
     },
+    "Space Not Available": {
+      "localizations": {
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bereich nicht verfügbar"
+          }
+        }
+      }
+    },
     "Spaces": {
       "localizations": {
         "de": {

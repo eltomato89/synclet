@@ -111,6 +111,72 @@ final class SpacesTests: XCTestCase {
         XCTAssertTrue(["Not Available", "Nicht verfügbar"].contains(message ?? ""), message ?? "nil")
     }
 
+    // MARK: - Live write access (review fix 2)
+
+    func testSpaceRootFollowsTheLiveSpaceList() {
+        let route = SpaceEntry(space: team).route
+        XCTAssertTrue(SpaceDirectory(spaces: [personal, team]).canAddChildren(to: route, folder: nil))
+
+        var readOnly = team
+        readOnly.canWrite = false
+        XCTAssertFalse(SpaceDirectory(spaces: [personal, readOnly]).canAddChildren(to: route, folder: nil),
+                       "the space turned read-only while open")
+        var gone = team
+        gone.status = "missing"
+        XCTAssertFalse(SpaceDirectory(spaces: [personal, gone]).canAddChildren(to: route, folder: nil),
+                       "the storage went missing while open")
+        XCTAssertFalse(SpaceDirectory(spaces: [personal]).canAddChildren(to: route, folder: nil), "access removed")
+    }
+
+    func testSubfolderFollowsItsSpaceAndItsReloadedCapabilities() {
+        var folder = Items.folder("Docs", parent: "r_s1")
+        folder.spaceId = "s1"
+        let route = FolderRoute(item: folder)
+        XCTAssertTrue(route.canAddChildren)
+        XCTAssertTrue(SpaceDirectory(spaces: [personal, team]).canAddChildren(to: route, folder: folder))
+
+        var readOnly = team
+        readOnly.canWrite = false
+        XCTAssertFalse(SpaceDirectory(spaces: [personal, readOnly]).canAddChildren(to: route, folder: nil))
+
+        var reloaded = folder
+        reloaded.capabilities.addChildren = false
+        XCTAssertFalse(SpaceDirectory(spaces: [personal, team]).canAddChildren(to: route, folder: reloaded),
+                       "the reloaded folder says read-only")
+        XCTAssertTrue(SpaceDirectory(spaces: [personal]).canAddChildren(to: FolderRoute(item: Items.folder("Mine")), folder: nil),
+                      "personal folder of an older server")
+    }
+
+    func testFolderModelReloadsTheFolderItsCapabilities() async {
+        var docs = Items.folder("Docs", id: "d_docs", parent: "r_s1")
+        docs.capabilities.addChildren = false
+        let server = FakeFolderServer(["d_docs": [Items.file("a.txt", parent: "d_docs")]])
+        server.override = { request in
+            request.method == "GET" && request.path == "/api/sync/v1/items/d_docs"
+                ? .data(200, Items.json(docs), contentType: "application/json") : nil
+        }
+        server.install()
+        let model = FolderModel(accountKey: "acc", folderId: "d_docs", title: "Docs", api: server.client(),
+                                fetchesFolder: true, signal: { _ in })
+
+        await model.load()
+
+        XCTAssertEqual(model.state, .loaded)
+        XCTAssertEqual(model.folder?.capabilities.addChildren, false)
+    }
+
+    // MARK: - Lists across spaces (review fix 3)
+
+    func testListModelsShowNotAvailableForAMissingSpace() async {
+        MockURLProtocol.reset { _ in Items.error(503, "space_unavailable") }
+        let trash = TrashModel(accountKey: "acc", api: AppFixtures.client(), signal: { _ in })
+        await trash.load()
+        XCTAssertEqual(trash.state, .unavailable)
+        let recent = RecentModel(api: AppFixtures.client())
+        await recent.load()
+        XCTAssertEqual(recent.state, .unavailable)
+    }
+
     // MARK: - Move picker and share target
 
     func testMoveTargetsAreTheWritableAvailableSpaces() {

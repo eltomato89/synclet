@@ -28,6 +28,8 @@ extension UploadFailure {
         case .network: return String(localized: "No Connection")
         case .sourceUnreadable: return String(localized: "File Not Readable")
         case .other: return String(localized: "Error")
+        case .readOnly: return String(localized: "Read Only")
+        case .spaceUnavailable: return String(localized: "Space Not Available")
         }
     }
 }

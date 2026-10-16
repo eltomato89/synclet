@@ -24,6 +24,20 @@ struct FolderRoute: Hashable {
     }
 }
 
+extension SpaceDirectory {
+    /// Whether uploads and new folders are allowed in `route` right now (the „+“ menu): a space
+    /// root follows the live space list (write access and storage present); a folder inside a
+    /// space is read-only as soon as its space is (or is gone), otherwise its reloaded
+    /// `folder` item decides, before that the route's value from navigation time.
+    func canAddChildren(to route: FolderRoute, folder: SyncItem?) -> Bool {
+        if let root = all.first(where: { $0.space.rootId == route.id }) { return root.isWritable }
+        if let spaceId = route.spaceId ?? folder?.spaceId {
+            guard let space = all.first(where: { $0.id == spaceId }), space.isWritable else { return false }
+        }
+        return folder?.capabilities.addChildren ?? route.canAddChildren
+    }
+}
+
 extension SpaceEntry {
     /// The space's root folder.
     var route: FolderRoute {

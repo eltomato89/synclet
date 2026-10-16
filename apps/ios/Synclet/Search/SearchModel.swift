@@ -94,7 +94,7 @@ final class SearchModel {
             hits = []
             total = 0
             isSearchPending = false
-            state = FolderModel.isOffline(error) ? .offline : .failed(FolderModel.describe(error))
+            state = FolderModel.loadState(for: error)
         }
     }
 

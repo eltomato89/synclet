@@ -21,8 +21,8 @@ struct FolderView: View {
     let environment: AppEnvironment
     /// The account's spaces (start of the move picker).
     let spaces: SpaceDirectory
-    /// Uploads and new folders are allowed (hidden in read-only folders and spaces).
-    let canAddChildren: Bool
+    /// The folder as navigated to (its write access is re-derived on every render).
+    let route: FolderRoute
     @State private var model: FolderModel
 
     @AppStorage("browserLayout") private var layout: BrowserLayout = .list
@@ -41,11 +41,16 @@ struct FolderView: View {
     init(environment: AppEnvironment, accountKey: String, api: SyncAPIClient, folder: FolderRoute, spaces: SpaceDirectory) {
         self.environment = environment
         self.spaces = spaces
-        canAddChildren = folder.canAddChildren
+        route = folder
         _model = State(initialValue: FolderModel(
-            accountKey: accountKey, folderId: folder.id, title: folder.title, api: api,
+            accountKey: accountKey, folderId: folder.id, title: folder.title, api: api, fetchesFolder: true,
             signal: { key in await environment.signalWorkingSet(accountKey: key) }))
     }
+
+    /// Uploads and new folders are allowed (hidden in read-only folders and spaces). Live: follows
+    /// the account's spaces and the reloaded folder, so the „+“ menu goes when the space turns
+    /// read-only or missing while the folder is open.
+    private var canAddChildren: Bool { spaces.canAddChildren(to: route, folder: model.folder) }
 
     private var isEditing: Bool { editMode.isEditing }
     private var selectedItems: [SyncItem] { model.items.filter { selection.contains($0.id) } }

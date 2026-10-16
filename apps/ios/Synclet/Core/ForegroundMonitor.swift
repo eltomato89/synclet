@@ -64,6 +64,9 @@ final class ForegroundMonitor {
         /// First delay before reopening a stream that ended by itself (doubles up to `reconnectMax`).
         var reconnectBase: Duration = .seconds(1)
         var reconnectMax: Duration = .seconds(60)
+        /// Longest wait for one space's cursor while polling (a hanging storage must not
+        /// hold back the others).
+        var cursorTimeout: Duration = .seconds(10)
     }
 
     private(set) var state: State = .connecting
@@ -269,8 +272,10 @@ final class ForegroundMonitor {
         do {
             let account = try await dependencies.fetchAccount()
             var cursors = [Self.personal: account.cursor]
-            for space in account.spaces where space.id != Self.personal && space.isAvailable {
-                if let cursor = try? await dependencies.fetchCursor(space.id) { cursors[space.id] = cursor }
+            let others = account.spaces.filter { $0.id != Self.personal && $0.isAvailable }.map(\.id)
+            for (space, cursor) in await Self.fetchCursors(of: others, fetch: dependencies.fetchCursor,
+                                                           timeout: timing.cursorTimeout) {
+                cursors[space] = cursor
             }
             guard isRunning, state != .authFailed, state != .connected, !Task.isCancelled else { return }
             if advance(to: cursors, complete: false) { notify(change: true) }
@@ -280,6 +285,34 @@ final class ForegroundMonitor {
     }
 
     private static let personal = SyncAPIClient.personalSpaceID
+
+    /// The cursors of `spaces`, fetched concurrently; a space that fails or takes longer than
+    /// `timeout` is left out (its cursor stays as it was).
+    nonisolated private static func fetchCursors(of spaces: [String],
+                                                 fetch: @escaping @Sendable (String) async throws -> String,
+                                                 timeout: Duration) async -> [String: String] {
+        await withTaskGroup(of: (String, String?).self) { group in
+            for space in spaces {
+                group.addTask {
+                    await withTaskGroup(of: String?.self) { race in
+                        race.addTask { try? await fetch(space) }
+                        race.addTask {
+                            try? await Task.sleep(for: timeout)
+                            return nil
+                        }
+                        let first = await race.next() ?? nil
+                        race.cancelAll()
+                        return (space, first)
+                    }
+                }
+            }
+            var result: [String: String] = [:]
+            for await (space, cursor) in group {
+                if let cursor { result[space] = cursor }
+            }
+            return result
+        }
+    }
 
     /// Records the cursors of the spaces in `cursors`; `true` when a known cursor of the same
     /// space moved. `complete` (a `hello`) replaces the whole map: a space that appeared or

@@ -28,6 +28,10 @@ final class FolderModel {
     @ObservationIgnored let api: SyncAPIClient
 
     private(set) var items: [SyncItem] = []
+    /// The folder itself, reloaded with its children when ``fetchesFolder`` (its current
+    /// capabilities: a space can turn read-only while the folder is open).
+    private(set) var folder: SyncItem?
+    @ObservationIgnored let fetchesFolder: Bool
     private(set) var state: LoadState = .idle
     var sort: BrowserSort = .name {
         didSet { if sort != oldValue { items = Self.sorted(items, by: sort) } }
@@ -47,12 +51,13 @@ final class FolderModel {
 
     private static let log = Logger(subsystem: "tech.jensk.synclet", category: "browser")
 
-    init(accountKey: String, folderId: String, title: String, api: SyncAPIClient,
+    init(accountKey: String, folderId: String, title: String, api: SyncAPIClient, fetchesFolder: Bool = false,
          signal: @escaping (String) async -> Void) {
         self.accountKey = accountKey
         self.folderId = folderId
         self.title = title
         self.api = api
+        self.fetchesFolder = fetchesFolder
         self.signal = signal
     }
 
@@ -65,6 +70,9 @@ final class FolderModel {
         let generation = loadGeneration
         if state != .loaded { state = .loading }
         do {
+            let api = api, folderId = folderId, fetchesFolder = fetchesFolder
+            // `GET /items/:id` next to the children; its failure never fails the folder.
+            async let folderItem: SyncItem? = fetchesFolder ? try? await api.item(id: folderId) : nil
             var all: [SyncItem] = []
             var pageToken: String?
             repeat {
@@ -72,7 +80,9 @@ final class FolderModel {
                 all.append(contentsOf: page.items)
                 pageToken = page.nextPageToken
             } while pageToken != nil
+            let reloadedFolder = await folderItem
             guard generation == loadGeneration else { return }
+            if let reloadedFolder { folder = reloadedFolder }
             items = Self.sorted(all, by: sort)
             state = .loaded
         } catch is CancellationError {

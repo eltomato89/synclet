@@ -54,6 +54,8 @@ final class FakeMonitorWorld: @unchecked Sendable {
     var spaceCursors: [String: String] = [:]
     /// What `updateSpaces` answers (`true` = the spaces changed).
     var spacesChange = false
+    /// Spaces whose `GET /cursor` never answers.
+    var hangingSpaces: Set<String> = []
     private var updates: [[SyncSpace]] = []
     let sleeper = ManualSleeper()
 
@@ -100,6 +102,9 @@ final class FakeMonitorWorld: @unchecked Sendable {
                                    slug: "jens", cursor: cursor, spaces: spaces)
             },
             fetchCursor: { space in
+                if self.lock.withLock({ self.hangingSpaces.contains(space) }) {
+                    try await Task.sleep(for: .seconds(60))
+                }
                 guard let cursor = self.lock.withLock({ self.spaceCursors[space] }) else { throw SyncAPIError.notFound }
                 return cursor
             },
@@ -126,7 +131,8 @@ final class ForegroundMonitorTests: XCTestCase {
     private func monitor() -> ForegroundMonitor {
         let monitor = ForegroundMonitor(accountKey: "srv1:u1", dependencies: world.dependencies(),
                                         timing: ForegroundMonitor.Timing(coalesce: .milliseconds(1),
-                                                                         reconnectBase: .milliseconds(20)))
+                                                                         reconnectBase: .milliseconds(20),
+                                                                         cursorTimeout: .milliseconds(100)))
         monitor.onChange = { [world] key in world?.record("change:\(key)") }
         monitor.onSpacesChanged = { [world] in world?.record("spaces-changed") }
         return monitor
@@ -188,6 +194,26 @@ final class ForegroundMonitorTests: XCTestCase {
         world.sleeper.fire()
         let changed = await eventually { self.changeCount == 1 }
         XCTAssertTrue(changed, "the team space moved while the stream was down")
+    }
+
+    func testPollingDoesNotWaitForAHangingSpace() async throws {
+        let archive = SyncSpace(id: "s9", kind: .external, name: "Archiv", rootId: "r_s9", canWrite: false)
+        world.spaces = [world.spaces[0], archive, team]
+        world.spaceCursors = ["s1": "5", "s9": "1"]
+        world.hangingSpaces = ["s9"]
+        let monitor = monitor()
+        monitor.start()
+        defer { monitor.stop() }
+        _ = await eventually { self.world.streamCount == 1 }
+        world.send(.connected(cursor: "7", cursors: ["personal": "7", "s1": "5", "s9": "1"]))
+        _ = await eventually { monitor.state == .connected && self.world.accountFetches == 1 }
+        world.send(.disconnected(reason: .network(.notConnectedToInternet)))
+        _ = await eventually { monitor.state == .offline && self.world.sleeper.pending == 1 }
+
+        world.spaceCursors["s1"] = "6"
+        world.sleeper.fire()
+        let changed = await eventually(timeout: .seconds(2)) { self.changeCount == 1 }
+        XCTAssertTrue(changed, "the team space moved; the hanging storage times out")
     }
 
     func testAccountEventRefreshesTheSpacesThenSignals() async throws {
