@@ -66,7 +66,7 @@ writeFileSync(path.join(WORK, 'compose.site.yml'), `services:
     image: synclet-site/caddy:${TAG}
 `);
 
-const DC = ['compose', '-p', PROJECT, '-f', path.join(ROOT, 'deploy/compose.yml'), '-f', path.join(WORK, 'compose.site.yml'), '--env-file', path.join(WORK, '.env')];
+const DC = ['compose', '-p', PROJECT, '-f', path.join(ROOT, 'deploy/compose.yml'), '-f', path.join(ROOT, 'deploy/compose.build.yml'), '-f', path.join(WORK, 'compose.site.yml'), '--env-file', path.join(WORK, '.env')];
 const docker = (...args: string[]) => execFileSync('docker', args, { stdio: 'inherit' });
 
 let cleaned = false;
