@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Synclet Sync API
   version: 1.0.0
-  summary: File sync API for Synclet's native clients (compatible with Buro SYNC_API v1).
+  summary: File sync API for Synclet's native clients.
   description: |
     Machine-readable companion of `docs/sync/SYNC_API.md`, which is the normative prose
     contract (semantics, ordering, client obligations). Where the two disagree, the prose
@@ -507,7 +507,7 @@ paths:
         - { name: name, in: query, required: true, schema: { type: string } }
         - { name: onConflict, in: query, required: false, schema: { $ref: '#/components/schemas/OnConflict' } }
         - $ref: '#/components/parameters/ModifiedAt'
-        - $ref: '#/components/parameters/BuroModifiedAt'
+        - $ref: '#/components/parameters/LegacyModifiedAt'
       requestBody:
         required: false
         content:
@@ -584,7 +584,7 @@ paths:
           description: '`"v<version>"` (the `contentEtag`) or `*`. Missing → 428, mismatch → 412.'
           schema: { type: string }
         - $ref: '#/components/parameters/ModifiedAt'
-        - $ref: '#/components/parameters/BuroModifiedAt'
+        - $ref: '#/components/parameters/LegacyModifiedAt'
       requestBody:
         required: false
         content:
@@ -1106,11 +1106,11 @@ components:
       required: false
       description: ISO 8601 modification time to set on the stored file (invalid values are ignored).
       schema: { type: string, format: date-time }
-    BuroModifiedAt:
+    LegacyModifiedAt:
       name: X-Buro-Modified-At
       in: header
       required: false
-      description: Alias of `X-Synclet-Modified-At` (Buro clients); `X-Synclet-Modified-At` wins.
+      description: Alias of `X-Synclet-Modified-At` (legacy alias); `X-Synclet-Modified-At` wins.
       schema: { type: string, format: date-time }
     TusResumable:
       name: Tus-Resumable
@@ -1274,7 +1274,7 @@ components:
         contentEtag: { type: [string, 'null'], pattern: '^v[0-9]+$', description: '`v<version>` for files; null for folders.' }
         createdAt: { type: string, format: date-time }
         modifiedAt: { type: string, format: date-time }
-        documentId: { type: [string, 'null'], description: Files - equals `id` (Buro compatibility); null for folders. }
+        documentId: { type: [string, 'null'], description: Files - equals `id` (legacy compatibility); null for folders. }
         capabilities: { $ref: '#/components/schemas/Capabilities' }
         preview: { $ref: '#/components/schemas/PreviewInfo' }
         spaceId: { type: string, description: 'API id of the item''s space (`personal` or the space uuid); absent from older servers = personal.' }
