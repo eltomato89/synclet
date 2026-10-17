@@ -4,12 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Synclet: self-hosted file sync</title>
-    <meta name="description" content="Synclet is a self-hosted, open-source alternative to Dropbox and OneDrive. Your folder stays your folder: files on your disk are the source of truth, with a web app and native apps for Mac, iPhone and iPad." />
+    <meta name="description" content="Synclet is a self-hosted, open-source alternative to Dropbox and OneDrive. Your folder stays your folder: files on your disk are the source of truth, with a web app and native apps for Mac, iPhone, iPad and Android." />
     <meta name="color-scheme" content="light dark" />
     <meta name="theme-color" content="#f3f6f6" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#111819" media="(prefers-color-scheme: dark)" />
     <meta property="og:title" content="Synclet: your folder stays your folder" />
-    <meta property="og:description" content="Self-hosted, open-source file sync with a web app and native apps for Mac, iPhone and iPad." />
+    <meta property="og:description" content="Self-hosted, open-source file sync with a web app and native apps for Mac, iPhone, iPad and Android." />
     <meta property="og:type" content="website" />
     <link rel="icon" type="image/png" sizes="32x32" href="%BASE_URL%favicon-32.png" />
     <link rel="apple-touch-icon" href="%BASE_URL%apple-touch-icon.png" />
@@ -179,6 +179,17 @@
               </ul>
             </li>
             <li class="card">
+              <svg viewBox="0 0 24 24" class="size-6 text-primary" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="20" x="5" y="2" rx="2"/><path d="M12 18h.01"/></svg>
+              <h3 class="mt-4 text-lg font-semibold">Android</h3>
+              <ul class="mt-2 space-y-1 text-muted-foreground">
+                <li>Browse, preview, search and share in the app</li>
+                <li>Synclet in the system file picker and Files app</li>
+                <li>Share to Synclet from any app</li>
+                <li>Resumable uploads that continue in the background</li>
+                <li>Android 10+, phone and tablet</li>
+              </ul>
+            </li>
+            <li class="card">
               <svg viewBox="0 0 24 24" class="size-6 text-primary" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
               <h3 class="mt-4 text-lg font-semibold">Spaces</h3>
               <ul class="mt-2 space-y-1 text-muted-foreground">
@@ -246,7 +257,7 @@
           <p class="eyebrow">Download</p>
           <h2 id="download-title" class="h2">Get Synclet.</h2>
           <p class="lead">Start with the server, then add the apps. The web app works in any modern browser.</p>
-          <ul class="mt-10 grid gap-4 md:grid-cols-3">
+          <ul class="mt-10 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             <li class="card flex flex-col bg-canvas">
               <h3 class="text-lg font-semibold">Mac</h3>
               <p class="mt-2 text-muted-foreground">Menu bar app with Finder integration. Notarized DMG.</p>
@@ -264,6 +275,15 @@
               </div>
             </li>
             <li class="card flex flex-col bg-canvas">
+              <h3 class="text-lg font-semibold">Android</h3>
+              <p class="mt-2 text-muted-foreground">App with file picker integration and share target. No Google services needed.</p>
+              <p class="mt-1 text-[13px] text-muted-foreground">Requires Android 10 or later.</p>
+              <div class="mt-auto flex flex-col gap-2 pt-6">
+                <a class="btn btn-primary w-full" data-link="android-apk" href="https://github.com/eltomato89/synclet/releases/latest/download/Synclet.apk">Download APK</a>
+                <div data-play><span class="chip w-full justify-center py-2.5">Google Play testing coming soon</span></div>
+              </div>
+            </li>
+            <li class="card flex flex-col bg-canvas">
               <h3 class="text-lg font-semibold">Server</h3>
               <p class="mt-2 text-muted-foreground">Docker Compose stack: server, worker, PostgreSQL and Caddy.</p>
               <p class="mt-1 text-[13px] text-muted-foreground">Linux recommended; anything that runs Docker works.</p>
@@ -273,7 +293,7 @@
               </div>
             </li>
           </ul>
-          <p class="mt-6 text-sm text-muted-foreground">Windows and Android apps are coming later.</p>
+          <p class="mt-6 text-sm text-muted-foreground">A Windows app is coming later.</p>
         </div>
       </section>
 
@@ -371,7 +391,7 @@ SYNCLET_VERSION=…</code></pre>
             </details>
             <details>
               <summary>Do I need the apps?</summary>
-              <div><p>No. The web app does everything in the browser: upload, preview, search, share, restore from the trash. The Mac and iPhone/iPad apps add integration with Finder and the Files app, offline folders and background uploads.</p></div>
+              <div><p>No. The web app does everything in the browser: upload, preview, search, share, restore from the trash. The Mac, iPhone/iPad and Android apps add integration with Finder and the Files app or file picker, offline folders (Mac and iOS) and background uploads.</p></div>
             </details>
             <details>
               <summary>How do backups work?</summary>
@@ -391,7 +411,7 @@ SYNCLET_VERSION=…</code></pre>
             </details>
             <details>
               <summary>Is there an app for Windows or Android?</summary>
-              <div><p>Not yet. Windows and Android apps are coming later. Until then, use the web app in any browser.</p></div>
+              <div><p>Android: yes. Install the APK from the latest GitHub release (Android 10 or later); it adds Synclet to the system file picker and a share target. Windows: not yet, a Windows app is coming later. Until then, use the web app in any browser.</p></div>
             </details>
             <details>
               <summary>Is it free? What's the license?</summary>

@@ -786,7 +786,7 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
    * possibly slow copy to /meta happens after commit, in the background (`pendingTrash()`).
    * A crash in between is finished by `recoverStagedTrash()` at the next start.
    */
-  async remove(space: IndexSpace, itemId: string, deletedBy?: string): Promise<void> {
+  async remove(space: IndexSpace, itemId: string, deletedBy?: string, opts: { ifMatchEtag?: string } = {}): Promise<void> {
     const trashId = randomUUID();
     const staging = path.join(this.root(space), trashStagingName(trashId));
     let staged: { from: string; storePath: string } | null = null;
@@ -795,6 +795,7 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
         await this.journal.lockSpaceForWrite(tx, space);
         const item = await this.store.getLive(tx, space.id, itemId);
         if (!item) throw new SyncError('not_found');
+        if (opts.ifMatchEtag && opts.ifMatchEtag !== itemEtag(item)) throw new SyncError('conflict', 'etag mismatch', item);
         // Already gone on the host (not indexed yet): the delete stands, there is nothing to trash.
         if ((await this.entryOnDisk(space, item)) === 'ok') {
           const from = this.abs(space, item.path);

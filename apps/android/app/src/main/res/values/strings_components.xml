@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="error_offline">Offline. Check your connection.</string>
+    <string name="error_sign_in_required">Sign in again to continue.</string>
+    <string name="error_changed">Changed in the meantime</string>
+    <string name="error_gone">No longer available</string>
+    <string name="error_name_taken">An item with this name already exists here.</string>
+    <string name="error_invalid_name">This name is not allowed.</string>
+    <string name="error_invalid_move">A folder cannot be moved into itself.</string>
+    <string name="error_forbidden">Not allowed (read-only access).</string>
+    <string name="error_storage_full">Storage full</string>
+    <string name="error_space_unavailable">This space is currently unavailable.</string>
+    <string name="error_too_large">The file is too large for this server.</string>
+    <string name="error_rate_limited">Too many attempts. Please wait a moment.</string>
+    <string name="error_server">Server error (%1$s).</string>
+    <string name="error_unexpected">Something went wrong.</string>
+    <string name="upload_error_target_gone">Destination folder deleted</string>
+    <string name="upload_error_source_missing">The file to upload is gone.</string>
+    <string name="upload_error_signed_out">Sign In Again</string>
+    <string name="name_error_empty">Enter a name.</string>
+    <string name="name_error_dot">„.“ and „..“ are not allowed.</string>
+    <string name="name_error_character">These characters are not allowed: &lt; &gt; : \" / \\ | ? *</string>
+    <string name="name_error_trailing">A name must not end with a space or a dot.</string>
+    <string name="name_error_reserved">This name is reserved by Windows.</string>
+    <string name="name_error_too_long">The name is too long.</string>
+    <string name="name_error_ignored">Files with this name are never synced.</string>
+    <string name="action_retry">Try Again</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="picker_spaces">Spaces</string>
+    <string name="picker_choose_here">Choose This Folder</string>
+    <string name="picker_empty">No subfolders</string>
+    <string name="picker_back">Back</string>
+</resources>

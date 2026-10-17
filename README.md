@@ -5,6 +5,7 @@
 [![Website](https://img.shields.io/badge/website-eltomato89.github.io%2Fsynclet-0f7c8a)](https://eltomato89.github.io/synclet/)
 [![Download for macOS](https://img.shields.io/badge/download-macOS%20(.dmg)-0f7c8a)](https://github.com/eltomato89/synclet/releases/latest/download/Synclet.dmg)
 [![iPhone & iPad beta on TestFlight](https://img.shields.io/badge/iPhone%20%26%20iPad-TestFlight%20beta-0f7c8a)](https://testflight.apple.com/join/NA3Aphqe)
+[![Download for Android](https://img.shields.io/badge/download-Android%20(.apk)-0f7c8a)](https://github.com/eltomato89/synclet/releases/latest/download/Synclet.apk)
 [![Install](https://img.shields.io/badge/install-docker%20compose-0f7c8a)](#quickstart)
 [![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
@@ -17,7 +18,7 @@
 
 - **Your folder stays a plain folder.** No proprietary storage and nothing hidden inside: Synclet indexes and serves the files you already have on disk. Edit them on the host or through Synclet and both see the same thing. Throw the container away and your files are still right there.
 - **Self-hosted on your own hardware.** One Docker Compose stack; your data never leaves your server.
-- **Finder and Files integration.** Files appear in Finder (macOS) and the Files app (iOS) and download on demand.
+- **Finder and Files integration.** Files appear in Finder (macOS), the Files app (iOS) and the system file picker (Android) and download on demand.
 - **Team folders and NAS shares as spaces.** Share folders and SMB/NFS storage with per-user and per-group read/write permissions.
 - **Office editing in the browser.** Edit documents, spreadsheets and presentations with the optional Euro-Office setup.
 - **Open source.** MIT licensed.
@@ -36,6 +37,7 @@
 - **Spaces:** shared team folders and external storages (NAS shares, other disks) next to the personal folder, with per-user and per-group read/write access, see [Team folders and external storage](deploy/README.md#team-folders-and-external-storage).
 - **Admin area:** users, sessions and devices, shares, SSO settings and server status, see [Admin area](#admin-area).
 - **macOS client:** your files in Finder with on-demand download, live updates and offline folders, see [macOS client](#macos-client).
+- **Android client:** browse, preview and share in the app, Synclet in the system file picker, share to Synclet from any app, see [Android client](#android-client).
 
 ## Quickstart
 
@@ -443,6 +445,12 @@ The Mac app (`apps/macos`, macOS 26 or later) is a menu bar app with a File Prov
 - **More:** server thumbnails for files that are not downloaded yet; a status menu with recent problems; several accounts at once.
 
 Build, tests, signing and notarization, plus the manual Finder checklist: [apps/macos/README.md](apps/macos/README.md). Distribution is a notarized DMG (`apps/macos/build_and_notarize.sh`).
+
+## Android client
+
+The Android app (`apps/android`, Android 10 or later, phone and tablet) is a native Kotlin/Compose app without Google services. Besides browsing, previewing, searching and sharing in the app, Synclet appears in the system file dialog and the Files app, and **Share → Synclet** saves files and links from any app. Sign-in goes through the browser ([App login](#app-login)), so SSO works. Uploads are resumable (tus) and continue in the background.
+
+Install the signed APK from the [latest release](https://github.com/eltomato89/synclet/releases/latest/download/Synclet.apk) (`Synclet.apk`); a Google Play testing track is coming soon. Build, tests, the manual device checklist and the release steps: [apps/android/README.md](apps/android/README.md).
 
 ## Admin area
 

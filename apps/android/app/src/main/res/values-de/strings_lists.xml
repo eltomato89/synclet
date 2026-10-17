@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="search_hint">Dateien und Text durchsuchen</string>
+    <string name="search_only_in">Nur in „%1$s“</string>
+    <string name="search_no_results">Keine Treffer</string>
+    <string name="recent_title">Zuletzt</string>
+    <string name="recent_empty">Keine zuletzt geänderten Dateien</string>
+    <string name="trash_title">Papierkorb</string>
+    <string name="trash_empty_state">Der Papierkorb ist leer.</string>
+    <string name="trash_restore">Wiederherstellen</string>
+    <string name="trash_delete_forever">Endgültig löschen</string>
+    <string name="trash_delete_forever_text">„%1$s“ wird endgültig gelöscht.</string>
+    <string name="trash_empty">Papierkorb leeren</string>
+    <string name="trash_empty_text">Alles im Papierkorb von %1$s wird endgültig gelöscht.</string>
+    <string name="trash_restored">„%1$s“ wiederhergestellt</string>
+    <string name="trash_restored_renamed">„%1$s“ unter neuem Namen wiederhergestellt</string>
+    <string name="trash_busy">Der Papierkorb bearbeitet dieses Element gerade. Bitte gleich erneut versuchen. (%1$s)</string>
+    <string name="trash_deleted_at">Gelöscht am %1$s</string>
+    <string name="trash_expires_at">Wird am %1$s entfernt</string>
+    <string name="share_title">Link teilen</string>
+    <string name="share_password">Passwort</string>
+    <string name="share_expiry">Ablaufdatum</string>
+    <string name="share_allow_download">Herunterladen erlauben</string>
+    <string name="share_allow_upload">Hochladen erlauben</string>
+    <string name="share_create">Link erstellen und teilen</string>
+    <string name="share_save">Speichern und teilen</string>
+    <string name="share_send">Teilen</string>
+    <string name="share_revoke">Widerrufen</string>
+    <string name="share_password_kept">Ein Passwort ist gesetzt. Zum Ändern ein neues eingeben.</string>
+    <string name="trash_group_unknown">Bereich</string>
+</resources>

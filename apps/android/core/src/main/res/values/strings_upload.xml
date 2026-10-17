@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="upload_channel_progress">Uploads</string>
+    <string name="upload_channel_events">Upload notices</string>
+    <string name="upload_preparing">Preparing uploads…</string>
+    <string name="upload_progress_title">Uploading %1$s</string>
+    <string name="upload_conflict_title">Saved as a conflict copy</string>
+    <string name="upload_failed_title">Upload failed</string>
+    <string name="upload_conflict_word">Conflict</string>
+    <string name="upload_fallback_name">Upload</string>
+</resources>

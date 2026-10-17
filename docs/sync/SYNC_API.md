@@ -686,7 +686,7 @@ covered by this contract). Authentication: `Authorization: Bearer`
 
 ### 8.3 Delete
 
-`DELETE /sync/v1/items/:id` → `204`. Files and folders (with their subtree) move to the **trash of
+`DELETE /sync/v1/items/:id` → `204`. Optional `If-Match: "<etag>"` (or `*`), compared like on `PATCH` (§8.2): a mismatch → `412 conflict` with `item`, nothing is deleted. Files and folders (with their subtree) move to the **trash of
 their space**; `/changes` reports a `delete` for each of them. Space roots (`root`, `r_…`) →
 `403 forbidden`; unknown or already deleted → `404`; read access only → `403`; space missing → `503`. Deletions made directly on the server's disk do
 not go to the trash.

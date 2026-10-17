@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="provider_error_folder">Ordner können nicht als Datei geöffnet werden.</string>
+    <string name="provider_error_top">Bitte zuerst einen Bereich wählen, z. B. Meine Dateien.</string>
+    <string name="provider_error_cross_account">Elemente können nicht zwischen Konten verschoben werden.</string>
+    <string name="provider_error_no_account">Dieses Synclet-Konto ist nicht mehr angemeldet.</string>
+    <string name="provider_space_unavailable">Nicht verfügbar</string>
+</resources>
