@@ -1,0 +1,96 @@
+name: Android
+
+# Pushes and pull requests touching apps/android: unit tests + debug build.
+# Published release (tag v1.2.3): signed release build, Synclet.apk attached to that release
+# (the README and website link to releases/latest/download/Synclet.apk).
+# Signing secrets (see apps/android/README.md, "Release"):
+#   SYNCLET_ANDROID_KEYSTORE_B64  base64 of the upload keystore (synclet-release.jks)
+#   SYNCLET_KEYSTORE_PASSWORD     store password
+#   SYNCLET_KEY_PASSWORD          key password (alias "synclet")
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/android/**
+      - .github/workflows/android.yml
+  pull_request:
+    paths:
+      - apps/android/**
+      - .github/workflows/android.yml
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build and attach Synclet.apk to (e.g. v0.1.6); empty = test build only
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    if: github.event_name != 'release' && inputs.tag == ''
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: apps/android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Unit tests and debug build
+        run: ./gradlew --no-configuration-cache :core:testDebugUnitTest :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: android-test-reports
+          path: |
+            apps/android/*/build/reports
+          retention-days: 7
+
+  release:
+    if: github.event_name == 'release' || inputs.tag != ''
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # gh release upload
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Upload keystore from secrets
+        env:
+          KEYSTORE_B64: ${{ secrets.SYNCLET_ANDROID_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "::error::Secret SYNCLET_ANDROID_KEYSTORE_B64 is not set (see apps/android/README.md, Release)."
+            exit 1
+          fi
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/synclet-release.jks"
+          echo "SYNCLET_KEYSTORE_FILE=$RUNNER_TEMP/synclet-release.jks" >> "$GITHUB_ENV"
+      - name: Build, verify and attach Synclet.apk
+        env:
+          SYNCLET_KEYSTORE_PASSWORD: ${{ secrets.SYNCLET_KEYSTORE_PASSWORD }}
+          SYNCLET_KEY_ALIAS: synclet
+          SYNCLET_KEY_PASSWORD: ${{ secrets.SYNCLET_KEY_PASSWORD }}
+        run: apps/android/build_release.sh "${TAG#v}" --github "$TAG"
+      - name: Remove keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/synclet-release.jks"
