@@ -18,7 +18,7 @@ import { PrismaService, TX_OPTS } from '../prisma/prisma.service';
 import { SpacesRepo } from '../spaces/spaces.repo';
 import { PreparedVersion, StaleVersionError, VersionContentReplacer, VersionsService } from '../versions/versions.service';
 import { rethrowStorageError } from '../common/storage-errors';
-import { copyNoReplace, copyTree, linkNoReplace, moveAcrossFs, moveNoReplace, replaceAtomic, statEntry } from './fs-ops';
+import { copyNoReplace, copyTree, copyTreeTracked, linkNoReplace, moveAcrossFs, moveNoReplace, replaceAtomic, statEntry } from './fs-ops';
 
 export type OnConflict = 'fail' | 'rename';
 
@@ -707,6 +707,101 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
     const s = staged as { from: string; at: string } | null;
     if (s) await rm(s.at, { recursive: true, force: true }).catch((e) => this.log.error(`cannot remove moved source ${s.at}: ${String(e)}`));
     return result;
+  }
+
+  /**
+   * Copies an item (with its subtree) to `targetParent` (null = root) of `dst`, possibly another
+   * space. Like a cross-file-system move, the tree is first copied to an ignored temp entry in the
+   * target root without any lock (progress via `onProgress`, cancellable via `signal`); then a short
+   * transaction under both space locks checks that the source is unchanged since the copy started
+   * (else 409 `conflict`), resolves the name (`onConflict`: fail → `name_conflict` with the existing
+   * row, rename → "Name (2)"), publishes the copy by rename and creates rows with new ids for the
+   * whole subtree (paths, sizes, contentHash of the source; mtime/ino/dev from the copy), journaled
+   * as upserts. Share links and versions are not copied. The temp tree never survives the call.
+   */
+  async copy(
+    src: IndexSpace, dst: IndexSpace, itemId: string, targetParent: string | null,
+    opts: { onConflict: OnConflict; onProgress?(bytes: number): void; signal?: AbortSignal },
+  ): Promise<Item> {
+    const pre = await this.prisma.$transaction(async (tx) => {
+      const item = await this.store.getLive(tx, src.id, itemId);
+      if (!item) throw new SyncError('not_found');
+      await this.parentPath(tx, dst, targetParent); // fail fast before copying
+      return { item, snap: await this.subtreeSnapshot(tx, src, item) };
+    }, TX_OPTS);
+    const tmp = path.join(dst.rootPath, tempName(randomBytes(8).toString('hex')));
+    let published: { tmp: string; to: string } | null = null;
+    try {
+      try {
+        await copyTreeTracked(this.abs(src, pre.item.path), tmp, { onBytes: opts.onProgress, signal: opts.signal });
+      } catch (e) {
+        if ((e as Error).name === 'AbortError') throw e;
+        rethrowStorageError(mapMissing(e, 'item'));
+      }
+      if (opts.signal?.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+      return await this.prisma.$transaction(async (tx) => {
+        const locks = src.id === dst.id ? [src] : [src, dst].sort((a, b) => (a.id < b.id ? -1 : 1));
+        for (const sp of locks) await this.journal.lockSpaceForWrite(tx, sp);
+        const item = await this.store.getLive(tx, src.id, itemId);
+        if (!item) throw new SyncError('not_found');
+        if ((await this.subtreeSnapshot(tx, src, item)) !== pre.snap) {
+          throw new SyncError('conflict', 'changed while being copied, try again', item, 409);
+        }
+        const parentRel = await this.parentPath(tx, dst, targetParent);
+        const { sibs, keys } = await this.takenKeys(tx, dst, targetParent);
+        await this.assertRealDir(dst, parentRel);
+        let name = item.name;
+        let to = '';
+        for (let attempt = 0; ; attempt++) {
+          if (keys.has(nameKey(name))) {
+            if (opts.onConflict === 'fail') throw new SyncError('name_conflict', 'name already exists', sibs.find((s) => s.nameKey === nameKey(name)));
+            name = freeName(item.name, keys, item.type === 'folder');
+          }
+          to = this.abs(dst, joinRel(parentRel, name));
+          try {
+            await moveNoReplace(tmp, to); // same file system: the temp copy lives in the target root
+            published = { tmp, to };
+            break;
+          } catch (e) {
+            if (!isEexist(e) || attempt > 100) throw mapMissing(e, 'target folder');
+            if (opts.onConflict === 'fail') throw new SyncError('name_conflict', 'exists on disk');
+            keys.add(nameKey(name)); // unindexed entry on disk – try the next free name
+          }
+        }
+        const rel = joinRel(parentRel, name);
+        const subtree = item.type === 'folder'
+          ? [item, ...(await this.store.liveDescendants(tx, src.id, item.path))].sort((a, b) => a.path.length - b.path.length)
+          : [item];
+        // Parents before children: the new parent id of a row is the new id of its source parent.
+        const newIds = new Map<string, string>([[item.id, randomUUID()]]);
+        const created: Item[] = [];
+        for (const r of subtree) {
+          const id = newIds.get(r.id) ?? randomUUID();
+          newIds.set(r.id, id);
+          const relPath = r.id === item.id ? rel : rel + r.path.slice(item.path.length);
+          const st = await statEntry(this.abs(dst, relPath)).catch(() => null);
+          if (!st) continue; // vanished in the source before the copy (not indexed yet): not copied
+          created.push(await tx.item.create({
+            data: {
+              id, spaceId: dst.id, type: r.type, path: relPath,
+              parentId: r.id === item.id ? targetParent : newIds.get(r.parentId!)!,
+              name: r.id === item.id ? name : r.name, nameKey: r.id === item.id ? nameKey(name) : r.nameKey,
+              size: r.type === 'file' ? st.size : 0n, mtime: st.mtime, ino: st.ino, dev: st.dev,
+              contentHash: r.type === 'file' ? r.contentHash : null,
+            },
+          }));
+        }
+        await this.announce(tx, dst, created);
+        return created[0];
+      }, TX_OPTS);
+    } catch (e) {
+      // Rolled back after publishing: back to the temp name, removed below.
+      const p = published as { tmp: string; to: string } | null;
+      if (p) await moveNoReplace(p.to, p.tmp).catch((err) => this.log.error(`cannot withdraw copy ${p.to}: ${String(err)}`));
+      throw e;
+    } finally {
+      await rm(tmp, { recursive: true, force: true }).catch((e) => this.log.error(`cannot remove copy temp ${tmp}: ${String(e)}`));
+    }
   }
 
   /**

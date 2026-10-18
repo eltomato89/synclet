@@ -34,8 +34,8 @@ export async function copyNoReplace(src: string, dst: string): Promise<void> {
         if (bytesRead === 0) break;
         for (let off = 0; off < bytesRead;) off += (await dfh.write(buf, off, bytesRead - off)).bytesWritten;
       }
-      const st = await sfh.stat();
-      await dfh.utimes(st.atime, st.mtime);
+      const st = await sfh.stat({ bigint: true });
+      await dfh.utimes(st.atime, msSeconds(st));
       await dfh.sync();
       await dfh.close();
     } catch (e) {
@@ -141,6 +141,12 @@ export async function moveAcrossFs(src: string, dst: string, move: (src: string,
 }
 
 /**
+ * mtime as seconds, floored to the millisecond like the indexer's `Number(mtimeMs)` and nudged a tenth of a
+ * millisecond up: seconds -> timespec can land just below the millisecond (974.9999) and be read one ms early.
+ */
+const msSeconds = (st: { mtimeNs: bigint }) => (Number(st.mtimeNs / 1_000_000n) + 0.1) / 1000;
+
+/**
  * Copies a file or folder tree to the new path `dst` (refuses an existing `dst`), keeping
  * timestamps and symlinks verbatim. The caller owns `dst` and removes it on failure.
  */
@@ -165,8 +171,8 @@ async function copyFileTracked(src: string, dst: string, buf: Buffer, onBytes?: 
         for (let off = 0; off < bytesRead;) off += (await dfh.write(buf, off, bytesRead - off)).bytesWritten;
         onBytes(bytesRead);
       }
-      const st = await sfh.stat();
-      await dfh.utimes(st.atime, st.mtime);
+      const st = await sfh.stat({ bigint: true });
+      await dfh.utimes(st.atime, msSeconds(st));
       await dfh.sync();
       await dfh.close();
     } catch (e) {
@@ -198,7 +204,7 @@ export async function copyTreeTracked(src: string, dst: string, opts: { onBytes?
   const buf = Buffer.allocUnsafe(1 << 20);
   const walk = async (from: string, to: string): Promise<void> => {
     if (opts.signal?.aborted) throw abortError();
-    const st = await lstat(from);
+    const st = await lstat(from, { bigint: true });
     if (st.isFile()) {
       await copyFileTracked(from, to, buf, opts.onBytes);
       return;
@@ -211,7 +217,7 @@ export async function copyTreeTracked(src: string, dst: string, opts: { onBytes?
       throw e;
     }
     for (const name of (await readdir(from)).sort()) await walk(path.join(from, name), path.join(to, name));
-    await utimes(to, st.atime, st.mtime);
+    await utimes(to, st.atime, msSeconds(st));
   };
   await walk(src, dst);
 }
