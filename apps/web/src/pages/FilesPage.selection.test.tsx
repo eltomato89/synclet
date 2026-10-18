@@ -270,6 +270,16 @@ it('dragging the selection onto a folder moves it; with ⌥ it copies', async ()
   await waitFor(() => expect(posted()).toContainEqual(['/sync/v1/operations', { kind: 'copy', itemIds: ['f_2'], targetId: 'd_9' }]));
 });
 
+it('a drop of OS files after a cancelled internal drag (no dragend) posts no operation', async () => {
+  renderAt('/files');
+  await screen.findByText('a.txt');
+  fireEvent.dragStart(row('a.txt'), { dataTransfer: dataTransfer() });
+  const files = { ...dataTransfer(), types: ['Files'], files: [] };
+  fireEvent.drop(row('Box'), { dataTransfer: files });
+  await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+  expect(posted().filter(([p]) => p === '/sync/v1/operations')).toEqual([]);
+});
+
 it('a dragged folder is no drop target for itself', async () => {
   renderAt('/files');
   await screen.findByText('Box');

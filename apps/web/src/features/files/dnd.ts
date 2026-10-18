@@ -30,6 +30,17 @@ export function isCopyDrop(e: { altKey: boolean; ctrlKey: boolean }, drag: DragS
   return e.altKey || e.ctrlKey || !drag.movable;
 }
 
+/** The ids from the drag payload (`{ids}` JSON); null when it is missing or malformed. */
+function dragIds(raw: string): string[] | null {
+  if (!raw) return null;
+  try {
+    const ids = (JSON.parse(raw) as { ids?: unknown }).ids;
+    return Array.isArray(ids) && ids.every((i) => typeof i === 'string') ? ids : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Drags the selection (or just the dragged item when it is not selected) onto folders and breadcrumb segments. */
 export function useItemDnd({ folderId, selectedItems, label, onDrop }: {
   folderId: string; selectedItems: SyncItem[]; label(count: number): string;
@@ -69,12 +80,19 @@ export function useItemDnd({ folderId, selectedItems, label, onDrop }: {
         },
         onDragLeave(e) { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver((o) => (o === t.id ? null : o)); },
         onDrop(e) {
+          // Only internal drags: a drop of OS files after a cancelled internal drag (no dragend) must not
+          // replay the stale drag state; the upload DropZone takes those.
+          if (!Array.from(e.dataTransfer.types).includes(DND_MIME)) return;
           e.preventDefault();
           const d = latest.current.drag;
           setOver(null);
           setDrag(null);
           latest.current.drag = null;
-          if (d) latest.current.onDrop(t.id, d.ids, isCopyDrop(e, d));
+          const ids = dragIds(e.dataTransfer.getData(DND_MIME)) ?? d?.ids;
+          if (!ids?.length) return;
+          // `movable` is only known from our own drag state; without it, copy (never fails on read-only sources).
+          const state = { ids, movable: !!d?.movable && ids.every((id) => d.ids.includes(id)) };
+          latest.current.onDrop(t.id, ids, isCopyDrop(e, state));
         },
         ...(over === t.id ? { 'data-drop': 'over' as const } : {}),
       };
