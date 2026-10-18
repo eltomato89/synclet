@@ -11,7 +11,7 @@ A native Kotlin/Jetpack Compose app for phones and tablets (Android 10+, `minSdk
 | OAuth `client_id` | `android` |
 | OAuth redirect | `synclet://oauth` |
 
-Sign-in happens in the browser (Custom Tab) on your own server, so SSO works; the app keeps only a revocable device token ([App login](../../README.md#app-login)).
+Sign-in happens in the browser (Custom Tab) on your own server, so SSO works; the app keeps only a revocable device token ([App login](../../docs/apps.md#app-login)).
 
 ## Project layout
 
