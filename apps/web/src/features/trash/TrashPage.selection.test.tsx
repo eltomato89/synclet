@@ -21,6 +21,7 @@ vi.mock('sonner', () => ({ toast }));
 const { TrashPage } = await import('./TrashPage');
 
 let failing = new Set<string>();
+let gate: Promise<void> | null = null;
 const calls: string[] = [];
 function renderWith(entries: TrashEntryWire[]) {
   let list = entries;
@@ -30,6 +31,7 @@ function renderWith(entries: TrashEntryWire[]) {
     const m = /^\/trash\/([^/]+)(\/restore)?$/.exec(path);
     if (m) {
       calls.push(`${opts?.method} ${path}`);
+      if (gate) await gate;
       if (failing.has(m[1])) throw new apiMod.ApiError(404, 'not_found', 'x');
       list = list.filter((e) => e.id !== m[1]);
       return m[2] ? { item: { id: `f_${m[1]}`, name: 'x', parentId: 'root' }, restoredTo: '', renamed: false } : undefined;
@@ -39,7 +41,7 @@ function renderWith(entries: TrashEntryWire[]) {
   const { wrapper: W } = testQueryClient();
   render(<W><MemoryRouter><TooltipProvider><TopbarProvider><Topbar onOpenNavigation={() => {}} /><TrashPage /></TopbarProvider></TooltipProvider></MemoryRouter></W>);
 }
-afterEach(() => { cleanup(); vi.restoreAllMocks(); failing = new Set(); calls.length = 0; toast.success.mockReset(); toast.error.mockReset(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); failing = new Set(); gate = null; calls.length = 0; toast.success.mockReset(); toast.error.mockReset(); });
 
 const rowOf = (name: string) => screen.getAllByText(name)[0].closest('tr')!;
 
@@ -68,4 +70,22 @@ it('deletes several entries forever after confirmation; ⌘A selects all', async
   fireEvent.click(screen.getAllByRole('button', { name: 'Delete forever' }).at(-1)!);
   await waitFor(() => expect(toast.success).toHaveBeenCalledWith('2 items deleted forever', expect.anything()));
   expect(calls).toEqual(['DELETE /trash/1', 'DELETE /trash/2']);
+});
+
+it('the bulk buttons are disabled while a bulk run is in progress', async () => {
+  renderWith([entry('1', 'a.txt', 'a.txt'), entry('2', 'b.txt', 'b.txt')]);
+  await screen.findAllByText('a.txt');
+  let release!: () => void;
+  gate = new Promise((r) => { release = r; });
+  fireEvent.click(rowOf('a.txt'));
+  fireEvent.click(rowOf('b.txt'), { shiftKey: true });
+  const restore = screen.getByRole('button', { name: 'Restore' });
+  fireEvent.click(restore);
+  await waitFor(() => expect(restore).toBeDisabled());
+  expect(screen.getByRole('button', { name: 'Delete forever' })).toBeDisabled();
+  fireEvent.click(restore);
+  expect(calls).toEqual(['POST /trash/1/restore']);
+  release();
+  await waitFor(() => expect(toast.success).toHaveBeenCalledWith('2 items restored', expect.anything()));
+  expect(calls).toEqual(['POST /trash/1/restore', 'POST /trash/2/restore']);
 });

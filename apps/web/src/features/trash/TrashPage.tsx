@@ -46,6 +46,8 @@ export function TrashPage() {
   const trash = useTrash();
   const m = useTrashMutations();
   const [busy, setBusy] = useState<Set<string>>(() => new Set());
+  /** A bulk restore or delete is running: the selection bar's buttons wait for it. */
+  const [bulkRunning, setBulkRunning] = useState(false);
   const [confirm, setConfirm] = useState<(Confirm & { open: boolean }) | null>(null);
   const entries = trash.data ?? [];
   const order = useMemo(() => entries.map((e) => e.id), [entries]);
@@ -91,9 +93,12 @@ export function TrashPage() {
   }
 
   async function restoreMany(list: TrashEntryWire[]) {
+    setBulkRunning(true);
     list.forEach((e) => mark(e.id, true));
-    const { ok, failed } = await runSequential(list, (e) => m.restore.mutateAsync(e));
-    list.forEach((e) => mark(e.id, false));
+    const { ok, failed } = await runSequential(list, (e) => m.restore.mutateAsync(e)).finally(() => {
+      list.forEach((e) => mark(e.id, false));
+      setBulkRunning(false);
+    });
     if (failed.length === 0) toast.success(t('trash.bulk.restored', { count: ok.length }), { position: 'bottom-center' });
     else toast.error(t('trash.bulk.partialRestore', { ok: ok.length, failed: failed.length }), { position: 'bottom-center' });
   }
@@ -103,8 +108,8 @@ export function TrashPage() {
       <>
         <Button variant="ghost" size="icon-sm" onClick={() => sel.dispatch({ type: 'clear' })} aria-label={t('files.selection.clear')} className="text-muted-foreground"><X /></Button>
         <span className="min-w-0 flex-1 truncate text-sm font-semibold tabular-nums">{t('files.selection.count', { count: sel.count })}</span>
-        <Button variant="ghost" size="sm" onClick={() => void restoreMany(chosen)}><RotateCcw />{t('trash.bulk.restore')}</Button>
-        <Button variant="ghost" size="sm" className="hover:bg-destructive/10 hover:text-destructive" onClick={() => setConfirm({ kind: 'deleteMany', entries: chosen, open: true })}>
+        <Button variant="ghost" size="sm" disabled={bulkRunning} onClick={() => void restoreMany(chosen)}><RotateCcw />{t('trash.bulk.restore')}</Button>
+        <Button variant="ghost" size="sm" disabled={bulkRunning} className="hover:bg-destructive/10 hover:text-destructive" onClick={() => setConfirm({ kind: 'deleteMany', entries: chosen, open: true })}>
           <Trash2 />{t('trash.bulk.deleteForever')}
         </Button>
       </>
@@ -309,7 +314,8 @@ export function TrashPage() {
           destructive
           errorMessage={(err) => t(trashErrorKey(err))}
           onConfirm={async () => {
-            const { ok, failed } = await runSequential(c.entries, (e) => m.deleteForever.mutateAsync(e));
+            setBulkRunning(true);
+            const { ok, failed } = await runSequential(c.entries, (e) => m.deleteForever.mutateAsync(e)).finally(() => setBulkRunning(false));
             if (failed.length === 0) toast.success(t('trash.bulk.deleted', { count: ok.length }), { position: 'bottom-center' });
             else toast.error(t('trash.bulk.partialDelete', { ok: ok.length, failed: failed.length }), { position: 'bottom-center' });
           }}
