@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Outlet, useLocation } from 'react-router';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
+import { OperationsPanel } from '@/features/operations/OperationsPanel';
 import { OperationsProvider } from '@/features/operations/OperationsProvider';
 import { PanelDock } from './PanelDock';
 import { Sidebar } from './Sidebar';
@@ -47,6 +48,7 @@ export function AppShell() {
               </div>
             </div>
           </div>
+          <OperationsPanel />
         </PanelDock>
       </OperationsProvider>
     </TopbarProvider>
