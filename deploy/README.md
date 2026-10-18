@@ -4,7 +4,7 @@ Quickstart, configuration and the other server topics are in the [top-level READ
 
 ## Upgrading: Office moved into compose.yml
 
-The Euro-Office `office` service is now part of `compose.yml` (profile `office`) and served below `/documentserver` by default. If you use Office on its own subdomain (`COMPOSE_FILE=compose.yml:compose.office.yml`), download the new `compose.office.yml` **together with** the new `compose.yml`: the new `compose.yml` with the old `compose.office.yml` fails with "depends on undefined service office". The new override keeps your subdomain setup (same variables, same volumes; needs Docker Compose 2.24 or newer). Or switch to `/documentserver`: remove `COMPOSE_FILE`, `SYNCLET_OFFICE_SITE_ADDRESS` and `SYNCLET_OFFICE_PUBLIC_URL` from `.env`, add `COMPOSE_PROFILES=office` and run `docker compose up -d --remove-orphans`. Details: [README, Office](../README.md#office-euro-office-editing).
+The Euro-Office `office` service is now part of `compose.yml` (profile `office`) and served below `/documentserver` by default. If you use Office on its own subdomain (`COMPOSE_FILE=compose.yml:compose.office.yml`), download the new `compose.office.yml` **together with** the new `compose.yml`: the new `compose.yml` with the old `compose.office.yml` fails with "depends on undefined service office". The new override keeps your subdomain setup (same variables, same volumes; needs Docker Compose 2.24 or newer). Or switch to `/documentserver`: remove `COMPOSE_FILE`, `SYNCLET_OFFICE_SITE_ADDRESS` and `SYNCLET_OFFICE_PUBLIC_URL` from `.env`, add `COMPOSE_PROFILES=office` and run `docker compose up -d --remove-orphans`. Details: [Office](../docs/office.md#office-euro-office-editing).
 
 ## Files in this folder
 
@@ -25,7 +25,7 @@ Before the prebuilt images, `compose.yml` built the images itself (`up -d --buil
 - **Switch to the prebuilt images:** run `docker compose -f deploy/compose.yml --env-file deploy/.env pull`, then the same command with `up -d` (no `--build`). Optionally set `SYNCLET_VERSION` in `deploy/.env` first. Your data, database and volumes stay as they are.
 - **Keep building from source:** add `deploy/compose.build.yml` after `compose.yml` and put your own override last: `docker compose -f deploy/compose.yml -f deploy/compose.build.yml -f <your override> --env-file deploy/.env up -d --build`.
 
-With Office, use the new `compose.office.yml` (or switch to the default `/documentserver` setup, see "Upgrading from the subdomain-only setup" in the [README](../README.md#office-euro-office-editing)) and remove any old bind mount of `Caddyfile.office` into `/etc/caddy/conf.d/office.caddy` from your own overrides: the office site is now built into the image and turned on by `compose.office.yml`, and mounting it as well defines the site twice, so Caddy does not start.
+With Office, use the new `compose.office.yml` (or switch to the default `/documentserver` setup, see "Upgrading from the subdomain-only setup" in [Office](../docs/office.md#office-euro-office-editing)) and remove any old bind mount of `Caddyfile.office` into `/etc/caddy/conf.d/office.caddy` from your own overrides: the office site is now built into the image and turned on by `compose.office.yml`, and mounting it as well defines the site twice, so Caddy does not start.
 
 ## Team folders and external storage
 
