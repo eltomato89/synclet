@@ -57,6 +57,7 @@
 		84D815A35C2E4209FDB800EB /* FileProviderExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4A29675CD5201E8AD9E062E /* FileProviderExtension.swift */; };
 		8AF58C04FE8B215220716B97 /* Spaces.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71316EE384DC1886B8A480BB /* Spaces.swift */; };
 		8FF072EF4311378A1AE8B862 /* DestinationStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFD4CC3A731C376A60494295 /* DestinationStack.swift */; };
+		92E4581F252137AD702AE0BE /* HeroFlowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 410062C64DBA75FC8A4CFC35 /* HeroFlowUITests.swift */; };
 		9391094FDCB0D740017BCDDF /* PhotoImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B2EDB4407CB75404A44FE4E /* PhotoImport.swift */; };
 		945C18C7820AD7EB07E68571 /* TrashModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24182EADE5ACB475097CEAB0 /* TrashModel.swift */; };
 		9A3AA15C41860550080179EE /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 7788E4FC410E32DE5F3596B2 /* Localizable.xcstrings */; };
@@ -159,6 +160,7 @@
 		380A4D6EBA2E99DD982791AE /* UploadMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UploadMenu.swift; sourceTree = "<group>"; };
 		3B52CFFECEB387C140AD5803 /* TrashModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrashModelTests.swift; sourceTree = "<group>"; };
 		3D64D408B8C76A651471DFE6 /* FolderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderView.swift; sourceTree = "<group>"; };
+		410062C64DBA75FC8A4CFC35 /* HeroFlowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeroFlowUITests.swift; sourceTree = "<group>"; };
 		44B0638D5C6607F60934556B /* SyncletFileProvider.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = SyncletFileProvider.entitlements; sourceTree = "<group>"; };
 		45369E16755E595CF637E103 /* TrashView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrashView.swift; sourceTree = "<group>"; };
 		46CBC800C390ACA51CA3A074 /* ThumbnailCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailCache.swift; sourceTree = "<group>"; };
@@ -354,6 +356,7 @@
 			isa = PBXGroup;
 			children = (
 				90C56DBC892D648290B15171 /* BrowserFlowUITests.swift */,
+				410062C64DBA75FC8A4CFC35 /* HeroFlowUITests.swift */,
 				54DA8CB3F516453317CD88D2 /* LaunchTests.swift */,
 				62CFADAEB7FAD6E8E5D89492 /* UITestSupport.swift */,
 			);
@@ -679,6 +682,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				7AAED68D766364DA03E58008 /* BrowserFlowUITests.swift in Sources */,
+				92E4581F252137AD702AE0BE /* HeroFlowUITests.swift in Sources */,
 				AD8E42FC59F844C27C236F5B /* LaunchTests.swift in Sources */,
 				3E8F79FB2E157B8F10B5C62B /* UITestSupport.swift in Sources */,
 			);

@@ -1,6 +1,18 @@
 import '@fontsource-variable/inter';
 import './styles.css';
 import { ANDROID_APK_URL, MAC_DMG_URL, PLAY_URL, TESTFLIGHT_URL } from './config';
+import phoneDarkMp4 from './assets/hero/phone-dark.mp4';
+import phoneDarkWebm from './assets/hero/phone-dark.webm';
+import phoneDarkPoster from './assets/hero/phone-dark.webp';
+import phoneLightMp4 from './assets/hero/phone-light.mp4';
+import phoneLightWebm from './assets/hero/phone-light.webm';
+import phoneLightPoster from './assets/hero/phone-light.webp';
+import webDarkMp4 from './assets/hero/web-dark.mp4';
+import webDarkWebm from './assets/hero/web-dark.webm';
+import webDarkPoster from './assets/hero/web-dark.webp';
+import webLightMp4 from './assets/hero/web-light.mp4';
+import webLightWebm from './assets/hero/web-light.webm';
+import webLightPoster from './assets/hero/web-light.webp';
 
 // Download links come from config.ts so the HTML never has to change for a new link.
 for (const a of document.querySelectorAll<HTMLAnchorElement>('[data-link="mac-dmg"]')) a.href = MAC_DMG_URL;
@@ -27,6 +39,38 @@ if (ios) {
   }
   // Otherwise the static "TestFlight beta coming soon" badge stays.
 }
+
+// Hero: the web app and the iPhone app as short muted loops (scripts/hero-motion.ts), in the
+// visitor's color scheme; with reduced motion only the still frame (poster) shows.
+const HERO = {
+  web: { light: { mp4: webLightMp4, webm: webLightWebm, poster: webLightPoster }, dark: { mp4: webDarkMp4, webm: webDarkWebm, poster: webDarkPoster } },
+  phone: { light: { mp4: phoneLightMp4, webm: phoneLightWebm, poster: phoneLightPoster }, dark: { mp4: phoneDarkMp4, webm: phoneDarkWebm, poster: phoneDarkPoster } },
+} as const;
+const darkScheme = matchMedia('(prefers-color-scheme: dark)');
+const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
+function heroVideos() {
+  for (const video of document.querySelectorAll<HTMLVideoElement>('video[data-hero]')) {
+    const src = HERO[video.dataset.hero as keyof typeof HERO][darkScheme.matches ? 'dark' : 'light'];
+    video.poster = src.poster;
+    if (reducedMotion.matches) {
+      video.pause();
+      video.replaceChildren();
+      video.load();
+      continue;
+    }
+    video.replaceChildren(...([[src.webm, 'video/webm'], [src.mp4, 'video/mp4']] as const).map(([url, type]) => {
+      const source = document.createElement('source');
+      source.src = url;
+      source.type = type;
+      return source;
+    }));
+    video.load();
+    void video.play().catch(() => { /* autoplay refused: the poster stays */ });
+  }
+}
+heroVideos();
+darkScheme.addEventListener('change', heroVideos);
+reducedMotion.addEventListener('change', heroVideos);
 
 const year = document.querySelector('[data-year]');
 if (year) year.textContent = String(new Date().getFullYear());

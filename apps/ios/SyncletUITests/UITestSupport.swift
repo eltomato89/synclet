@@ -24,15 +24,15 @@ enum UITestSupport {
         return Live(server: server, token: token, team: team)
     }
 
-    /// The app signed in to the live server, in German (the product terms are asserted).
+    /// The app signed in to the live server, in German by default (the flows assert the product terms).
     @MainActor
-    static func launchApp(_ live: Live, extraArguments: [String] = []) -> XCUIApplication {
+    static func launchApp(_ live: Live, language: String = "de", extraArguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = [
             "-SyncletTestServer", live.server,
             "-SyncletTestToken", live.token,
-            "-AppleLanguages", "(de)",
-            "-AppleLocale", "de_DE",
+            "-AppleLanguages", "(\(language))",
+            "-AppleLocale", language == "de" ? "de_DE" : "en_US",
         ] + extraArguments
         app.launch()
         return app
