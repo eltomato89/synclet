@@ -9,6 +9,8 @@
 - [Single sign-on](single-sign-on.md): OIDC, forward-auth, emergency access
 - [Apps](apps.md): signing in from the apps, Mac, Android
 - [Admin area](admin.md)
+- [Known limitations and security notes](limitations-and-security.md)
+- [Development](development.md): building, tests, database migrations, architecture
 - [Sync API](sync/SYNC_API.md): for client developers
 
 Back to the [README](../README.md).
