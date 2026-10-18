@@ -6,6 +6,7 @@ import { freeName, nameKey } from '../common/names';
 import { SyncError } from '../common/sync-error';
 import type { IndexSpace } from '../common/types';
 import { FilesService } from '../files/files.service';
+import { SchedulerService } from '../indexer/scheduler.service';
 import { ItemStore } from '../journal/item-store';
 import { PrismaService } from '../prisma/prisma.service';
 import { ItemResolver, type Resolved } from '../sync/item-resolver';
@@ -42,25 +43,39 @@ export class OperationsRunner implements OnApplicationBootstrap, OnModuleDestroy
   private rekick = false;
   private timer?: NodeJS.Timeout;
   private stopped = false;
+  /** False until the scheduler's startup cleanup is over (it removes temp entries a running copy would use). */
+  private ready: boolean;
+  /** recover() + first kick after boot (awaitable for tests). */
+  booted: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly files: FilesService,
     private readonly resolver: ItemResolver,
     private readonly store: ItemStore,
+    private readonly scheduler: SchedulerService,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
-  ) {}
+  ) {
+    this.ready = !config.background;
+  }
 
-  async onApplicationBootstrap() {
+  onApplicationBootstrap() {
     if (!this.config.background) return;
-    const n = await this.recover();
-    if (n) this.log.log(`resuming ${n} interrupted operation(s)`);
-    this.timer = setInterval(() => this.kick(), POLL_MS);
-    this.kick();
+    // Not awaited: the scheduler's own bootstrap hook may run after this one.
+    this.booted = this.scheduler.startupDone.then(async () => {
+      if (this.stopped) return;
+      const n = await this.recover();
+      if (n) this.log.log(`resuming ${n} interrupted operation(s)`);
+      if (this.stopped) return;
+      this.ready = true;
+      this.timer = setInterval(() => this.kick(), POLL_MS);
+      this.kick();
+    }).catch((e) => this.log.error(`operations recovery failed: ${(e as Error).message}`));
   }
 
   async onModuleDestroy() {
     this.stopped = true;
+    await this.booted;
     clearInterval(this.timer);
     for (const c of this.active.values()) c.abort();
     await Promise.allSettled([...this.jobs]);
@@ -72,7 +87,7 @@ export class OperationsRunner implements OnApplicationBootstrap, OnModuleDestroy
   }
 
   kick(): void {
-    if (this.stopped) return;
+    if (this.stopped || !this.ready) return;
     if (this.ticking) { this.rekick = true; return; }
     this.ticking = this.tick().catch((e) => this.log.error(`operations tick failed: ${(e as Error).message}`)).finally(() => {
       this.ticking = null;

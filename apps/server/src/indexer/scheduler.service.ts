@@ -59,9 +59,17 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     events.on('user.created', (u) => { if (this.config.background) void this.scanUser(u); });
   }
 
+  private startupSettled!: () => void;
+  /** Settles once the boot-time startup() (temp cleanup, trash recovery) is over; the operations runner waits for it. */
+  readonly startupDone = new Promise<void>((resolve) => { this.startupSettled = resolve; });
+
   async onApplicationBootstrap() {
-    if (!this.config.background) return;
-    await this.startup();
+    if (!this.config.background) { this.startupSettled(); return; }
+    try {
+      await this.startup();
+    } finally {
+      this.startupSettled();
+    }
     // Only now: a watcher-triggered reconcile during recovery could tombstone vacated entries.
     await this.watcher.start();
     // Not awaited: the server must listen without walking every (network) storage first.
