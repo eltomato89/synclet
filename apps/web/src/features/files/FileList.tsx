@@ -15,6 +15,8 @@ export interface MultiSelect {
   isSelected(id: string): boolean;
   /** Selected items; checkboxes stay visible while > 0. */
   count: number;
+  /** Selection mode started with a checkbox: a touch tap toggles instead of opening. */
+  selecting: boolean;
   /** Items in the list (header checkbox state). */
   total: number;
   /** Mouse/pen click. */
@@ -65,7 +67,9 @@ export function SelectBox({ item, multi, selected, className }: { item: SyncItem
       // preventDefault: Radix must not toggle on its own, `checked` follows the selection only.
       onClick={(e) => { e.preventDefault(); e.stopPropagation(); multi.onCheck(item, e.shiftKey); }}
       onDoubleClick={(e) => e.stopPropagation()}
-      onPointerDown={(e) => e.stopPropagation()}
+      // No focus: the row keeps it (roving tabindex), so Space/Enter never hit the checkbox.
+      onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+      onMouseDown={(e) => e.preventDefault()}
       className={cn(!selected && multi.count === 0 && 'opacity-0 group-hover/row:opacity-100 group-hover/card:opacity-100 pointer-coarse:opacity-100 focus-visible:opacity-100', className)}
     />
   );
@@ -74,7 +78,7 @@ export function SelectBox({ item, multi, selected, className }: { item: SyncItem
 /** Click on a row or card: touch opens (or toggles while selecting), mouse/pen selects. */
 export function itemClick(item: SyncItem, e: { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean }, isTouch: boolean, onOpen: (item: SyncItem) => void, multi?: MultiSelect) {
   if (isTouch) {
-    if (multi && multi.count > 0) multi.onCheck(item, false); else onOpen(item);
+    if (multi?.selecting) multi.onCheck(item, false); else onOpen(item);
     return;
   }
   multi?.onClick(item, { toggle: e.metaKey || e.ctrlKey, range: e.shiftKey });
@@ -129,6 +133,8 @@ export function FileList({ items, label, selectedId, onSelect, onOpen, actions, 
                 aria-label={t('files.selection.selectAll')}
                 checked={multi.count === 0 ? false : multi.count === multi.total ? true : 'indeterminate'}
                 onClick={(e) => { e.preventDefault(); multi.onCheckAll(); }}
+                onPointerDown={(e) => e.preventDefault()}
+                onMouseDown={(e) => e.preventDefault()}
                 className={cn(multi.count === 0 && 'opacity-60 hover:opacity-100')}
               />
             </th>

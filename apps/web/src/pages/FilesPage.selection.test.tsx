@@ -140,3 +140,46 @@ it('items that disappear drop out of the selection', async () => {
   await waitFor(() => expect(screen.queryByText('a.txt')).toBeNull());
   expect(selected()).toEqual(['b.txt']);
 });
+
+const tap = (el: Element) => { fireEvent.pointerDown(el, { pointerType: 'touch' }); fireEvent.click(el); };
+/** Tapping the Box folder navigated away from the listing (d_9 is no valid folder id, so the page shows "not found"). */
+const navigatedAway = () => screen.queryByText('a.txt') === null;
+
+it('touch: a tap opens; only after a checkbox check do taps toggle', async () => {
+  renderAt('/files');
+  await screen.findByText('a.txt');
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select “b.txt”' }));
+  tap(row('c.txt'));
+  tap(row('Box'));
+  expect(selected()).toEqual(['Box', 'b.txt', 'c.txt']);
+  expect(navigatedAway()).toBe(false);
+  tap(row('b.txt'));
+  tap(row('c.txt'));
+  tap(row('Box'));
+  expect(selected()).toEqual([]);
+  // Selection empty: back to opening.
+  tap(row('Box'));
+  await waitFor(() => expect(navigatedAway()).toBe(true));
+});
+
+it('touch: a programmatic single selection (right-click) does not start toggle mode', async () => {
+  renderAt('/files');
+  await screen.findByText('a.txt');
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select “b.txt”' }));
+  fireEvent.contextMenu(row('d.txt')); // replaces the selection with only d.txt
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
+  expect(selected()).toEqual(['d.txt']);
+  tap(row('Box'));
+  await waitFor(() => expect(navigatedAway()).toBe(true));
+});
+
+it('Delete with nothing selected does nothing', async () => {
+  renderAt('/files');
+  await screen.findByText('a.txt');
+  fireEvent.click(row('a.txt'));
+  fireEvent.keyDown(row('a.txt'), { key: 'Escape' });
+  fireEvent.keyDown(row('a.txt'), { key: 'Delete' });
+  await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+  expect(screen.queryByRole('alertdialog')).toBeNull();
+  expect(screen.queryByRole('dialog')).toBeNull();
+});
