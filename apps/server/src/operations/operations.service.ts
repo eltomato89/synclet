@@ -50,6 +50,14 @@ export class OperationsService {
       if (!r.item) throw new SyncError('invalid_request', 'a space root cannot be copied, moved or deleted');
       sources.push(r as Source);
     }
+    // A source inside another source folder would be handled twice (copied twice, moved out of the copy).
+    const folders = new Set(sources.filter((s) => s.item.type === 'folder').map((s) => `${s.space.id}:${s.item.path}`));
+    for (const s of sources) {
+      for (let p = s.item.path, i = p.lastIndexOf('/'); i > 0; i = p.lastIndexOf('/')) {
+        p = p.slice(0, i);
+        if (folders.has(`${s.space.id}:${p}`)) throw new SyncError('invalid_request', 'an item is inside another selected folder');
+      }
+    }
     let target: Resolved | null = null;
     if (body.targetId !== undefined) {
       target = await this.resolver.resolve(user, body.targetId, 'write');

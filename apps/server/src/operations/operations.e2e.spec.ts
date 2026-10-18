@@ -64,7 +64,16 @@ describe('operations API', () => {
       expect(r.json().code).toBe('invalid_target');
     }
     expect((await post({ kind: 'copy', itemIds: [docs.id], targetId: sub.id })).json().code).toBe('invalid_target');
+    // A source inside another selected folder (any order, any depth).
+    const deep = await upload(sub.id, 'c.txt', 'c');
+    for (const itemIds of [[docs.id, sub.id], [deep.id, docs.id], [f.id, sub.id, deep.id]]) {
+      const r = await post({ kind: 'delete', itemIds });
+      expect([r.statusCode, r.json().code]).toEqual([400, 'invalid_request']);
+    }
     expect(await ctx.prisma.operation.count()).toBe(0);
+    // Siblings with a common prefix are not nested.
+    const docs2 = await mkdir('root', 'Docs2');
+    expect((await post({ kind: 'delete', itemIds: [docs.id, docs2.id] })).statusCode).toBe(201);
   });
 
   it('checks roles: copy needs read on sources, move/delete write; the target needs write', async () => {
