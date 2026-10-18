@@ -29,7 +29,7 @@ beforeEach(() => {
     if (path === '/sync/v1/operations?active=1') return server.active;
     if (path === '/sync/v1/operations' && opts?.method === 'POST') { server.active = [base]; return base; }
     const m = /^\/sync\/v1\/operations\/([^/]+)$/.exec(path);
-    if (m) return server.byId[m[1]];
+    if (m) { if (server.byId[m[1]]) return server.byId[m[1]]; throw new apiMod.ApiError(404, 'not_found', 'x'); }
     throw new apiMod.ApiError(404, 'not_found', 'x');
   });
 });
@@ -89,6 +89,23 @@ it('opens the conflict dialog when an operation starts waiting; polling stops wh
   server.active = [];
   server.byId.o1 = done({ status: 'cancelled' });
   await tick(1000);
+  const after = calls();
+  await tick(5000);
+  expect(calls()).toBe(after);
+});
+
+it('an operation that ended and is gone (404) is dropped and polling stops', async () => {
+  const q = renderProvider();
+  await tick(0);
+  await act(async () => { await ops.start({ kind: 'copy', itemIds: ['f_a'], targetId: 'd_t' }); });
+  server.active = [{ ...base, status: 'running' }];
+  await tick(1100);
+  expect(screen.getByText('o1:running:false')).toBeInTheDocument();
+  server.active = []; // ended, and its record is already gone (e.g. removed by maintenance)
+  await tick(1000);
+  expect(screen.queryByText(/^o1:/)).toBeNull();
+  expect(q.invalidated()).toEqual(expect.arrayContaining([['folder'], ['trash']]));
+  const calls = () => vi.mocked(apiMod.api).mock.calls.filter(([p]) => p === '/sync/v1/operations?active=1').length;
   const after = calls();
   await tick(5000);
   expect(calls()).toBe(after);

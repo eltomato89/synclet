@@ -4,6 +4,7 @@ import { createContext, type ReactNode, useCallback, useContext, useEffect, useM
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { errorKey } from '@/features/files/errors';
+import { ApiError } from '@/lib/api';
 import { cancelOperation, createOperation, getOperation, isActive, listActiveOperations, resolveOperation } from './api';
 
 export const FIRST_POLL_MS = 400;
@@ -54,12 +55,16 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
     apply(ref.current.flatMap((e) => (e.op.id === id ? [fn(e)].filter((x): x is Entry => x !== null) : [e])));
   }, [apply]);
 
-  /** Applies fresh server states; side effects for operations that just finished. */
-  const absorb = useCallback((fresh: SyncOperation[]) => {
+  /**
+   * Applies fresh server states; side effects for operations that just finished. `gone`: ended
+   * operations the server no longer knows (404) – finished, without a final state to show.
+   */
+  const absorb = useCallback((fresh: SyncOperation[], gone: ReadonlySet<string> = new Set()) => {
     const byId = new Map(fresh.map((o) => [o.id, o]));
     const next: Entry[] = [];
     let ended = false;
     for (const e of ref.current) {
+      if (gone.has(e.op.id)) { ended = true; continue; }
       const now = byId.get(e.op.id);
       if (!now) { next.push(e); continue; }
       const wasActive = isActive(e.op);
@@ -100,11 +105,15 @@ export function OperationsProvider({ children }: { children: ReactNode }) {
         const active = await listActiveOperations();
         const ids = new Set(active.map((o) => o.id));
         const ended = ref.current.filter((e) => isActive(e.op) && !ids.has(e.op.id));
-        const finals = (await Promise.all(ended.map((e) => getOperation(e.op.id).catch(() => null)))).filter((o): o is SyncOperation => !!o);
+        const gone = new Set<string>();
+        const finals = (await Promise.all(ended.map((e) => getOperation(e.op.id).catch((err: unknown) => {
+          if (err instanceof ApiError && err.status === 404) gone.add(e.op.id);
+          return null;
+        })))).filter((o): o is SyncOperation => !!o);
         if (stopped) return;
         setOffline(false);
         delay = POLL_MS;
-        absorb([...active, ...finals]);
+        absorb([...active, ...finals], gone);
       } catch {
         if (stopped) return;
         setOffline(true);
