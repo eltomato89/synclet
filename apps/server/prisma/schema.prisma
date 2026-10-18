@@ -61,6 +61,7 @@ model User {
   space            Space?
   groups           GroupMember[]
   spaceMemberships SpaceMember[]
+  operations       Operation[]
 }
 
 enum SpaceKind {
@@ -406,4 +407,41 @@ model AuthSettings {
   forwardAuthAllowedGroups  String[] @default([])
   updatedAt                 DateTime @updatedAt
   updatedBy                 String?  @db.Uuid
+}
+
+/// A bulk copy / move / delete run by OperationsRunner in the server process (web multi-select).
+model Operation {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @db.Uuid
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// copy | move | delete
+  kind       String
+  /// queued | running | waiting | done | failed | cancelled
+  status     String
+  /// Sync ids of the top-level source items, in selection order.
+  sourceIds  String[]
+  /// Sync id of the target folder (copy/move).
+  targetId   String?
+  /// Display name of the target at creation (null = "My files").
+  targetName String?
+  /// First source item not finished yet.
+  nextIndex  Int       @default(0)
+  totalItems Int       @default(0)
+  doneItems  Int       @default(0)
+  totalBytes BigInt    @default(0)
+  doneBytes  BigInt    @default(0)
+  /// Open conflict (OperationConflict), plus `decision` once answered without applyToAll.
+  conflict   Json?
+  /// "Apply to all": replace | keepBoth | skip
+  policy     String?
+  /// OperationResult[] per finished source item.
+  results    Json      @default("[]")
+  /// Why the whole operation failed (target_missing, storage_full, …).
+  error      String?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  finishedAt DateTime?
+
+  @@index([userId, status])
+  @@index([finishedAt])
 }

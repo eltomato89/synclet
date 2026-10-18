@@ -19,7 +19,7 @@ export interface TestContext {
 
 export async function resetDb(prisma: PrismaService) {
   await prisma.$executeRawUnsafe(
-    'TRUNCATE "FileVersion","AppAuthCode","AuthSettings","DerivativeJob","ItemText","ShareLink","FileChange","SyncScope","TrashEntry","Item","SpaceMember","GroupMember","Group","Space","SyncDevice","Session","Identity","User","ServerConfig" CASCADE',
+    'TRUNCATE "Operation","FileVersion","AppAuthCode","AuthSettings","DerivativeJob","ItemText","ShareLink","FileChange","SyncScope","TrashEntry","Item","SpaceMember","GroupMember","Group","Space","SyncDevice","Session","Identity","User","ServerConfig" CASCADE',
   );
 }
 
