@@ -21,6 +21,7 @@ import { WatcherService } from './watcher.service';
 
 const DAY = 24 * 3600 * 1000;
 const SESSION_RETENTION_DAYS = 30;
+const OPERATION_RETENTION_DAYS = 7;
 /** Shortest pause between scan cycles, whatever a space's own interval says. */
 const MIN_CYCLE_MS = 10_000;
 
@@ -223,6 +224,8 @@ export class SchedulerService implements OnApplicationBootstrap, OnModuleDestroy
     // Expired or revoked web sessions are kept for a while (refresh-token reuse detection), then dropped.
     const sessionCutoff = new Date(Date.now() - SESSION_RETENTION_DAYS * DAY);
     await this.prisma.session.deleteMany({ where: { OR: [{ expiresAt: { lt: sessionCutoff } }, { revokedAt: { lt: sessionCutoff } }] } });
+    // Finished bulk operations (web multi-select) are kept for a week.
+    await this.prisma.operation.deleteMany({ where: { finishedAt: { lt: new Date(Date.now() - OPERATION_RETENTION_DAYS * DAY) } } });
     // Trash entries past their retention (files in /meta/trash + rows).
     await this.trash.expire();
     // File versions: retention buckets, SYNCLET_VERSIONS_MAX_BYTES, versions of items gone for good.
