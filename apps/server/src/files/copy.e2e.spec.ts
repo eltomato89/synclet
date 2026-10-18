@@ -120,4 +120,21 @@ describe('FilesService.copy', () => {
     await expect(files.copy(home, home, '00000000-0000-4000-8000-000000000000', null, { onConflict: 'fail' })).rejects.toBeInstanceOf(SyncError);
     await expect(files.copy(home, home, docs.id, '00000000-0000-4000-8000-000000000000', { onConflict: 'fail' })).rejects.toMatchObject({ code: 'not_found' });
   });
+  it('beforePublish runs once the temp tree is complete; a throwing hook leaves no temp tree and no rows', async () => {
+    const { docs } = await tree();
+    const target = await files.createFolder(home, null, 'Target');
+    let seen: string[] = [];
+    await files.copy(home, home, docs.id, target.id, {
+      onConflict: 'fail',
+      beforePublish: async () => {
+        const tmp = (await readdir(home.rootPath)).find((n) => n.startsWith('.synclet-tmp-'))!;
+        seen = [...(await readdir(path.join(home.rootPath, tmp))), ...(await readdir(path.join(home.rootPath, tmp, 'Sub')))].sort();
+      },
+    });
+    expect(seen).toEqual(['Sub', 'a.txt', 'b.txt']);
+    const before = (await live(home.id)).length;
+    await expect(files.copy(home, home, docs.id, null, { onConflict: 'rename', beforePublish: async () => { throw new Error('boom'); } })).rejects.toThrow('boom');
+    expect((await readdir(home.rootPath)).filter((n) => n.startsWith('.synclet-tmp-'))).toEqual([]);
+    expect((await live(home.id)).length).toBe(before);
+  });
 });

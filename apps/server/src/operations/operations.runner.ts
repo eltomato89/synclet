@@ -39,6 +39,7 @@ export class OperationsRunner implements OnApplicationBootstrap, OnModuleDestroy
   private readonly active = new Map<string, AbortController>();
   private readonly jobs = new Set<Promise<void>>();
   private ticking: Promise<void> | null = null;
+  private rekick = false;
   private timer?: NodeJS.Timeout;
   private stopped = false;
 
@@ -71,8 +72,12 @@ export class OperationsRunner implements OnApplicationBootstrap, OnModuleDestroy
   }
 
   kick(): void {
-    if (this.stopped || this.ticking) return;
-    this.ticking = this.tick().catch((e) => this.log.error(`operations tick failed: ${(e as Error).message}`)).finally(() => { this.ticking = null; });
+    if (this.stopped) return;
+    if (this.ticking) { this.rekick = true; return; }
+    this.ticking = this.tick().catch((e) => this.log.error(`operations tick failed: ${(e as Error).message}`)).finally(() => {
+      this.ticking = null;
+      if (this.rekick) { this.rekick = false; this.kick(); }
+    });
   }
 
   cancelRunning(id: string): void {
@@ -149,6 +154,7 @@ export class OperationsRunner implements OnApplicationBootstrap, OnModuleDestroy
     let doneBytes = op.doneBytes;
     const answered = op.conflict as StoredConflict | null;
     let lastWrite = 0;
+    let progress: Promise<unknown> = Promise.resolve();
     for (let i = op.nextIndex; i < op.sourceIds.length; i++) {
       if (signal.aborted) return;
       const sourceId = op.sourceIds[i];
@@ -159,9 +165,11 @@ export class OperationsRunner implements OnApplicationBootstrap, OnModuleDestroy
         copied += BigInt(n);
         if (Date.now() - lastWrite < PROGRESS_EVERY_MS) return;
         lastWrite = Date.now();
-        void this.save(id, { doneBytes: base + copied }).catch(() => {});
+        progress = this.save(id, { doneBytes: base + copied }).catch(() => {});
       };
-      const run = await this.runItem(op, sourceId, decision, signal, onBytes);
+      const oneShot = answered?.decision && answered.sourceId === sourceId ? answered : null;
+      const run = await this.runItem(op, sourceId, decision, oneShot, signal, onBytes);
+      await progress; // a late progress write must not lower the totals saved below
       const step = run.step;
       if (step.kind === 'cancelled') return;
       if (step.kind === 'waiting') {
@@ -181,7 +189,7 @@ export class OperationsRunner implements OnApplicationBootstrap, OnModuleDestroy
     await this.finish(id, 'done', {});
   }
 
-  private async runItem(op: Operation, sourceId: string, decision: ConflictAction | null, signal: AbortSignal, onBytes: (n: number) => void): Promise<ItemRun> {
+  private async runItem(op: Operation, sourceId: string, decision: ConflictAction | null, oneShot: StoredConflict | null, signal: AbortSignal, onBytes: (n: number) => void): Promise<ItemRun> {
     const user = { id: op.userId };
     let src: Resolved & { item: Item };
     try {
@@ -232,12 +240,14 @@ export class OperationsRunner implements OnApplicationBootstrap, OnModuleDestroy
         where: { spaceId: dst.space.id, parentId, nameKey: nameKey(name), deletedAt: null, NOT: { id: src.item.id } },
       });
       if (existing) {
-        const canReplace = this.canReplace(op, existing, dst);
-        if (!action || (action === 'replace' && !canReplace)) {
+        const canReplace = await this.canReplace(op, existing);
+        // A one-shot "replace" was given for another item than the one that is there now.
+        const stale = action === 'replace' && oneShot?.existing.id !== undefined && oneShot.existing.id !== toSyncId(existing);
+        if (!action || (action === 'replace' && !canReplace) || stale) {
           return { step: { kind: 'waiting', conflict: await this.conflictOf(src.item, existing, sourceId, bytes, canReplace) }, items, bytes };
         }
         if (action === 'skip') return result('skipped');
-        if (action === 'replace') {
+        if (action === 'replace' && op.kind === 'move') {
           try {
             await this.files.remove(dst.space, existing.id, op.userId);
           } catch (e) {
@@ -247,7 +257,11 @@ export class OperationsRunner implements OnApplicationBootstrap, OnModuleDestroy
       }
       try {
         const out = op.kind === 'copy'
-          ? await this.files.copy(src.space, dst.space, src.item.id, parentId, { onConflict: action === 'keepBoth' ? 'rename' : 'fail', onProgress: onBytes, signal })
+          ? await this.files.copy(src.space, dst.space, src.item.id, parentId, {
+            onConflict: action === 'keepBoth' ? 'rename' : 'fail', onProgress: onBytes, signal,
+            // Replace trashes the old item only once the copy is complete (a long copy may be cancelled).
+            ...(existing && action === 'replace' ? { beforePublish: () => this.files.remove(dst.space, existing.id, op.userId) } : {}),
+          })
           : await this.files.update(src.space, src.item.id, {
             parentId, targetSpace: dst.space,
             ...(existing && action === 'keepBoth' ? { name: await this.freeNameIn(dst.space, parentId, name, src.item.type === 'folder') } : {}),
@@ -262,12 +276,15 @@ export class OperationsRunner implements OnApplicationBootstrap, OnModuleDestroy
     return result('failed', { error: 'name_conflict' });
   }
 
-  /** "Replace" never trashes one of the operation's own sources or a folder containing the target. */
-  private canReplace(op: Operation, existing: Item, dst: Resolved): boolean {
-    if (op.sourceIds.some((id) => id.slice(2) === existing.id)) return false;
-    const t = dst.item;
-    if (existing.type === 'folder' && t && existing.spaceId === dst.space.id && (t.path === existing.path || t.path.startsWith(`${existing.path}/`))) return false;
-    return true;
+  /** "Replace" never trashes one of the operation's own sources or a folder containing one. */
+  private async canReplace(op: Operation, existing: Item): Promise<boolean> {
+    const uuids = op.sourceIds.map((id) => id.slice(2));
+    if (uuids.includes(existing.id)) return false;
+    if (existing.type !== 'folder') return true;
+    const inside = await this.prisma.item.count({
+      where: { id: { in: uuids }, spaceId: existing.spaceId, deletedAt: null, path: { startsWith: `${existing.path}/` } },
+    });
+    return inside === 0;
   }
 
   private async conflictOf(source: Item, existing: Item, sourceId: string, sourceBytes: bigint, canReplace: boolean): Promise<OperationConflict> {

@@ -717,11 +717,12 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
    * (else 409 `conflict`), resolves the name (`onConflict`: fail → `name_conflict` with the existing
    * row, rename → "Name (2)"), publishes the copy by rename and creates rows with new ids for the
    * whole subtree (paths, sizes, contentHash of the source; mtime/ino/dev from the copy), journaled
-   * as upserts. Share links and versions are not copied. The temp tree never survives the call.
+   * as upserts. `beforePublish` runs once the temp tree is complete, before the publish transaction.
+ * Share links and versions are not copied. The temp tree never survives the call.
    */
   async copy(
     src: IndexSpace, dst: IndexSpace, itemId: string, targetParent: string | null,
-    opts: { onConflict: OnConflict; onProgress?(bytes: number): void; signal?: AbortSignal },
+    opts: { onConflict: OnConflict; onProgress?(bytes: number): void; signal?: AbortSignal; beforePublish?(): Promise<void> },
   ): Promise<Item> {
     const pre = await this.prisma.$transaction(async (tx) => {
       const item = await this.store.getLive(tx, src.id, itemId);
@@ -739,6 +740,8 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
         rethrowStorageError(mapMissing(e, 'item'));
       }
       if (opts.signal?.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+      // E.g. "replace": the caller trashes the existing item only now that the copy is complete.
+      await opts.beforePublish?.();
       return await this.prisma.$transaction(async (tx) => {
         const locks = src.id === dst.id ? [src] : [src, dst].sort((a, b) => (a.id < b.id ? -1 : 1));
         for (const sp of locks) await this.journal.lockSpaceForWrite(tx, sp);

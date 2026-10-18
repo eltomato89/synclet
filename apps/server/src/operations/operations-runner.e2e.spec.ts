@@ -150,6 +150,46 @@ describe('OperationsRunner', () => {
     expect(await op(id)).toMatchObject({ status: 'waiting', conflict: { canReplace: false } });
   });
 
+  it('never replaces a folder that contains one of the sources', async () => {
+    const t = await mkdir('root', 'T');
+    const docs = await mkdir(t.id, 'Docs');
+    const inner = await mkdir(docs.id, 'Docs');
+    const { id } = await start({ kind: 'move', itemIds: [inner.id], targetId: t.id });
+    await runner.idle();
+    expect(await op(id)).toMatchObject({ status: 'waiting', conflict: { sourceId: inner.id, canReplace: false } });
+    expect((await api('POST', `/operations/${id}/resolve`, { payload: { action: 'replace', applyToAll: false } })).statusCode).toBe(400);
+  });
+
+  it('copy+replace trashes the old item only after the copy: a cancelled copy leaves it in place', async () => {
+    const t = await mkdir('root', 'T');
+    await upload(t.id, 'a.txt', 'old');
+    const a = await upload('root', 'a.txt', 'new-content');
+    const { id } = await start({ kind: 'copy', itemIds: [a.id], targetId: t.id });
+    await runner.idle();
+    expect((await op(id)).status).toBe('waiting');
+    const real = files.copy.bind(files);
+    jest.spyOn(files, 'copy').mockImplementation((s, d, i, p, o) => real(s, d, i, p, { ...o, onProgress: (n) => { o.onProgress?.(n); runner.cancelRunning(id); } }));
+    await api('POST', `/operations/${id}/resolve`, { payload: { action: 'replace', applyToAll: false } });
+    await runner.idle();
+    expect(await readFile(path.join(ctx.config.dataRoot, 'alice', 'T', 'a.txt'), 'utf8')).toBe('old');
+    await files.pendingTrash();
+    expect(await ctx.prisma.trashEntry.count()).toBe(0);
+  });
+
+  it('copy+replace success: old item in the trash, new content at the target', async () => {
+    const t = await mkdir('root', 'T');
+    await upload(t.id, 'a.txt', 'old');
+    const a = await upload('root', 'a.txt', 'new-content');
+    const { id } = await start({ kind: 'copy', itemIds: [a.id], targetId: t.id });
+    await runner.idle();
+    await api('POST', `/operations/${id}/resolve`, { payload: { action: 'replace', applyToAll: false } });
+    await runner.idle();
+    expect((await op(id)).status).toBe('done');
+    expect(await readFile(path.join(ctx.config.dataRoot, 'alice', 'T', 'a.txt'), 'utf8')).toBe('new-content');
+    await files.pendingTrash();
+    expect(await ctx.prisma.trashEntry.findMany({ select: { name: true, originalPath: true } })).toEqual([{ name: 'a.txt', originalPath: 'T/a.txt' }]);
+  });
+
   it('a vanished source fails only that item', async () => {
     const t = await mkdir('root', 'T');
     const a = await upload('root', 'a.txt', 'a');
