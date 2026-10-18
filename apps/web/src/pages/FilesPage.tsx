@@ -371,6 +371,27 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
     e.preventDefault();
   }
 
+  // ⌘A / ⌘V also when nothing in the listing has focus (the body after opening a folder, an empty
+  // folder). Keys the listing handled itself (default prevented, or from inside it) are left alone,
+  // as are fields, open dialogs and menus.
+  const pageKeys = useRef({ selectAll: () => {}, paste });
+  pageKeys.current = { selectAll: () => { if (items.length) dispatch({ type: 'all' }); }, paste };
+  useEffect(() => {
+    const onDocKeyDown = (e: globalThis.KeyboardEvent) => {
+      if (e.defaultPrevented || e.altKey || e.shiftKey || !(e.metaKey || e.ctrlKey)) return;
+      const key = e.key.toLowerCase();
+      if (key !== 'a' && key !== 'v') return;
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      if (target && (viewRef.current?.contains(target) || target.isContentEditable || target.closest('input, textarea, select, [role="dialog"], [role="alertdialog"], [role="menu"]'))) return;
+      if (document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')) return;
+      e.preventDefault();
+      if (key === 'a') pageKeys.current.selectAll();
+      else pageKeys.current.paste();
+    };
+    document.addEventListener('keydown', onDocKeyDown);
+    return () => document.removeEventListener('keydown', onDocKeyDown);
+  }, []);
+
   function onBackgroundClick(e: MouseEvent) {
     if (!(e.target as HTMLElement).closest('[data-item-id], button, [role="menu"]')) dispatch({ type: 'clear' });
   }

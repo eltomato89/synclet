@@ -1,7 +1,7 @@
 import type { SyncItem } from '@synclet/shared';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
-import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Topbar, TopbarProvider } from '@/components/app-shell/Topbar';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import * as bulkMod from '@/features/files/bulk';
@@ -306,4 +306,50 @@ it('with two selected the breadcrumb stays; dropping onto a parent segment moves
   expect(fireEvent.dragOver(screen.getByText('Projects', { selector: '[aria-current="page"]' }), { dataTransfer: dt })).toBe(true);
   fireEvent.drop(crumb, { dataTransfer: dt });
   await waitFor(() => expect(posted()).toContainEqual(['/sync/v1/operations', { kind: 'move', itemIds: ['f_x0', 'f_x1'], targetId: 'root' }]));
+});
+
+describe('shortcuts with the focus on the page body', () => {
+  const projects = syncItem({ id: 'd_00000000-0000-4000-8000-000000000002', name: 'Projects', type: 'folder', kind: 'folder' });
+  /** Copies a.txt with ⌘C, then opens Projects (the listing unmounts: the focus falls back to the body). */
+  async function copyThenOpenProjects(inner: SyncItem[]) {
+    folders.root = { folder, items: [projects, ...files] };
+    folders[projects.id] = { folder: projects, items: inner };
+    renderAt('/files');
+    await screen.findByText('a.txt');
+    fireEvent.click(row('a.txt'));
+    fireEvent.keyDown(row('a.txt'), { key: 'c', metaKey: true });
+    fireEvent.doubleClick(row('Projects'));
+    await waitFor(() => expect(screen.queryByText('a.txt')).toBeNull());
+    await screen.findByRole('navigation', { name: 'Folder path' });
+    (document.activeElement as HTMLElement | null)?.blur();
+    expect(document.activeElement).toBe(document.body);
+  }
+
+  it('⌘V pastes into the folder that was opened', async () => {
+    const inner = [syncItem({ id: 'f_p0', name: 'p.txt', parentId: projects.id })];
+    await copyThenOpenProjects(inner);
+    await screen.findByText('p.txt');
+    fireEvent.keyDown(document.body, { key: 'v', metaKey: true });
+    await waitFor(() => expect(posted()).toContainEqual(['/sync/v1/operations', { kind: 'copy', itemIds: ['f_0'], targetId: projects.id }]));
+    fireEvent.keyDown(document.body, { key: 'a', ctrlKey: true });
+    expect(selected()).toHaveLength(1);
+  });
+
+  it('⌘V pastes into an empty folder', async () => {
+    await copyThenOpenProjects([]);
+    fireEvent.keyDown(document.body, { key: 'V', metaKey: true });
+    await waitFor(() => expect(posted()).toContainEqual(['/sync/v1/operations', { kind: 'copy', itemIds: ['f_0'], targetId: projects.id }]));
+    expect(posted().filter(([p]) => p === '/sync/v1/operations')).toHaveLength(1);
+  });
+
+  it('ignores the shortcuts while typing in a field', async () => {
+    renderAt('/files');
+    await screen.findByText('a.txt');
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    input.focus();
+    fireEvent.keyDown(input, { key: 'a', metaKey: true });
+    expect(selected()).toEqual([]);
+    input.remove();
+  });
 });
