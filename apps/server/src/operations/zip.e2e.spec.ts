@@ -1,8 +1,10 @@
+import { writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import * as yauzl from 'yauzl';
 import { createTestApp, createTestSpace, createTestUser, TestContext } from '../../test/context';
 import { AuthService } from '../auth/auth.service';
 import type { IndexUser } from '../common/types';
-import { ZIP_TICKET_TTL_MS, ZipTickets } from './zip-tickets';
+import { ZIP_TICKET_TTL_MS } from './zip-tickets';
 
 /** Entry names and file contents of a ZIP (same helper as in public-shares.e2e.spec.ts). */
 function unzip(buf: Buffer): Promise<Map<string, string>> {
@@ -104,6 +106,12 @@ describe('multi-item ZIP download', () => {
     const t = (await ticket([`f_${f.id}`])).json();
     await ctx.prisma.spaceMember.deleteMany({ where: { spaceId: team.id } });
     expect((await fetchZip(t.url)).statusCode).toBe(404);
-    expect(ctx.app.get(ZipTickets)).toBeDefined();
+    // The refused redemption consumed the ticket: access back, the same URL stays dead.
+    await ctx.prisma.spaceMember.create({ data: { spaceId: team.id, userId: alice.id, role: 'read' } });
+    expect((await fetchZip(t.url)).statusCode).toBe(404);
+    await writeFile(path.join(team.rootPath, 't.txt'), 't');
+    const fresh = await fetchZip((await ticket([`f_${f.id}`])).json().url);
+    expect(fresh.statusCode).toBe(200);
+    expect(await unzip(fresh.rawPayload)).toEqual(new Map([['t.txt', 't']]));
   });
 });
