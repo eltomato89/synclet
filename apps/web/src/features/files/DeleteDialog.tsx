@@ -8,13 +8,14 @@ import {
 import { Button } from '@/components/ui/button';
 import { errorKey } from './errors';
 
-export function DeleteDialog({ open, onOpenChange, item, onDelete, onClosed }: {
-  open: boolean; onOpenChange(open: boolean): void; item: SyncItem; onDelete(): Promise<unknown>; onClosed?(): void;
+export function DeleteDialog({ open, onOpenChange, items, onDelete, onClosed }: {
+  open: boolean; onOpenChange(open: boolean): void; items: SyncItem[]; onDelete(): Promise<unknown>; onClosed?(): void;
 }) {
   const { t } = useTranslation();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const confirmButton = useRef<HTMLButtonElement>(null);
+  const one = items.length === 1 ? items[0] : null;
 
   async function confirm() {
     setPending(true);
@@ -37,9 +38,11 @@ export function DeleteDialog({ open, onOpenChange, item, onDelete, onClosed }: {
         onCloseAutoFocus={(e) => { if (onClosed) { e.preventDefault(); onClosed(); } }}
       >
         <AlertDialogHeader>
-          <AlertDialogTitle className="text-lg font-semibold break-all">{t('files.deleteDialog.title', { name: item.name })}</AlertDialogTitle>
+          <AlertDialogTitle className="text-lg font-semibold break-all">
+            {one ? t('files.deleteDialog.title', { name: one.name }) : t('files.deleteDialog.titleMany', { count: items.length })}
+          </AlertDialogTitle>
           <AlertDialogDescription>
-            {item.type === 'folder' ? t('files.deleteDialog.folderBody') : t('files.deleteDialog.fileBody')}
+            {!one ? t('files.deleteDialog.manyBody') : one.type === 'folder' ? t('files.deleteDialog.folderBody') : t('files.deleteDialog.fileBody')}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <FormError>{error}</FormError>

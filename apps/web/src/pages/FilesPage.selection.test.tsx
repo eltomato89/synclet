@@ -4,6 +4,8 @@ import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { Topbar, TopbarProvider } from '@/components/app-shell/Topbar';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import * as bulkMod from '@/features/files/bulk';
+import { ClipboardProvider } from '@/features/files/clipboard';
 import { OperationsProvider } from '@/features/operations/OperationsProvider';
 import * as apiMod from '@/lib/api';
 import i18n from '@/lib/i18n';
@@ -44,13 +46,13 @@ function renderAt(path: string) {
   render(
     <q.wrapper>
       <MemoryRouter initialEntries={[path]}>
-        <TooltipProvider><TopbarProvider><OperationsProvider>
+        <TooltipProvider><TopbarProvider><OperationsProvider><ClipboardProvider>
           <Topbar onOpenNavigation={() => {}} />
           <Routes>
             <Route path="/files" element={<FilesPage />} />
             <Route path="/files/:folderId" element={<FilesPage />} />
           </Routes>
-        </OperationsProvider></TopbarProvider></TooltipProvider>
+        </ClipboardProvider></OperationsProvider></TopbarProvider></TooltipProvider>
       </MemoryRouter>
     </q.wrapper>,
   );
@@ -86,7 +88,7 @@ it('keyboard: shift+arrows, ⌘A, Escape; live region announces the count', asyn
   fireEvent.keyDown(row('a.txt'), { key: 'ArrowDown', shiftKey: true });
   fireEvent.keyDown(row('b.txt'), { key: 'ArrowDown', shiftKey: true });
   expect(selected()).toEqual(['a.txt', 'b.txt', 'c.txt']);
-  expect(screen.getByText('3 selected')).toBeInTheDocument();
+  expect(screen.getByText('3 selected', { selector: '[aria-live]' })).toBeInTheDocument();
   fireEvent.keyDown(row('c.txt'), { key: 'a', metaKey: true });
   expect(selected()).toHaveLength(5);
   fireEvent.keyDown(row('c.txt'), { key: 'Escape' });
@@ -182,4 +184,60 @@ it('Delete with nothing selected does nothing', async () => {
   await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
   expect(screen.queryByRole('alertdialog')).toBeNull();
   expect(screen.queryByRole('dialog')).toBeNull();
+});
+
+const posted = () => vi.mocked(apiMod.api).mock.calls.filter(([, o]) => (o as { method?: string } | undefined)?.method === 'POST').map(([p, o]) => [p, (o as { json?: unknown }).json]);
+
+it('two selected: the selection bar replaces upload/new; bulk delete goes through an operation', async () => {
+  renderAt('/files');
+  await screen.findByText('a.txt');
+  fireEvent.click(row('a.txt'));
+  fireEvent.click(row('b.txt'), { shiftKey: true });
+  // The live region and the selection bar both show the count.
+  expect(screen.getByText('2 selected', { selector: 'span' })).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Upload' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+  expect(await screen.findByRole('heading', { name: 'Move 2 items to the trash?' })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Move to trash' }));
+  await waitFor(() => expect(posted()).toContainEqual(['/sync/v1/operations', { kind: 'delete', itemIds: ['f_0', 'f_1'] }]));
+});
+
+it('Del with several selected opens the bulk delete dialog', async () => {
+  renderAt('/files');
+  await screen.findByText('a.txt');
+  fireEvent.click(row('a.txt'));
+  fireEvent.click(row('c.txt'), { metaKey: true });
+  fireEvent.keyDown(row('c.txt'), { key: 'Delete' });
+  expect(await screen.findByRole('heading', { name: 'Move 2 items to the trash?' })).toBeInTheDocument();
+});
+
+it('⌘C then ⌘V pastes into the current folder as a copy operation', async () => {
+  renderAt('/files');
+  await screen.findByText('a.txt');
+  fireEvent.click(row('a.txt'));
+  fireEvent.click(row('b.txt'), { metaKey: true });
+  fireEvent.keyDown(row('b.txt'), { key: 'c', metaKey: true });
+  fireEvent.keyDown(row('b.txt'), { key: 'v', metaKey: true });
+  await waitFor(() => expect(posted()).toContainEqual(['/sync/v1/operations', { kind: 'copy', itemIds: ['f_0', 'f_1'], targetId: 'root' }]));
+});
+
+it('ZIP download asks for a ticket and navigates to it', async () => {
+  const assign = vi.spyOn(bulkMod.nav, 'assign').mockImplementation(() => {});
+  renderAt('/files');
+  await screen.findByText('a.txt');
+  fireEvent.click(row('a.txt'));
+  fireEvent.click(row('d.txt'), { shiftKey: true });
+  fireEvent.click(screen.getByRole('button', { name: 'Download (ZIP)' }));
+  await waitFor(() => expect(assign).toHaveBeenCalledWith('/api/sync/v1/zip/t'));
+  expect(posted()).toContainEqual(['/sync/v1/download-zip', { itemIds: ['f_0', 'f_1', 'f_2', 'f_3'] }]);
+});
+
+it('right-click on a selected item offers the bulk menu', async () => {
+  renderAt('/files');
+  await screen.findByText('a.txt');
+  fireEvent.click(row('a.txt'));
+  fireEvent.click(row('b.txt'), { metaKey: true });
+  fireEvent.contextMenu(row('a.txt'));
+  expect(await screen.findByRole('menuitem', { name: /Download \(ZIP\)/ })).toBeInTheDocument();
+  expect(screen.queryByRole('menuitem', { name: /Rename/ })).toBeNull();
 });

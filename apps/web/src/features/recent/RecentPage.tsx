@@ -222,7 +222,7 @@ export function RecentPage() {
             open={d.open}
             onOpenChange={onDialogOpenChange}
             onClosed={restoreFocus}
-            item={d.item}
+            items={[d.item]}
             expandedIds={[]}
             onMove={async (target) => {
               const moved = await mutations.move.mutateAsync({ item: d.item, targetId: target.id });
@@ -237,7 +237,7 @@ export function RecentPage() {
             open={d.open}
             onOpenChange={onDialogOpenChange}
             onClosed={restoreFocus}
-            item={d.item}
+            items={[d.item]}
             onDelete={async () => {
               const next = neighborOf(d.item);
               await mutations.remove.mutateAsync(d.item);

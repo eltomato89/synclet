@@ -98,6 +98,18 @@
       "selectAll": "Select all",
       "clear": "Clear selection"
     },
+    "bulk": {
+      "download": "Download (ZIP)",
+      "copy": "Copy",
+      "move": "Move …",
+      "paste": "Paste",
+      "cannotMove": "Not all selected items can be moved",
+      "cannotDelete": "Not all selected items can be deleted",
+      "copied_one": "{{count}} item ready to paste",
+      "copied_other": "{{count}} items ready to paste",
+      "zipFailed": "The ZIP download couldn’t be started.",
+      "ctrl": "Ctrl+{{key}}"
+    },
     "folderCount_one": "{{count}} folder",
     "folderCount_other": "{{count}} folders",
     "fileCount_one": "{{count}} file",
@@ -148,6 +160,8 @@
     },
     "moveDialog": {
       "title": "Move “{{name}}”",
+      "titleMany_one": "Move {{count}} item",
+      "titleMany_other": "Move {{count}} items",
       "description": "Choose the folder to move it to.",
       "submit": "Move here",
       "submitTo": "Move to “{{name}}”",
@@ -163,7 +177,10 @@
       "fileBody": "The file moves to the trash and disappears from all connected devices.",
       "folderBody": "The folder and everything in it move to the trash and disappear from all connected devices.",
       "submit": "Move to trash",
-      "submitting": "Deleting …"
+      "submitting": "Deleting …",
+      "titleMany_one": "Move {{count}} item to the trash?",
+      "titleMany_other": "Move {{count}} items to the trash?",
+      "manyBody": "The items move to the trash and disappear from all connected devices."
     },
     "toast": {
       "deleted": "“{{name}}” moved to the trash",

@@ -98,6 +98,18 @@
       "selectAll": "Alle auswählen",
       "clear": "Auswahl aufheben"
     },
+    "bulk": {
+      "download": "Herunterladen (ZIP)",
+      "copy": "Kopieren",
+      "move": "Verschieben …",
+      "paste": "Einfügen",
+      "cannotMove": "Nicht alle ausgewählten Elemente können verschoben werden",
+      "cannotDelete": "Nicht alle ausgewählten Elemente können gelöscht werden",
+      "copied_one": "{{count}} Element zum Einfügen bereit",
+      "copied_other": "{{count}} Elemente zum Einfügen bereit",
+      "zipFailed": "Der ZIP-Download konnte nicht gestartet werden.",
+      "ctrl": "Strg+{{key}}"
+    },
     "folderCount_one": "{{count}} Ordner",
     "folderCount_other": "{{count}} Ordner",
     "fileCount_one": "{{count}} Datei",
@@ -148,6 +160,8 @@
     },
     "moveDialog": {
       "title": "„{{name}}“ verschieben",
+      "titleMany_one": "{{count}} Element verschieben",
+      "titleMany_other": "{{count}} Elemente verschieben",
       "description": "Wähle den Ordner, in den du verschieben möchtest.",
       "submit": "Hierher verschieben",
       "submitTo": "Nach „{{name}}“ verschieben",
@@ -163,7 +177,10 @@
       "fileBody": "Die Datei wird in den Papierkorb verschoben und verschwindet von allen verbundenen Geräten.",
       "folderBody": "Der Ordner und alles darin werden in den Papierkorb verschoben und verschwinden von allen verbundenen Geräten.",
       "submit": "In den Papierkorb",
-      "submitting": "Wird gelöscht …"
+      "submitting": "Wird gelöscht …",
+      "titleMany_one": "{{count}} Element in den Papierkorb verschieben?",
+      "titleMany_other": "{{count}} Elemente in den Papierkorb verschieben?",
+      "manyBody": "Die Elemente werden in den Papierkorb verschoben und verschwinden von allen verbundenen Geräten."
     },
     "toast": {
       "deleted": "„{{name}}“ liegt jetzt im Papierkorb",

@@ -1,6 +1,6 @@
 import type { OfficeNewFormat, SyncAccount, SyncItem } from '@synclet/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { FilePlus, FileSpreadsheet, FileText, FolderPlus, FolderUp, LayoutGrid, List, Plus, Presentation, Share2, Upload } from 'lucide-react';
+import { ClipboardPaste, FilePlus, FileSpreadsheet, FileText, FolderPlus, FolderUp, LayoutGrid, List, Plus, Presentation, Share2, Upload } from 'lucide-react';
 import { type KeyboardEvent, lazy, type MouseEvent, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useParams } from 'react-router';
@@ -15,6 +15,8 @@ import {
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Breadcrumbs } from '@/features/files/Breadcrumbs';
+import { type BulkActions, bulkCaps, downloadZip, shortcut } from '@/features/files/bulk';
+import { useClipboard } from '@/features/files/clipboard';
 import { DropZone } from '@/features/files/DropZone';
 import { EmptyState, SkeletonRows, StatusMessage } from '@/features/files/EmptyState';
 import { errorKey } from '@/features/files/errors';
@@ -27,12 +29,14 @@ import {
   folderPath, ROOT_ID, type SortDir, type SortKey, sortItems, useAncestors, useFileMutations, useFolder,
 } from '@/features/files/queries';
 import { useRevealParam } from '@/features/files/reveal';
+import { SelectionBar } from '@/features/files/SelectionBar';
 import { type SelectionAction, useSelection } from '@/features/files/selection';
 import { UploadPanel } from '@/features/files/UploadPanel';
 import { getUploadQueue, type UploadQueue } from '@/features/files/uploads';
 import { useFolderUpload } from '@/features/files/useFolderUpload';
 import { MORE_FORMATS, openOfficeTab, PRIMARY_FORMATS, reserveOfficeTab } from '@/features/office/office';
 import { useCapabilities, useCreateOfficeFile } from '@/features/office/queries';
+import { useOperations } from '@/features/operations/OperationsProvider';
 import { quickLookEntries } from '@/features/preview/navigation';
 import { isPreviewable, syncPreviewSource } from '@/features/preview/source';
 import { ReadOnlyBanner } from '@/features/spaces/ReadOnlyBanner';
@@ -76,7 +80,9 @@ const notify = {
   error: (msg: string) => toast.error(msg, { position: 'bottom-center' }),
 };
 
-type DialogState = { kind: 'newFolder' } | { kind: 'newOffice'; format: OfficeNewFormat } | { kind: 'rename' | 'move' | 'delete' | 'share' | 'versions'; item: SyncItem };
+type DialogState = { kind: 'newFolder' } | { kind: 'newOffice'; format: OfficeNewFormat }
+  | { kind: 'rename' | 'move' | 'delete' | 'share' | 'versions'; item: SyncItem }
+  | { kind: 'moveMany' | 'deleteMany'; items: SyncItem[] };
 
 export function FilesPage() {
   const { folderId = ROOT_ID } = useParams();
@@ -131,6 +137,8 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   const mutations = useFileMutations();
   const createOffice = useCreateOfficeFile();
   const capabilities = useCapabilities();
+  const ops = useOperations();
+  const clipboard = useClipboard();
   const officeEnabled = capabilities.office.enabled;
 
   const [view, setViewState] = useState<View>(() => readPref(VIEW_KEY, 'list', (v) => v === 'list' || v === 'grid'));
@@ -253,6 +261,24 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
     versions: capabilities.versions ? (item) => { select(item); if (item.type === 'file') openDialog({ kind: 'versions', item }); } : undefined,
   };
   const selectedItem = selectedItems.length === 1 ? selectedItems[0] : null;
+  // Actions on the whole selection; copy, move and delete run as server operations.
+  const caps = bulkCaps(selectedItems);
+  const bulk: BulkActions = {
+    download: () => { downloadZip(selectedItems).catch(() => notify.error(t('files.bulk.zipFailed'))); },
+    copy: () => {
+      if (!selectedItems.length) return;
+      clipboard.copy(selectedItems.map((i) => i.id), folderId);
+      notify.success(t('files.bulk.copied', { count: selectedItems.length }));
+    },
+    move: () => { if (caps.move && selectedItems.length) openDialog({ kind: 'moveMany', items: selectedItems }); },
+    remove: () => { if (caps.delete && selectedItems.length) openDialog({ kind: 'deleteMany', items: selectedItems }); },
+  };
+  const canPaste = canAdd && !!clipboard.content;
+  const paste = () => {
+    const c = clipboard.content;
+    if (!canAdd || !c) return;
+    void ops.start({ kind: 'copy', itemIds: c.itemIds, targetId: folderId });
+  };
   const startUpload = () => fileInput.current?.click();
   const startFolderUpload = () => folderInput.current?.click();
   const newFolder = () => { if (canAdd) openDialog({ kind: 'newFolder' }); };
@@ -311,6 +337,8 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
       case 'Home': nav(0); break;
       case 'End': nav(items.length - 1); break;
       case 'a': case 'A': if (!mod) return; dispatch({ type: 'all' }); break;
+      case 'c': case 'C': if (!mod) return; bulk.copy(); break;
+      case 'v': case 'V': if (!mod) return; paste(); break;
       case 'Enter': if (!cur || mod) return; open(cur); break;
       case ' ':
         if (mod) { dispatch({ type: 'toggleFocus' }); break; }
@@ -319,8 +347,10 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
         break;
       case 'F2': if (!cur || mod) return; actions.rename(cur); break;
       case 'Delete': case 'Backspace': {
+        // Acts on the selection only: none selected, nothing to delete.
+        if (selectedItems.length >= 2) { bulk.remove(); break; }
         const one = selectedItems.length === 1 ? selectedItems[0] : null;
-        if (!one) return; // none: nothing to delete; several: bulk delete (Task 12)
+        if (!one) return;
         actions.remove(one);
         break;
       }
@@ -341,7 +371,9 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   }
 
   // ---- topbar ---------------------------------------------------------------------------------
-  useTopbar(
+  useTopbar(sel.count >= 2 ? (
+    <SelectionBar count={sel.count} caps={caps} actions={bulk} onClear={() => dispatch({ type: 'clear' })} />
+  ) : (
     <>
       <div className="min-w-0 flex-1">
         <Breadcrumbs chain={ancestors.data ?? (ancestors.isError ? [] : undefined)} />
@@ -397,6 +429,9 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-52">
             <DropdownMenuItem onSelect={newFolder}><FolderPlus />{t('files.newFolder')}</DropdownMenuItem>
+            <DropdownMenuItem disabled={!canPaste} onSelect={paste}>
+              <ClipboardPaste />{t('files.bulk.paste')}<DropdownMenuShortcut>{shortcut(t, 'V')}</DropdownMenuShortcut>
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             {PRIMARY_FORMATS.map((f) => {
               const Icon = { docx: FileText, xlsx: FileSpreadsheet, pptx: Presentation }[f];
@@ -431,8 +466,8 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
           </DropdownMenuContent>
         </DropdownMenu>}
       </div>
-    </>,
-  );
+    </>
+  ));
 
   // ---- body -----------------------------------------------------------------------------------
   const err = folderQ.error;
@@ -481,7 +516,10 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
             </p>
           </div>
         </ContextMenuTrigger>
-        <BrowserContextMenu item={menuItem} actions={actions} onNewFolder={newFolder} onUpload={startUpload} onUploadFolder={startFolderUpload} canAdd={canAdd} />
+        <BrowserContextMenu
+          item={menuItem} actions={actions} onNewFolder={newFolder} onUpload={startUpload} onUploadFolder={startFolderUpload} canAdd={canAdd}
+          bulk={{ count: sel.count, caps, actions: bulk }} paste={{ enabled: canPaste, onPaste: paste }}
+        />
       </ContextMenu>
     );
   }
@@ -599,7 +637,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
             open={d.open}
             onOpenChange={onDialogOpenChange}
             onClosed={restoreFocus}
-            item={d.item}
+            items={[d.item]}
             expandedIds={(ancestors.data ?? []).map((a) => a.id)}
             onMove={async (target) => {
               const next = neighborOf(d.item);
@@ -616,13 +654,42 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
             open={d.open}
             onOpenChange={onDialogOpenChange}
             onClosed={restoreFocus}
-            item={d.item}
+            items={[d.item]}
             onDelete={async () => {
               const next = neighborOf(d.item);
               await mutations.remove.mutateAsync(d.item);
               patchItems((list) => list.filter((i) => i.id !== d.item.id));
               if (next) focusItem(next); else dispatch({ type: 'clear' });
               notify.success(t('files.toast.deleted', { name: d.item.name }));
+            }}
+          />
+        )}
+        {d?.kind === 'deleteMany' && (
+          <DeleteDialog
+            key={d.n}
+            open={d.open}
+            onOpenChange={onDialogOpenChange}
+            onClosed={restoreFocus}
+            items={d.items}
+            onDelete={async () => {
+              await ops.start({ kind: 'delete', itemIds: d.items.map((i) => i.id) }, { throwOnError: true });
+              const gone = new Set(d.items.map((i) => i.id));
+              patchItems((list) => list.filter((i) => !gone.has(i.id))); // the refresh after the operation confirms
+              dispatch({ type: 'clear' });
+            }}
+          />
+        )}
+        {d?.kind === 'moveMany' && (
+          <MoveDialog
+            key={d.n}
+            open={d.open}
+            onOpenChange={onDialogOpenChange}
+            onClosed={restoreFocus}
+            items={d.items}
+            expandedIds={(ancestors.data ?? []).map((a) => a.id)}
+            onMove={async (target) => {
+              await ops.start({ kind: 'move', itemIds: d.items.map((i) => i.id), targetId: target.id }, { throwOnError: true });
+              dispatch({ type: 'clear' });
             }}
           />
         )}
