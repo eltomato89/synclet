@@ -71,28 +71,26 @@
             <p class="mt-3 text-[13px] text-muted-foreground">Mac app requires macOS 26 or later. Server runs anywhere Docker Compose does.</p>
           </div>
 
-          <!-- Product image: the web app, with the phone layout and the Finder location as accents. -->
+          <!-- Product image: the web app and the iPhone app on the same folder (hero-motion.ts), with the Finder location as an accent. -->
           <div class="relative mx-auto mt-14 max-w-5xl sm:mt-16">
             <figure class="frame-browser">
               <div class="frame-browser-bar" aria-hidden="true">
                 <i></i><i></i><i></i>
                 <span class="mx-auto rounded-md bg-background px-3 py-0.5 text-xs text-muted-foreground">files.example.com</span>
               </div>
-              <picture>
-                <source media="(prefers-color-scheme: dark)" srcset="./src/assets/screenshots/files-dark.webp" />
-                <img src="./src/assets/screenshots/files-light.webp" width="2000" height="1250" fetchpriority="high"
-                  alt="The Synclet web app showing the folders Photos, Projects, Documents and Music, landscape photos, PDFs and text files in grid view, with the spaces Family and Archive in the sidebar."
-                  class="block h-auto w-full" />
-              </picture>
+              <video data-hero="web" muted loop playsinline autoplay preload="auto" width="1280" height="800"
+                poster="./src/assets/hero/web-light.webp"
+                aria-label="The Synclet web app scrolling through a Photos folder in grid view and opening a photo in the preview."
+                class="block h-auto w-full"></video>
               <figcaption class="sr-only">The Synclet web app (sample data).</figcaption>
             </figure>
 
             <figure class="frame-phone absolute -right-2 -bottom-10 w-[30%] max-w-[230px] sm:-right-6 md:-right-10">
-              <picture>
-                <source media="(prefers-color-scheme: dark)" srcset="./src/assets/screenshots/mobile-dark.webp" />
-                <img src="./src/assets/screenshots/mobile-light.webp" width="600" height="1298" loading="lazy"
-                  alt="The Synclet web app in a phone-sized browser window." class="block h-auto w-full" />
-              </picture>
+              <video data-hero="phone" muted loop playsinline autoplay preload="auto" width="600" height="1304"
+                poster="./src/assets/hero/phone-light.webp"
+                aria-label="The Synclet iPhone app opening the same Photos folder, scrolling and previewing a photo."
+                class="block h-auto w-full"></video>
+              <figcaption class="sr-only">The Synclet iPhone app (sample data).</figcaption>
             </figure>
 
             <figure class="absolute -bottom-12 -left-10 hidden w-72 rounded-xl border bg-background p-3 text-[13px] md:block lg:-left-16" style="box-shadow: var(--shadow-frame)" aria-label="Illustration: Synclet appears in Finder under Locations, with files downloaded on demand.">

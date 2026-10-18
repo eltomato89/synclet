@@ -10,8 +10,8 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme-hero-dark.webp">
-  <img src="docs/assets/readme-hero-light.webp" alt="Synclet's web app in a browser window, with the phone layout, a file preview and the spaces admin page arranged around it" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme-hero-dark.gif">
+  <img src="docs/assets/readme-hero-light.gif" alt="Animation: the same Photos folder in Synclet's web app in a browser and in the iPhone app. Both scroll through the photos and open one in the preview (sample data)." width="100%">
 </picture>
 
 ## Why Synclet?
