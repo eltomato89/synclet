@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { cp, link, lstat, mkdir, open, readdir, rename, rm, unlink, utimes } from 'node:fs/promises';
+import { cp, link, lstat, mkdir, open, readdir, realpath, rename, rm, unlink, utimes } from 'node:fs/promises';
 import path from 'node:path';
 import { nameKey, tempName } from '../common/names';
 
@@ -189,8 +189,9 @@ async function copyFileTracked(src: string, dst: string, buf: Buffer, onBytes?: 
  * and removes it on failure.
  */
 export async function copyTreeTracked(src: string, dst: string, opts: { onBytes?(n: number): void; signal?: AbortSignal } = {}): Promise<void> {
-  const from0 = path.resolve(src);
-  const to0 = path.resolve(dst);
+  // Real paths, so a destination reached through a symlinked ancestor is caught too.
+  const from0 = await realpath(src);
+  const to0 = path.join(await realpath(path.dirname(dst)), path.basename(dst));
   if (to0 === from0 || to0.startsWith(from0 + path.sep)) {
     throw Object.assign(new Error(`EINVAL: cannot copy ${src} into itself`), { code: 'EINVAL' });
   }
