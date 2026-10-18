@@ -49,6 +49,8 @@ tags:
     description: Share links of the signed-in user (owner side).
   - name: trash
     description: Trash (deleted items).
+  - name: operations
+    description: Bulk copy, move and delete (web multi-select).
 
 paths:
   /setup/status:
@@ -919,6 +921,137 @@ paths:
         '404': { description: Unknown or foreign upload. }
         '423': { description: 'The upload is being published by another request right now.' }
 
+  /sync/v1/operations:
+    post:
+      tags: [operations]
+      operationId: createOperation
+      summary: Start a bulk copy, move or delete
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateOperationRequest' }
+      responses:
+        '201':
+          description: Queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Operation' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
+        '507': { $ref: '#/components/responses/InsufficientStorage' }
+    get:
+      tags: [operations]
+      operationId: listOperations
+      summary: The caller's newest operations
+      parameters:
+        - { name: active, in: query, required: false, schema: { type: string, enum: ['1'] }, description: 'Only queued, running and waiting operations.' }
+      responses:
+        '200':
+          description: Operations, newest first.
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Operation' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /sync/v1/operations/{operationId}:
+    parameters:
+      - { name: operationId, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [operations]
+      operationId: getOperation
+      summary: One operation of the caller
+      responses:
+        '200':
+          description: The operation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Operation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /sync/v1/operations/{operationId}/resolve:
+    parameters:
+      - { name: operationId, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [operations]
+      operationId: resolveOperation
+      summary: Answer the name conflict of a waiting operation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ResolveOperationRequest' }
+      responses:
+        '200':
+          description: Queued again.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Operation' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The operation is not waiting for a decision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /sync/v1/operations/{operationId}/cancel:
+    parameters:
+      - { name: operationId, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [operations]
+      operationId: cancelOperation
+      summary: Cancel an operation (idempotent)
+      responses:
+        '200':
+          description: The operation after cancelling.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Operation' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /sync/v1/download-zip:
+    post:
+      tags: [content]
+      operationId: createZipTicket
+      summary: One-time URL for a ZIP of several items
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [itemIds]
+              additionalProperties: false
+              properties:
+                itemIds: { type: array, minItems: 1, maxItems: 10000, items: { type: string } }
+      responses:
+        '200':
+          description: Ticket URL.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ZipTicket' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
+  /sync/v1/zip/{ticket}:
+    parameters:
+      - { name: ticket, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [content]
+      operationId: downloadZip
+      summary: Redeem a ZIP ticket (no Authorization; once, 2 minutes)
+      security: []
+      responses:
+        '200':
+          description: The archive.
+          content:
+            application/zip:
+              schema: { type: string, format: binary }
+        '404': { $ref: '#/components/responses/NotFound' }
   /trash:
     get:
       tags: [trash]
@@ -1219,6 +1352,7 @@ components:
         - not_found
         - name_conflict
         - invalid_move
+        - invalid_target
         - invalid_name
         - invalid_request
         - cursor_expired
@@ -1549,6 +1683,87 @@ components:
       required: [removed]
       properties:
         removed: { type: integer, minimum: 0 }
+    OperationEntryInfo:
+      type: object
+      required: [type, size, modifiedAt]
+      additionalProperties: false
+      properties:
+        type: { type: string, enum: [folder, file] }
+        size: { type: integer, minimum: 0 }
+        modifiedAt: { type: string, format: date-time }
+    OperationConflict:
+      type: object
+      required: [sourceId, name, source, existing, canReplace]
+      additionalProperties: false
+      properties:
+        sourceId: { type: string }
+        name: { type: string }
+        source: { $ref: '#/components/schemas/OperationEntryInfo' }
+        existing:
+          type: object
+          required: [id, type, size, modifiedAt]
+          additionalProperties: false
+          properties:
+            id: { type: string }
+            type: { type: string, enum: [folder, file] }
+            size: { type: integer, minimum: 0 }
+            modifiedAt: { type: string, format: date-time }
+        canReplace: { type: boolean }
+    OperationResult:
+      type: object
+      required: [sourceId, name, outcome]
+      additionalProperties: false
+      properties:
+        sourceId: { type: string }
+        name: { type: string }
+        outcome: { type: string, enum: [done, skipped, failed] }
+        resultId: { type: string }
+        error: { type: string }
+    Operation:
+      type: object
+      required: [id, kind, status, targetId, targetName, itemCount, totalItems, doneItems, totalBytes, doneBytes, conflict, results, error, createdAt, finishedAt]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [copy, move, delete] }
+        status: { type: string, enum: [queued, running, waiting, done, failed, cancelled] }
+        targetId: { type: [string, 'null'] }
+        targetName: { type: [string, 'null'] }
+        itemCount: { type: integer, minimum: 1 }
+        totalItems: { type: integer, minimum: 0 }
+        doneItems: { type: integer, minimum: 0 }
+        totalBytes: { type: integer, minimum: 0 }
+        doneBytes: { type: integer, minimum: 0 }
+        conflict:
+          oneOf:
+            - { $ref: '#/components/schemas/OperationConflict' }
+            - { type: 'null' }
+        results: { type: array, items: { $ref: '#/components/schemas/OperationResult' } }
+        error: { type: [string, 'null'] }
+        createdAt: { type: string, format: date-time }
+        finishedAt: { type: [string, 'null'], format: date-time }
+    CreateOperationRequest:
+      type: object
+      required: [kind, itemIds]
+      additionalProperties: false
+      properties:
+        kind: { type: string, enum: [copy, move, delete] }
+        itemIds: { type: array, minItems: 1, maxItems: 10000, items: { type: string } }
+        targetId: { type: string }
+    ResolveOperationRequest:
+      type: object
+      required: [action, applyToAll]
+      additionalProperties: false
+      properties:
+        action: { type: string, enum: [replace, keepBoth, skip] }
+        applyToAll: { type: boolean }
+    ZipTicket:
+      type: object
+      required: [url, expiresAt]
+      additionalProperties: false
+      properties:
+        url: { type: string }
+        expiresAt: { type: string, format: date-time }
 
     ShareLink:
       type: object

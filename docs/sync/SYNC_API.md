@@ -47,6 +47,7 @@ DocumentsProvider, Linux). All clients build on this document; change it only by
 | `not_found` | 404 | Item or space does not exist (any more), is in the trash, or the user has no access to its space; versions disabled (§10) |
 | `name_conflict` | 409 | Name taken in the target folder (`item` = the existing sibling, when indexed) |
 | `invalid_move` | 400 | Move not possible (folder into itself or into its own subtree) |
+| `invalid_target` | 400 | Bulk copy or move (§8.5) of a folder into itself or one of its subfolders |
 | `invalid_name` | 400 | Name violates the naming rules (§4.3) |
 | `invalid_request` | 400 | Anything else malformed: parameters, body, ids, content type. `415` for `preview-text` of an unsupported type (§9.2) |
 | `cursor_expired` | 410 | Cursor older than the journal retention or ahead of the server → full re-enumeration |
@@ -591,6 +592,10 @@ uploaded with `POST /items/upload?onConflict=rename` into the same folder, named
   invalid `onConflict` → `400 invalid_request`.
 - Large files should use tus (§7); this route is fine for small files and is not resumable.
 
+### 6.5 ZIP of several items
+
+`POST /sync/v1/download-zip` `{ itemIds: string[] }` (1-10 000 distinct files and folders the caller can read; no space roots or duplicates → `400 invalid_request`; no access → `404`; space missing → `503 space_unavailable`) → `200 { url, expiresAt }`. `url` (`/api/sync/v1/zip/<ticket>`) needs no `Authorization`, works **once** and expires after 2 minutes (`404` afterwards). It streams `application/zip`: folders recursively, entry names as on disk; equal top-level names get a suffix ("name (2)"). Access is checked again when the ticket is redeemed; items without access are left out (none left → `404`). File name: `<folder name>.zip` for exactly one folder, else `Synclet-YYYY-MM-DD.zip`.
+
 ---
 
 ## 7. Resumable uploads (tus 1.0)
@@ -714,6 +719,23 @@ Not needed for syncing; offered for clients with a trash UI. Same tokens as the 
   every space" call.
 - `409 conflict` while an entry is being processed (e.g. right after the delete, while its content
   is still being moved into the trash store): retry after a moment.
+
+### 8.5 Bulk operations (`/sync/v1/operations`)
+
+Not needed for syncing; used by the web app for multi-select (copy, move and delete of many items) and open to other clients. An operation runs in the background on the server; clients poll it.
+
+- `POST /sync/v1/operations` `{ kind: "copy" | "move" | "delete", itemIds: string[], targetId? }` → `201 Operation`. `itemIds`: 1-10 000 distinct sync ids of files/folders (no space roots → `400 invalid_request`), from any folders and spaces the caller can access; `targetId` (a folder or space root, needs write) is required for `copy`/`move` and not allowed for `delete` (`400 invalid_request`). Checked synchronously, nothing is created on failure: unknown item or no access → `404`; copy needs read on the sources, move and delete write (`403`); a folder into itself or one of its subfolders → `400 invalid_target`; a copy (or a move between file systems) larger than the free space at the target → `507 insufficient_storage`; a missing space → `503 space_unavailable`.
+- `GET /sync/v1/operations` → the caller's 50 newest operations; `?active=1` only `queued`, `running`, `waiting`.
+- `GET /sync/v1/operations/:id` → `Operation`; operations of other users → `404`.
+- `POST /sync/v1/operations/:id/resolve` `{ action: "replace" | "keepBoth" | "skip", applyToAll: boolean }` → `200 Operation`, only while `waiting` (else `409 conflict`). `applyToAll` answers every further conflict of this operation the same way. `replace` moves the existing item (file or whole folder) to the trash of its space – folders are never merged – for a copy only after the new item has been copied completely (a failed copy leaves the existing item in place), for a move first, then the item is moved. It is refused (`400 invalid_request`, `conflict.canReplace: false`) when the existing item is itself a source of the operation or a folder containing one of the operation's sources. `keepBoth` gives the new item a free name ("Report (2).docx").
+- `POST /sync/v1/operations/:id/cancel` → `200 Operation`; idempotent, finished operations stay unchanged. A running copy stops between two files; items already done stay done.
+
+`Operation`: `{ id, kind, status, targetId, targetName, itemCount, totalItems, doneItems, totalBytes, doneBytes, conflict, results, error, createdAt, finishedAt }`. `targetId`, `targetName`, `conflict`, `error` and `finishedAt` are `null` when not applicable (`delete` has no target; `targetName` is also `null` for the personal space root).
+- `status`: `queued` → `running` → `done` | `failed` | `cancelled`; `waiting` while a name conflict needs an answer (`conflict` is set only then: `{ sourceId, name, source: { type, size, modifiedAt }, existing: { id, type, size, modifiedAt }, canReplace }`).
+- Each top-level source item is processed all or nothing; `results[]` has one entry per finished source item: `{ sourceId, name, outcome: "done" | "skipped" | "failed", resultId?, error? }` (`resultId`: the copy or the moved item; `error`: e.g. `not_found`, `forbidden`, `conflict` = changed while being copied, `read_error`).
+- `error` (whole operation `failed`): `target_missing`, `target_forbidden`, `storage_full`, `space_unavailable`, `internal`.
+- Copies get **new ids**; their content, names and modification times are those of the source; share links and versions are not copied. Copying into the source folder itself always keeps both. `/changes` reports copies and moves as `upsert` (and moves between spaces as `delete` in the source space), deletes as `delete`, like the single-item endpoints.
+- At most one operation per user runs at a time (further ones wait in order); an operation interrupted by a server restart continues where it stopped. Finished operations are removed after 7 days.
 
 ---
 

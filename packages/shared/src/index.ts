@@ -7,7 +7,7 @@ export type SyncErrorCode =
   | 'precondition_required' | 'too_large' | 'range_not_satisfiable' | 'setup_done'
   | 'share_password_required' | 'share_expired' | 'rate_limited' | 'upload_not_allowed'
   | 'office_disabled' | 'sso_not_allowed' | 'password_login_disabled' | 'insufficient_storage'
-  | 'space_unavailable';
+  | 'space_unavailable' | 'invalid_target';
 
 export interface SyncCapabilities {
   read: true; write: boolean; rename: boolean; move: boolean; delete: boolean; addChildren: boolean;
@@ -226,3 +226,57 @@ export interface AdminStatusWire {
 }
 export interface UnassignedFolder { name: string }
 export interface AppTokenResponse extends AuthResponse { refreshToken: string }
+
+// ---- Operations (bulk copy / move / delete, SYNC_API §8.5) --------------------------------------
+export type OperationKind = 'copy' | 'move' | 'delete';
+export type OperationStatus = 'queued' | 'running' | 'waiting' | 'done' | 'failed' | 'cancelled';
+export type ConflictAction = 'replace' | 'keepBoth' | 'skip';
+
+/** One side of a name conflict. `size` of a folder = bytes of its subtree. */
+export interface OperationEntryInfo { type: 'folder' | 'file'; size: number; modifiedAt: string }
+
+export interface OperationConflict {
+  /** Sync id of the source item that conflicts. */
+  sourceId: string;
+  /** The name that is taken in the target folder. */
+  name: string;
+  source: OperationEntryInfo;
+  existing: OperationEntryInfo & { id: string };
+  /** False when the existing item is one of this operation's sources or a folder containing one of them: "replace" is refused. */
+  canReplace: boolean;
+}
+
+export interface OperationResult {
+  sourceId: string;
+  name: string;
+  outcome: 'done' | 'skipped' | 'failed';
+  /** Sync id of the copy / moved item. */
+  resultId?: string;
+  /** Error code of a failed item (a SyncErrorCode or `read_error`). */
+  error?: string;
+}
+
+export interface SyncOperation {
+  id: string;
+  kind: OperationKind;
+  status: OperationStatus;
+  targetId: string | null;
+  /** Name of the target folder (space name for a space root, null for "My files"). */
+  targetName: string | null;
+  /** Number of top-level source items (the selection). */
+  itemCount: number;
+  totalItems: number;
+  doneItems: number;
+  totalBytes: number;
+  doneBytes: number;
+  conflict: OperationConflict | null;
+  results: OperationResult[];
+  /** Why the whole operation stopped: target_missing | target_forbidden | storage_full | space_unavailable | internal. */
+  error: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+}
+
+export interface CreateOperationRequest { kind: OperationKind; itemIds: string[]; targetId?: string }
+export interface ResolveOperationRequest { action: ConflictAction; applyToAll: boolean }
+export interface ZipTicketResponse { url: string; expiresAt: string }

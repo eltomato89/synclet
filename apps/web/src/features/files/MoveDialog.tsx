@@ -1,6 +1,6 @@
 import type { SyncItem, SyncSpaceKind } from '@synclet/shared';
 import { ChevronRight, Folder, House } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FormError } from '@/components/auth/FormError';
 import { Button } from '@/components/ui/button';
@@ -17,7 +17,10 @@ import { ROOT_ID, useSubfolders } from './queries';
 interface Target { id: string; name: string }
 
 interface TreeCtx {
-  item: SyncItem;
+  /** The items being moved: none is a target, and a moved folder's subtree is never shown. */
+  blocked: Set<string>;
+  /** The parent all items share ("Current location"), else null. */
+  currentParent: string | null;
   expanded: Set<string>;
   toggle(id: string): void;
   target: Target | null;
@@ -27,12 +30,12 @@ interface TreeCtx {
 /** `space` marks a top-level node: the root of a space (its icon follows the space kind). */
 function TreeNode({ node, depth, ctx, space }: { node: Target; depth: number; ctx: TreeCtx; space?: SyncSpaceKind }) {
   const { t } = useTranslation();
-  // The item itself can't be a target, and its subtree is never shown (descendants are invalid too).
-  const self = node.id === ctx.item.id;
+  // A moved folder can't be a target, and its subtree is never shown (descendants are invalid too).
+  const self = ctx.blocked.has(node.id);
   const open = ctx.expanded.has(node.id) && !self;
   const { data: children, isPending } = useSubfolders(node.id, open);
   const selected = ctx.target?.id === node.id;
-  const current = node.id === ctx.item.parentId;
+  const current = node.id === ctx.currentParent;
 
   return (
     <li role="none">
@@ -90,10 +93,10 @@ function TreeNode({ node, depth, ctx, space }: { node: Target; depth: number; ct
 }
 
 /** Folder tree picker; children load lazily as nodes expand. */
-export function MoveDialog({ open, onOpenChange, item, expandedIds, onMove, onClosed }: {
+export function MoveDialog({ open, onOpenChange, items, expandedIds, onMove, onClosed }: {
   open: boolean;
   onOpenChange(open: boolean): void;
-  item: SyncItem;
+  items: SyncItem[];
   /** Folders to show expanded initially (the path to the current folder). */
   expandedIds: string[];
   onMove(target: Target): Promise<unknown>;
@@ -113,14 +116,20 @@ export function MoveDialog({ open, onOpenChange, item, expandedIds, onMove, onCl
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const blocked = useMemo(() => new Set(items.map((i) => i.id)), [items]);
+  const parents = new Set(items.map((i) => i.parentId));
+  const currentParent = parents.size === 1 ? [...parents][0] : null;
+  const one = items.length === 1 ? items[0] : null;
+
   const ctx: TreeCtx = {
-    item,
+    blocked,
+    currentParent,
     expanded,
     toggle: (id) => setExpanded((s) => { const n = new Set(s); if (!n.delete(id)) n.add(id); return n; }),
     target,
     setTarget: (tg) => { setTarget(tg); setError(null); },
   };
-  const canSubmit = !!target && target.id !== item.parentId && target.id !== item.id && !pending;
+  const canSubmit = !!target && target.id !== currentParent && !blocked.has(target.id) && !pending;
 
   async function submit() {
     if (!target || !canSubmit) return;
@@ -140,7 +149,7 @@ export function MoveDialog({ open, onOpenChange, item, expandedIds, onMove, onCl
     <Dialog open={open} onOpenChange={(o) => { if (!pending) onOpenChange(o); }}>
       <DialogContent className="gap-5 sm:max-w-lg" onCloseAutoFocus={(e) => { if (onClosed) { e.preventDefault(); onClosed(); } }}>
         <DialogHeader>
-          <DialogTitle className="pr-8 text-lg font-semibold break-all">{t('files.moveDialog.title', { name: item.name })}</DialogTitle>
+          <DialogTitle className="pr-8 text-lg font-semibold break-all">{one ? t('files.moveDialog.title', { name: one.name }) : t('files.moveDialog.titleMany', { count: items.length })}</DialogTitle>
           <DialogDescription>{t('files.moveDialog.description')}</DialogDescription>
         </DialogHeader>
         <div className="h-72 overflow-y-auto rounded-lg border p-1.5">
@@ -157,7 +166,7 @@ export function MoveDialog({ open, onOpenChange, item, expandedIds, onMove, onCl
             <span className="truncate">
               {pending
                 ? t('files.moveDialog.submitting')
-                : target && target.id !== item.parentId
+                : target && target.id !== currentParent
                   ? t('files.moveDialog.submitTo', { name: target.name })
                   : t('files.moveDialog.submit')}
             </span>

@@ -1,5 +1,5 @@
 import type { SyncItem } from '@synclet/shared';
-import { Download, Eye, FilePen, FolderInput, FolderOpen, FolderPlus, FolderUp, History, Lock, MoreHorizontal, PencilLine, Share2, Trash2, Upload } from 'lucide-react';
+import { ClipboardPaste, Copy, Download, Eye, FilePen, FolderInput, FolderOpen, FolderPlus, FolderUp, History, Lock, MoreHorizontal, PencilLine, Share2, Trash2, Upload } from 'lucide-react';
 import type { ComponentType, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { isOfficeFile } from '@/features/office/office';
 import { cn } from '@/lib/utils';
+import { type BulkActions, type BulkCaps, shortcut } from './bulk';
 
 export interface ItemActions {
   open(item: SyncItem): void;
@@ -128,26 +129,47 @@ export function ItemMenuButton({ item, actions, className }: { item: SyncItem; a
 
 /**
  * Content of the right-click menu shared by list and grid: item actions when an item was
- * targeted, otherwise "new folder" / "upload" for the folder itself.
+ * targeted (the bulk actions when it is part of a selection of two or more), otherwise
+ * "new folder" / "upload" / "paste" for the folder itself.
  */
-export function BrowserContextMenu({ item, actions, onNewFolder, onUpload, onUploadFolder, canAdd }: {
+export function BrowserContextMenu({ item, actions, onNewFolder, onUpload, onUploadFolder, canAdd, bulk, paste }: {
   item: SyncItem | null; actions: ItemActions; onNewFolder(): void; onUpload(): void; onUploadFolder(): void; canAdd: boolean;
+  bulk?: { count: number; caps: BulkCaps; actions: BulkActions };
+  paste?: { enabled: boolean; onPaste(): void };
 }) {
   const { t } = useTranslation();
   return (
     <ContextMenuContent className="w-52">
-      {item ? (
+      {item && bulk && bulk.count >= 2 ? (
+        <>
+          <ContextMenuItem onSelect={bulk.actions.download}><Download />{t('files.bulk.download')}</ContextMenuItem>
+          <ContextMenuItem onSelect={bulk.actions.copy}>
+            <Copy />{t('files.bulk.copy')}<ContextMenuShortcut>{shortcut(t, 'C')}</ContextMenuShortcut>
+          </ContextMenuItem>
+          <ContextMenuItem disabled={!bulk.caps.move} onSelect={bulk.actions.move}><FolderInput />{t('files.bulk.move')}</ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem variant="destructive" disabled={!bulk.caps.delete} onSelect={bulk.actions.remove}>
+            <Trash2 />{t('common.delete')}<ContextMenuShortcut>{t('files.shortcutDelete')}</ContextMenuShortcut>
+          </ContextMenuItem>
+        </>
+      ) : item ? (
         <ItemMenuItems item={item} actions={actions} parts={CONTEXT} />
+      ) : canAdd ? (
+        <>
+          <ContextMenuItem onSelect={onNewFolder}><FolderPlus />{t('files.newFolderDialog.title')}</ContextMenuItem>
+          <ContextMenuItem onSelect={onUpload}><Upload />{t('files.uploadFiles')}</ContextMenuItem>
+          <ContextMenuItem onSelect={onUploadFolder}><FolderUp />{t('files.uploadFolder')}</ContextMenuItem>
+          {paste && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem disabled={!paste.enabled} onSelect={paste.onPaste}>
+                <ClipboardPaste />{t('files.bulk.paste')}<ContextMenuShortcut>{shortcut(t, 'V')}</ContextMenuShortcut>
+              </ContextMenuItem>
+            </>
+          )}
+        </>
       ) : (
-        canAdd ? (
-          <>
-            <ContextMenuItem onSelect={onNewFolder}><FolderPlus />{t('files.newFolderDialog.title')}</ContextMenuItem>
-            <ContextMenuItem onSelect={onUpload}><Upload />{t('files.uploadFiles')}</ContextMenuItem>
-            <ContextMenuItem onSelect={onUploadFolder}><FolderUp />{t('files.uploadFolder')}</ContextMenuItem>
-          </>
-        ) : (
-          <ContextMenuItem disabled><Lock />{t('spaces.readOnlyMenu')}</ContextMenuItem>
-        )
+        <ContextMenuItem disabled><Lock />{t('spaces.readOnlyMenu')}</ContextMenuItem>
       )}
     </ContextMenuContent>
   );

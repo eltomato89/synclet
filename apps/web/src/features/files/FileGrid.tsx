@@ -5,7 +5,7 @@ import { formatBytes, formatDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { ItemMenuButton } from './FileActions';
 import { FileIcon, fileKind, FolderBadge, kindStyle } from './FileIcon';
-import { itemTabIndex, useItemPointer, type ViewProps } from './FileList';
+import { itemClick, itemTabIndex, SelectBox, useItemPointer, type ViewProps } from './FileList';
 
 /** Marks a video thumbnail as playable. */
 function PlayBadge() {
@@ -16,7 +16,7 @@ function PlayBadge() {
   );
 }
 
-export function FileGrid({ items, label, selectedId, onSelect, onOpen, actions }: ViewProps) {
+export function FileGrid({ items, label, selectedId, onSelect, onOpen, actions, multi, dnd }: ViewProps) {
   const { i18n } = useTranslation();
   const locale = i18n.language;
   const pointer = useItemPointer();
@@ -25,11 +25,12 @@ export function FileGrid({ items, label, selectedId, onSelect, onOpen, actions }
     <ul
       role="listbox"
       aria-label={label}
+      aria-multiselectable={multi ? true : undefined}
       data-view="grid"
       className="grid grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] gap-3 px-4 pt-4 md:px-6 md:pt-5"
     >
       {items.map((item, i) => {
-        const selected = item.id === selectedId;
+        const selected = multi ? multi.isSelected(item.id) : item.id === selectedId;
         return (
           <li
             key={item.id}
@@ -39,12 +40,17 @@ export function FileGrid({ items, label, selectedId, onSelect, onOpen, actions }
             tabIndex={itemTabIndex(item, i, selectedId)}
             onFocus={() => onSelect(item.id)}
             onPointerDown={pointer.onPointerDown}
-            onClick={() => { if (pointer.isTouch()) onOpen(item); }}
+            onClick={(e) => itemClick(item, e, pointer.isTouch(), onOpen, multi)}
             onDoubleClick={() => onOpen(item)}
+            draggable={!!dnd}
+            onDragStart={dnd ? (e) => dnd.onDragStart(item, e) : undefined}
+            onDragEnd={dnd?.onDragEnd}
+            {...(dnd && item.type === 'folder' ? dnd.target(item) : {})}
             className={cn(
               'group/card relative flex cursor-default flex-col rounded-xl border p-1.5 outline-none select-none transition-colors duration-100',
               'focus-visible:ring-3 focus-visible:ring-ring/50',
               selected ? 'border-primary/40 bg-accent-soft' : 'border-transparent hover:bg-accent/70',
+              'data-[drop=over]:border-primary data-[drop=over]:bg-primary/10',
             )}
           >
             <Thumbnail
@@ -61,6 +67,9 @@ export function FileGrid({ items, label, selectedId, onSelect, onOpen, actions }
                 <FileIcon item={item} strokeWidth={1.25} className="size-12" />
               </div>
             </Thumbnail>
+            {multi && (
+              <SelectBox item={item} multi={multi} selected={selected} className="absolute top-2.5 left-2.5 bg-background/90 shadow-sm" />
+            )}
             <div className="min-w-0 px-1 pt-2 pb-0.5">
               <div className="truncate text-sm font-medium" title={item.name}>{item.name}</div>
               <div className="truncate text-xs text-muted-foreground tabular-nums">

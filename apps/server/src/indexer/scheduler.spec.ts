@@ -137,6 +137,7 @@ describe('SchedulerService', () => {
       expect(restoredWhenScanStarted).toBe(true);
       expect(await scan).toMatchObject({ created: 0, updated: 0, moved: 0, deleted: 0 });
     } finally {
+      await s.initialRun;
       s.onModuleDestroy();
       ctx.config.background = false;
     }
@@ -171,6 +172,7 @@ describe('SchedulerService', () => {
       await boot;
       expect(order).toEqual(['discover', 'cleanup', 'recover:start', 'recover:end', 'watcher', 'deep', 'scan']);
     } finally {
+      await s.initialRun;
       s.onModuleDestroy();
       ctx.config.background = false;
     }
@@ -188,6 +190,7 @@ describe('SchedulerService', () => {
       await s.initialRun;
       expect(order).toEqual(['scan', 'maintenance']);
     } finally {
+      await s.initialRun;
       s.onModuleDestroy();
       ctx.config.background = false;
     }

@@ -91,6 +91,29 @@
     "sortBy": "Nach {{column}} sortieren",
     "itemActions": "Aktionen für {{name}}",
     "listLabel": "Inhalt von {{name}}",
+    "dnd": {
+      "count_one": "{{count}} Element",
+      "count_other": "{{count}} Elemente"
+    },
+    "selection": {
+      "count_one": "{{count}} ausgewählt",
+      "count_other": "{{count}} ausgewählt",
+      "selectItem": "„{{name}}“ auswählen",
+      "selectAll": "Alle auswählen",
+      "clear": "Auswahl aufheben"
+    },
+    "bulk": {
+      "download": "Herunterladen (ZIP)",
+      "copy": "Kopieren",
+      "move": "Verschieben …",
+      "paste": "Einfügen",
+      "cannotMove": "Nicht alle ausgewählten Elemente können verschoben werden",
+      "cannotDelete": "Nicht alle ausgewählten Elemente können gelöscht werden",
+      "copied_one": "{{count}} Element zum Einfügen bereit",
+      "copied_other": "{{count}} Elemente zum Einfügen bereit",
+      "zipFailed": "Der ZIP-Download konnte nicht gestartet werden.",
+      "ctrl": "Strg+{{key}}"
+    },
     "folderCount_one": "{{count}} Ordner",
     "folderCount_other": "{{count}} Ordner",
     "fileCount_one": "{{count}} Datei",
@@ -141,6 +164,8 @@
     },
     "moveDialog": {
       "title": "„{{name}}“ verschieben",
+      "titleMany_one": "{{count}} Element verschieben",
+      "titleMany_other": "{{count}} Elemente verschieben",
       "description": "Wähle den Ordner, in den du verschieben möchtest.",
       "submit": "Hierher verschieben",
       "submitTo": "Nach „{{name}}“ verschieben",
@@ -156,7 +181,10 @@
       "fileBody": "Die Datei wird in den Papierkorb verschoben und verschwindet von allen verbundenen Geräten.",
       "folderBody": "Der Ordner und alles darin werden in den Papierkorb verschoben und verschwinden von allen verbundenen Geräten.",
       "submit": "In den Papierkorb",
-      "submitting": "Wird gelöscht …"
+      "submitting": "Wird gelöscht …",
+      "titleMany_one": "{{count}} Element in den Papierkorb verschieben?",
+      "titleMany_other": "{{count}} Elemente in den Papierkorb verschieben?",
+      "manyBody": "Die Elemente werden in den Papierkorb verschoben und verschwinden von allen verbundenen Geräten."
     },
     "toast": {
       "deleted": "„{{name}}“ liegt jetzt im Papierkorb",
@@ -184,7 +212,9 @@
       "network": "Keine Verbindung zum Server.",
       "unknown": "Das hat nicht geklappt. Versuch es noch einmal.",
       "upload_expired": "Der unterbrochene Upload ist abgelaufen. Lade die Datei noch einmal hoch.",
-      "space_unavailable": "Der Bereich ist gerade nicht verfügbar."
+      "space_unavailable": "Der Bereich ist gerade nicht verfügbar.",
+      "invalid_target": "Ein Ordner kann nicht in sich selbst kopiert oder verschoben werden.",
+      "insufficient_storage": "Am Ziel ist nicht genug Speicherplatz frei."
     },
     "uploads": {
       "region": "Uploads",
@@ -290,6 +320,19 @@
     "errors": {
       "conflict": "Dieses Element wird noch in den Papierkorb verschoben. Versuch es gleich noch einmal.",
       "not_found": "Dieses Element ist nicht mehr im Papierkorb."
+    },
+    "bulk": {
+      "restore": "Wiederherstellen",
+      "deleteForever": "Endgültig löschen",
+      "restored_one": "{{count}} Element wiederhergestellt",
+      "restored_other": "{{count}} Elemente wiederhergestellt",
+      "deleted_one": "{{count}} Element endgültig gelöscht",
+      "deleted_other": "{{count}} Elemente endgültig gelöscht",
+      "partialRestore": "{{ok}} wiederhergestellt, {{failed}} fehlgeschlagen",
+      "partialDelete": "{{ok}} gelöscht, {{failed}} fehlgeschlagen",
+      "confirmTitle_one": "{{count}} Element endgültig löschen?",
+      "confirmTitle_other": "{{count}} Elemente endgültig löschen?",
+      "confirmBody": "Die Elemente werden mit allen Versionen gelöscht. Das lässt sich nicht rückgängig machen."
     }
   },
   "shares": {
@@ -1184,6 +1227,79 @@
       "restore": {
         "action": "Wieder aufnehmen"
       }
+    }
+  },
+  "operations": {
+    "region": "Aufträge",
+    "title": {
+      "copy_one": "Kopiere {{count}} Element nach „{{target}}“",
+      "copy_other": "Kopiere {{count}} Elemente nach „{{target}}“",
+      "move_one": "Verschiebe {{count}} Element nach „{{target}}“",
+      "move_other": "Verschiebe {{count}} Elemente nach „{{target}}“",
+      "delete_one": "Lösche {{count}} Element",
+      "delete_other": "Lösche {{count}} Elemente"
+    },
+    "result": {
+      "copy": "{{done}} von {{count}} kopiert",
+      "move": "{{done}} von {{count}} verschoben",
+      "delete": "{{done}} von {{count}} gelöscht",
+      "copyAll_one": "{{count}} Element kopiert",
+      "copyAll_other": "{{count}} Elemente kopiert",
+      "moveAll_one": "{{count}} Element verschoben",
+      "moveAll_other": "{{count}} Elemente verschoben",
+      "deleteAll_one": "{{count}} Element gelöscht",
+      "deleteAll_other": "{{count}} Elemente gelöscht",
+      "skipped_one": "{{count}} übersprungen",
+      "skipped_other": "{{count}} übersprungen"
+    },
+    "toast": {
+      "copy_one": "{{count}} Element kopiert",
+      "copy_other": "{{count}} Elemente kopiert",
+      "move_one": "{{count}} Element verschoben",
+      "move_other": "{{count}} Elemente verschoben",
+      "delete_one": "{{count}} Element gelöscht",
+      "delete_other": "{{count}} Elemente gelöscht"
+    },
+    "status": {
+      "queued": "Wartet …",
+      "waiting": "Wartet auf Entscheidung",
+      "cancelled": "Abgebrochen",
+      "offline": "Verbindung unterbrochen – der Auftrag läuft auf dem Server weiter."
+    },
+    "failed": {
+      "target_missing": "Der Zielordner ist nicht mehr da.",
+      "target_forbidden": "Am Ziel fehlt die Schreibberechtigung.",
+      "storage_full": "Der Speicher am Ziel ist voll.",
+      "space_unavailable": "Der Bereich ist gerade nicht verfügbar.",
+      "internal": "Unerwarteter Fehler auf dem Server."
+    },
+    "itemError": {
+      "not_found": "nicht mehr vorhanden",
+      "forbidden": "keine Berechtigung",
+      "conflict": "während des Kopierens geändert",
+      "read_error": "konnte nicht gelesen werden",
+      "name_conflict": "Name inzwischen vergeben",
+      "unknown": "fehlgeschlagen"
+    },
+    "myFiles": "Meine Dateien",
+    "cancel": "Abbrechen",
+    "decide": "Entscheiden",
+    "showErrors": "Fehler anzeigen",
+    "hideErrors": "Fehler ausblenden",
+    "close": "Schließen",
+    "conflict": {
+      "title": "„{{name}}“ gibt es in „{{target}}“ schon",
+      "description": "Was soll mit dem Element passieren?",
+      "new": "Neu",
+      "existing": "Vorhanden",
+      "folder": "Ordner",
+      "file": "Datei",
+      "replace": "Ersetzen",
+      "replaceHint": "Das vorhandene Element kommt in den Papierkorb.",
+      "keepBoth": "Beide behalten",
+      "skip": "Überspringen",
+      "applyToAll": "Für alle weiteren Konflikte übernehmen",
+      "cancelOperation": "Auftrag abbrechen"
     }
   }
 }

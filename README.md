@@ -27,6 +27,7 @@
 
 - Browse, upload, download, move and delete files in the web app; sync clients via the sync API.
 - **Trash:** deleting through Synclet moves items to the trash; they are restorable for 30 days (`SYNCLET_TRASH_RETENTION_DAYS`), then removed for good.
+- **Multi-select (web):** select many files and folders (⌘/Ctrl-click, Shift ranges, checkboxes, keyboard) to delete, move, copy and paste, or download them as one ZIP; drag them onto a folder (⌥/Ctrl copies). Bulk operations run on the server in the background, survive a reload and ask what to do when a name is taken.
 - **Shares:** public links to a file or folder, optionally with password and expiry.
 - **Previews:** thumbnails and in-browser previews for images (including HEIC), video, PDF, text and code. Office documents (`docx`, `xlsx`, `pptx`, `odt`, `ods`, `odp`) get no visual preview (they can be edited with the optional Office setup); their text is extracted for search only.
 - **Search:** file names and extracted text content.

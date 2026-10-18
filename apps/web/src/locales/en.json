@@ -91,6 +91,29 @@
     "sortBy": "Sort by {{column}}",
     "itemActions": "Actions for {{name}}",
     "listLabel": "Contents of {{name}}",
+    "dnd": {
+      "count_one": "{{count}} item",
+      "count_other": "{{count}} items"
+    },
+    "selection": {
+      "count_one": "{{count}} selected",
+      "count_other": "{{count}} selected",
+      "selectItem": "Select “{{name}}”",
+      "selectAll": "Select all",
+      "clear": "Clear selection"
+    },
+    "bulk": {
+      "download": "Download (ZIP)",
+      "copy": "Copy",
+      "move": "Move …",
+      "paste": "Paste",
+      "cannotMove": "Not all selected items can be moved",
+      "cannotDelete": "Not all selected items can be deleted",
+      "copied_one": "{{count}} item ready to paste",
+      "copied_other": "{{count}} items ready to paste",
+      "zipFailed": "The ZIP download couldn’t be started.",
+      "ctrl": "Ctrl+{{key}}"
+    },
     "folderCount_one": "{{count}} folder",
     "folderCount_other": "{{count}} folders",
     "fileCount_one": "{{count}} file",
@@ -141,6 +164,8 @@
     },
     "moveDialog": {
       "title": "Move “{{name}}”",
+      "titleMany_one": "Move {{count}} item",
+      "titleMany_other": "Move {{count}} items",
       "description": "Choose the folder to move it to.",
       "submit": "Move here",
       "submitTo": "Move to “{{name}}”",
@@ -156,7 +181,10 @@
       "fileBody": "The file moves to the trash and disappears from all connected devices.",
       "folderBody": "The folder and everything in it move to the trash and disappear from all connected devices.",
       "submit": "Move to trash",
-      "submitting": "Deleting …"
+      "submitting": "Deleting …",
+      "titleMany_one": "Move {{count}} item to the trash?",
+      "titleMany_other": "Move {{count}} items to the trash?",
+      "manyBody": "The items move to the trash and disappear from all connected devices."
     },
     "toast": {
       "deleted": "“{{name}}” moved to the trash",
@@ -184,7 +212,9 @@
       "server_error": "The server sent an unexpected response.",
       "unknown": "That didn't work. Try again.",
       "upload_expired": "The interrupted upload has expired. Upload the file again.",
-      "space_unavailable": "This space is not available right now."
+      "space_unavailable": "This space is not available right now.",
+      "invalid_target": "A folder can’t be copied or moved into itself.",
+      "insufficient_storage": "There isn’t enough free space at the destination."
     },
     "uploads": {
       "region": "Uploads",
@@ -290,6 +320,19 @@
     "errors": {
       "conflict": "This item is still being moved to the trash. Try again in a moment.",
       "not_found": "This item isn't in the trash anymore."
+    },
+    "bulk": {
+      "restore": "Restore",
+      "deleteForever": "Delete forever",
+      "restored_one": "{{count}} item restored",
+      "restored_other": "{{count}} items restored",
+      "deleted_one": "{{count}} item deleted forever",
+      "deleted_other": "{{count}} items deleted forever",
+      "partialRestore": "{{ok}} restored, {{failed}} failed",
+      "partialDelete": "{{ok}} deleted, {{failed}} failed",
+      "confirmTitle_one": "Delete {{count}} item forever?",
+      "confirmTitle_other": "Delete {{count}} items forever?",
+      "confirmBody": "The items and all their versions are deleted. This can’t be undone."
     }
   },
   "shares": {
@@ -1184,6 +1227,79 @@
       "restore": {
         "action": "Restore"
       }
+    }
+  },
+  "operations": {
+    "region": "Operations",
+    "title": {
+      "copy_one": "Copying {{count}} item to “{{target}}”",
+      "copy_other": "Copying {{count}} items to “{{target}}”",
+      "move_one": "Moving {{count}} item to “{{target}}”",
+      "move_other": "Moving {{count}} items to “{{target}}”",
+      "delete_one": "Deleting {{count}} item",
+      "delete_other": "Deleting {{count}} items"
+    },
+    "result": {
+      "copy": "{{done}} of {{count}} copied",
+      "move": "{{done}} of {{count}} moved",
+      "delete": "{{done}} of {{count}} deleted",
+      "copyAll_one": "{{count}} item copied",
+      "copyAll_other": "{{count}} items copied",
+      "moveAll_one": "{{count}} item moved",
+      "moveAll_other": "{{count}} items moved",
+      "deleteAll_one": "{{count}} item deleted",
+      "deleteAll_other": "{{count}} items deleted",
+      "skipped_one": "{{count}} skipped",
+      "skipped_other": "{{count}} skipped"
+    },
+    "toast": {
+      "copy_one": "{{count}} item copied",
+      "copy_other": "{{count}} items copied",
+      "move_one": "{{count}} item moved",
+      "move_other": "{{count}} items moved",
+      "delete_one": "{{count}} item deleted",
+      "delete_other": "{{count}} items deleted"
+    },
+    "status": {
+      "queued": "Waiting …",
+      "waiting": "Waiting for your decision",
+      "cancelled": "Cancelled",
+      "offline": "Connection lost – the operation continues on the server."
+    },
+    "failed": {
+      "target_missing": "The destination folder is gone.",
+      "target_forbidden": "You can’t write to the destination.",
+      "storage_full": "The destination is full.",
+      "space_unavailable": "This space is unavailable right now.",
+      "internal": "Unexpected server error."
+    },
+    "itemError": {
+      "not_found": "no longer exists",
+      "forbidden": "no permission",
+      "conflict": "changed while copying",
+      "read_error": "couldn’t be read",
+      "name_conflict": "name taken meanwhile",
+      "unknown": "failed"
+    },
+    "myFiles": "My files",
+    "cancel": "Cancel",
+    "decide": "Decide",
+    "showErrors": "Show errors",
+    "hideErrors": "Hide errors",
+    "close": "Close",
+    "conflict": {
+      "title": "“{{name}}” already exists in “{{target}}”",
+      "description": "What should happen to this item?",
+      "new": "New",
+      "existing": "Existing",
+      "folder": "Folder",
+      "file": "File",
+      "replace": "Replace",
+      "replaceHint": "The existing item goes to the trash.",
+      "keepBoth": "Keep both",
+      "skip": "Skip",
+      "applyToAll": "Do this for all remaining conflicts",
+      "cancelOperation": "Cancel operation"
     }
   }
 }

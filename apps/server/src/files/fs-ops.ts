@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { cp, link, lstat, open, rename, rm, unlink } from 'node:fs/promises';
+import { cp, link, lstat, mkdir, open, readdir, realpath, rename, rm, unlink, utimes } from 'node:fs/promises';
 import path from 'node:path';
 import { nameKey, tempName } from '../common/names';
 
@@ -34,8 +34,8 @@ export async function copyNoReplace(src: string, dst: string): Promise<void> {
         if (bytesRead === 0) break;
         for (let off = 0; off < bytesRead;) off += (await dfh.write(buf, off, bytesRead - off)).bytesWritten;
       }
-      const st = await sfh.stat();
-      await dfh.utimes(st.atime, st.mtime);
+      const st = await sfh.stat({ bigint: true });
+      await dfh.utimes(st.atime, msSeconds(st));
       await dfh.sync();
       await dfh.close();
     } catch (e) {
@@ -141,11 +141,85 @@ export async function moveAcrossFs(src: string, dst: string, move: (src: string,
 }
 
 /**
+ * mtime as seconds, floored to the millisecond like the indexer's `Number(mtimeMs)` and nudged a tenth of a
+ * millisecond up: seconds -> timespec can land just below the millisecond (974.9999) and be read one ms early.
+ */
+const msSeconds = (st: { mtimeNs: bigint }) => (Number(st.mtimeNs / 1_000_000n) + 0.1) / 1000;
+
+/**
  * Copies a file or folder tree to the new path `dst` (refuses an existing `dst`), keeping
  * timestamps and symlinks verbatim. The caller owns `dst` and removes it on failure.
  */
 export async function copyTree(src: string, dst: string): Promise<void> {
   await cp(src, dst, { recursive: true, preserveTimestamps: true, errorOnExist: true, force: false, verbatimSymlinks: true });
+}
+
+const abortError = () => Object.assign(new Error('aborted'), { name: 'AbortError' });
+
+/** Like copyNoReplace, but reports written bytes after every chunk. */
+async function copyFileTracked(src: string, dst: string, buf: Buffer, onBytes?: (n: number) => void): Promise<void> {
+  if (!onBytes) return copyNoReplace(src, dst);
+  const sfh = await open(src, 'r');
+  try {
+    const dfh = await open(dst, 'wx', 0o666).catch((e) => Promise.reject(code(e) === 'EEXIST' ? eexist(dst) : e));
+    let ours: bigint | null = null;
+    try {
+      ours = (await dfh.stat({ bigint: true })).ino;
+      for (;;) {
+        const { bytesRead } = await sfh.read(buf, 0, buf.length, null);
+        if (bytesRead === 0) break;
+        for (let off = 0; off < bytesRead;) off += (await dfh.write(buf, off, bytesRead - off)).bytesWritten;
+        onBytes(bytesRead);
+      }
+      const st = await sfh.stat({ bigint: true });
+      await dfh.utimes(st.atime, msSeconds(st));
+      await dfh.sync();
+      await dfh.close();
+    } catch (e) {
+      await dfh.close().catch(() => {});
+      const now = await lstatOrNull(dst).catch(() => null);
+      if (ours !== null && now && now.ino === ours) await unlink(dst).catch(() => {});
+      throw e;
+    }
+  } finally {
+    await sfh.close().catch(() => {});
+  }
+}
+
+/**
+ * Copies a file or folder tree to the new path `dst` (refuses an existing `dst`) for bulk copies:
+ * file contents and mtimes like copyNoReplace (fsynced), folder mtimes set after their content,
+ * symlinks and special files skipped (the index never follows them). `onBytes` gets the byte count
+ * of each chunk written (not a running total); `signal` stops between two files (AbortError).
+ * Refuses a `dst` inside `src` (EINVAL) before anything is created. The caller owns `dst`
+ * and removes it on failure.
+ */
+export async function copyTreeTracked(src: string, dst: string, opts: { onBytes?(n: number): void; signal?: AbortSignal } = {}): Promise<void> {
+  // Real paths, so a destination reached through a symlinked ancestor is caught too.
+  const from0 = await realpath(src);
+  const to0 = path.join(await realpath(path.dirname(dst)), path.basename(dst));
+  if (to0 === from0 || to0.startsWith(from0 + path.sep)) {
+    throw Object.assign(new Error(`EINVAL: cannot copy ${src} into itself`), { code: 'EINVAL' });
+  }
+  const buf = Buffer.allocUnsafe(1 << 20);
+  const walk = async (from: string, to: string): Promise<void> => {
+    if (opts.signal?.aborted) throw abortError();
+    const st = await lstat(from, { bigint: true });
+    if (st.isFile()) {
+      await copyFileTracked(from, to, buf, opts.onBytes);
+      return;
+    }
+    if (!st.isDirectory()) return; // symlink, socket, device: not copied
+    try {
+      await mkdir(to, { mode: 0o777 });
+    } catch (e) {
+      if (code(e) === 'EEXIST') throw eexist(to);
+      throw e;
+    }
+    for (const name of (await readdir(from)).sort()) await walk(path.join(from, name), path.join(to, name));
+    await utimes(to, st.atime, msSeconds(st));
+  };
+  await walk(src, dst);
 }
 
 /** The cross-device half of `moveAcrossFs` (exported for tests): copy to an ignored temp, publish no-replace, remove `src`. */

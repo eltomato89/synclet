@@ -1,6 +1,6 @@
 import type { OfficeNewFormat, SyncAccount, SyncItem } from '@synclet/shared';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { FilePlus, FileSpreadsheet, FileText, FolderPlus, FolderUp, LayoutGrid, List, Plus, Presentation, Share2, Upload } from 'lucide-react';
+import { ClipboardPaste, FilePlus, FileSpreadsheet, FileText, FolderPlus, FolderUp, LayoutGrid, List, Plus, Presentation, Share2, Upload } from 'lucide-react';
 import { type KeyboardEvent, lazy, type MouseEvent, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useParams } from 'react-router';
@@ -15,23 +15,29 @@ import {
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Breadcrumbs } from '@/features/files/Breadcrumbs';
+import { type BulkActions, bulkCaps, downloadZip, shortcut } from '@/features/files/bulk';
+import { useClipboard } from '@/features/files/clipboard';
+import { useItemDnd } from '@/features/files/dnd';
 import { DropZone } from '@/features/files/DropZone';
 import { EmptyState, SkeletonRows, StatusMessage } from '@/features/files/EmptyState';
 import { errorKey } from '@/features/files/errors';
 import { BrowserContextMenu, canShare, type ItemActions } from '@/features/files/FileActions';
 import { FileGrid } from '@/features/files/FileGrid';
-import { FileList } from '@/features/files/FileList';
+import { FileList, type MultiSelect } from '@/features/files/FileList';
 import { FolderConflictDialog } from '@/features/files/FolderConflictDialog';
 import { pickedFromInputFiles } from '@/features/files/folderUpload';
 import {
   folderPath, ROOT_ID, type SortDir, type SortKey, sortItems, useAncestors, useFileMutations, useFolder,
 } from '@/features/files/queries';
 import { useRevealParam } from '@/features/files/reveal';
+import { SelectionBar } from '@/features/files/SelectionBar';
+import { type SelectionAction, useSelection } from '@/features/files/selection';
 import { UploadPanel } from '@/features/files/UploadPanel';
 import { getUploadQueue, type UploadQueue } from '@/features/files/uploads';
 import { useFolderUpload } from '@/features/files/useFolderUpload';
 import { MORE_FORMATS, openOfficeTab, PRIMARY_FORMATS, reserveOfficeTab } from '@/features/office/office';
 import { useCapabilities, useCreateOfficeFile } from '@/features/office/queries';
+import { useOperations } from '@/features/operations/OperationsProvider';
 import { quickLookEntries } from '@/features/preview/navigation';
 import { isPreviewable, syncPreviewSource } from '@/features/preview/source';
 import { ReadOnlyBanner } from '@/features/spaces/ReadOnlyBanner';
@@ -75,7 +81,9 @@ const notify = {
   error: (msg: string) => toast.error(msg, { position: 'bottom-center' }),
 };
 
-type DialogState = { kind: 'newFolder' } | { kind: 'newOffice'; format: OfficeNewFormat } | { kind: 'rename' | 'move' | 'delete' | 'share' | 'versions'; item: SyncItem };
+type DialogState = { kind: 'newFolder' } | { kind: 'newOffice'; format: OfficeNewFormat }
+  | { kind: 'rename' | 'move' | 'delete' | 'share' | 'versions'; item: SyncItem }
+  | { kind: 'moveMany' | 'deleteMany'; items: SyncItem[] };
 
 export function FilesPage() {
   const { folderId = ROOT_ID } = useParams();
@@ -130,11 +138,12 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   const mutations = useFileMutations();
   const createOffice = useCreateOfficeFile();
   const capabilities = useCapabilities();
+  const ops = useOperations();
+  const clipboard = useClipboard();
   const officeEnabled = capabilities.office.enabled;
 
   const [view, setViewState] = useState<View>(() => readPref(VIEW_KEY, 'list', (v) => v === 'list' || v === 'grid'));
   const [sort, setSort] = useState<Sort>(() => readPref(SORT_KEY, { key: 'name', dir: 'asc' }, isSort));
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<(DialogState & { open: boolean; n: number }) | null>(null);
   const [menuItem, setMenuItem] = useState<SyncItem | null>(null);
   const [quickLook, setQuickLook] = useState<{ id: string; open: boolean } | null>(null);
@@ -142,8 +151,6 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   const folderInput = useRef<HTMLInputElement>(null);
   const viewRef = useRef<HTMLDivElement>(null);
   const focusAfterRender = useRef<string | null>(null);
-  const selectedRef = useRef(selectedId);
-  selectedRef.current = selectedId;
 
   const folder = folderQ.data?.folder;
   const folderName = !folder ? '' : folder.kind === 'root' && spaceOfItem(folder) === PERSONAL ? t('shell.myFiles') : folder.name;
@@ -154,6 +161,22 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
     () => (folderQ.data ? sortItems(folderQ.data.items, sort.key, sort.dir, i18n.language) : []),
     [folderQ.data, sort, i18n.language],
   );
+  const order = useMemo(() => items.map((i) => i.id), [items]);
+  const sel = useSelection(order);
+  // Checkbox selection mode (touch taps toggle): started by a checkbox, ended when the selection is
+  // replaced (plain click, `only`, clear) or becomes empty.
+  const [checking, setChecking] = useState(false);
+  useEffect(() => { if (sel.count === 0) setChecking(false); }, [sel.count]);
+  const dispatch = useCallback((a: SelectionAction) => {
+    if (a.type === 'only' || a.type === 'clear' || (a.type === 'click' && !a.toggle)) setChecking(false);
+    sel.dispatch(a);
+  }, [sel.dispatch]);
+  const focusId = sel.state.focus;
+  const focusRef = useRef(focusId);
+  focusRef.current = focusId;
+  const selectedItems = useMemo(() => items.filter((i) => sel.state.selected.has(i.id)), [items, sel.state.selected]);
+  /** Selects just `item` unless it is part of the selection already (menus, right-click). */
+  const select = (item: SyncItem) => { if (!sel.isSelected(item.id)) dispatch({ type: 'only', id: item.id }); };
 
   useEffect(() => {
     if (!folderName) return;
@@ -174,14 +197,16 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
 
   const setView = (v: View) => { setViewState(v); writePref(VIEW_KEY, v); };
 
-  // ---- focus & selection: the focused row/card is the selection --------------------------------
+  // ---- focus & selection: one focused row/card (roving tabindex), any number selected ----------
   const itemEl = (id: string) => viewRef.current?.querySelector<HTMLElement>(`[data-item-id="${CSS.escape(id)}"]`);
-  const focusItem = useCallback((id: string) => {
+  /** Moves DOM focus to an item (later, when it is not rendered yet). */
+  const focusEl = useCallback((id: string) => {
     const el = itemEl(id);
-    setSelectedId(id);
     if (el) { el.focus({ preventScroll: true }); el.scrollIntoView({ block: 'nearest' }); }
-    else focusAfterRender.current = id; // not rendered yet (e.g. just created)
+    else focusAfterRender.current = id;
   }, []);
+  /** Selects only `id` and focuses it (created, revealed, after a dialog). */
+  const focusItem = useCallback((id: string) => { dispatch({ type: 'only', id }); focusEl(id); }, [dispatch, focusEl]);
   useEffect(() => {
     const id = focusAfterRender.current;
     const el = id ? itemEl(id) : null;
@@ -192,10 +217,10 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
     focusItem(item.id);
     if (isPreviewable(item)) preview(item);
   });
-  /** After a dialog closes, focus goes back to the selection so the keyboard keeps working. */
+  /** After a dialog closes, focus goes back to the focused item (the selection stays) so the keyboard keeps working. */
   const restoreFocus = () => {
-    const sel = selectedRef.current;
-    if (sel) focusItem(sel);
+    const f = focusRef.current;
+    if (f) focusEl(f);
     else viewRef.current?.querySelector<HTMLElement>('[data-item-id]')?.focus({ preventScroll: true });
   };
 
@@ -220,7 +245,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   };
   const preview = (item: SyncItem) => {
     if (item.type !== 'file') return;
-    setSelectedId(item.id);
+    dispatch({ type: 'focus', id: item.id }); // QuickLook leaves the selection alone
     setQuickLook({ id: item.id, open: true });
   };
   /** Double-click / tap: folders open, previewable files show QuickLook, anything else downloads. */
@@ -229,14 +254,42 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   const actions: ItemActions = {
     open,
     preview,
-    rename: (item) => { setSelectedId(item.id); if (item.capabilities.rename) openDialog({ kind: 'rename', item }); },
-    move: (item) => { setSelectedId(item.id); if (item.capabilities.move) openDialog({ kind: 'move', item }); },
-    remove: (item) => { setSelectedId(item.id); if (item.capabilities.delete) openDialog({ kind: 'delete', item }); },
-    share: (item) => { setSelectedId(item.id); if (canShare(item)) openDialog({ kind: 'share', item }); },
+    rename: (item) => { select(item); if (item.capabilities.rename) openDialog({ kind: 'rename', item }); },
+    move: (item) => { select(item); if (item.capabilities.move) openDialog({ kind: 'move', item }); },
+    remove: (item) => { select(item); if (item.capabilities.delete) openDialog({ kind: 'delete', item }); },
+    share: (item) => { select(item); if (canShare(item)) openDialog({ kind: 'share', item }); },
     openInOffice: officeEnabled ? (item) => openOfficeTab(item.id) : undefined,
-    versions: capabilities.versions ? (item) => { setSelectedId(item.id); if (item.type === 'file') openDialog({ kind: 'versions', item }); } : undefined,
+    versions: capabilities.versions ? (item) => { select(item); if (item.type === 'file') openDialog({ kind: 'versions', item }); } : undefined,
   };
-  const selectedItem = items.find((i) => i.id === selectedId) ?? null;
+  const selectedItem = selectedItems.length === 1 ? selectedItems[0] : null;
+  // Actions on the whole selection; copy, move and delete run as server operations.
+  const caps = bulkCaps(selectedItems);
+  const bulk: BulkActions = {
+    download: () => { downloadZip(selectedItems).catch(() => notify.error(t('files.bulk.zipFailed'))); },
+    copy: () => {
+      if (!selectedItems.length) return;
+      clipboard.copy(selectedItems.map((i) => i.id), folderId);
+      notify.success(t('files.bulk.copied', { count: selectedItems.length }));
+    },
+    move: () => { if (caps.move && selectedItems.length) openDialog({ kind: 'moveMany', items: selectedItems }); },
+    remove: () => { if (caps.delete && selectedItems.length) openDialog({ kind: 'deleteMany', items: selectedItems }); },
+  };
+  const canPaste = canAdd && !!clipboard.content;
+  const paste = () => {
+    const c = clipboard.content;
+    if (!canAdd || !c) return;
+    void ops.start({ kind: 'copy', itemIds: c.itemIds, targetId: folderId });
+  };
+  // Dragging onto a folder or breadcrumb segment moves; ⌥/Ctrl (or items that cannot move) copies.
+  const dnd = useItemDnd({
+    folderId,
+    selectedItems,
+    label: (count) => t('files.dnd.count', { count }),
+    onDrop: (targetId, ids, copy) => {
+      void ops.start({ kind: copy ? 'copy' : 'move', itemIds: ids, targetId });
+      if (!copy) dispatch({ type: 'clear' });
+    },
+  });
   const startUpload = () => fileInput.current?.click();
   const startFolderUpload = () => folderInput.current?.click();
   const newFolder = () => { if (canAdd) openDialog({ kind: 'newFolder' }); };
@@ -272,46 +325,93 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
     const target = e.target as HTMLElement;
     // Ignore keys from portalled menus/dialogs (React bubbles them here) and from controls in rows.
-    if (!e.currentTarget.contains(target) || target.closest('button, input, textarea, [role="menu"]')) return;
-    if (e.altKey || ((e.ctrlKey || e.metaKey) && e.key !== 'Backspace')) return;
-    const idx = items.findIndex((i) => i.id === selectedId);
-    const sel = idx >= 0 ? items[idx] : null;
+    if (!e.currentTarget.contains(target) || target.closest('button:not([data-slot="checkbox"]), input, textarea, [role="menu"]')) return;
+    if (e.altKey) return;
+    // A checkbox handles Space/Enter itself (it should not have focus, but never act twice).
+    if ((e.key === ' ' || e.key === 'Enter') && target.closest('[data-slot="checkbox"]')) return;
+    const mod = e.metaKey || e.ctrlKey;
+    const idx = items.findIndex((i) => i.id === focusId);
+    const cur = idx >= 0 ? items[idx] : null;
     const cols = view === 'grid' ? gridColumns() : 1;
-    const go = (i: number) => { if (items.length) focusItem(items[Math.min(items.length - 1, Math.max(0, i))].id); };
+    /** Arrows: plain moves the selection, Shift extends it, ⌘/Ctrl moves only the focus. */
+    const nav = (i: number) => {
+      if (!items.length) return;
+      const id = items[Math.min(items.length - 1, Math.max(0, i))].id;
+      dispatch({ type: 'move', to: id, extend: e.shiftKey, focusOnly: mod && !e.shiftKey });
+      focusEl(id);
+    };
     switch (e.key) {
-      case 'ArrowDown': go(idx < 0 ? 0 : idx + cols); break;
-      case 'ArrowUp': go(idx < 0 ? 0 : idx - cols); break;
-      case 'ArrowRight': if (view !== 'grid') return; go(idx + 1); break;
-      case 'ArrowLeft': if (view !== 'grid') return; go(idx < 0 ? 0 : idx - 1); break;
-      case 'Home': go(0); break;
-      case 'End': go(items.length - 1); break;
-      case 'Enter': if (!sel) return; open(sel); break;
-      case ' ': if (sel?.type !== 'file') return; preview(sel); break;
-      case 'F2': if (!sel) return; actions.rename(sel); break;
-      case 'Delete': case 'Backspace': if (!sel) return; actions.remove(sel); break;
-      case 'Escape': if (!sel) return; setSelectedId(null); break;
+      case 'ArrowDown': nav(idx < 0 ? 0 : idx + cols); break;
+      case 'ArrowUp': nav(idx < 0 ? 0 : idx - cols); break;
+      case 'ArrowRight': if (view !== 'grid') return; nav(idx + 1); break;
+      case 'ArrowLeft': if (view !== 'grid') return; nav(idx < 0 ? 0 : idx - 1); break;
+      case 'Home': nav(0); break;
+      case 'End': nav(items.length - 1); break;
+      case 'a': case 'A': if (!mod) return; dispatch({ type: 'all' }); break;
+      case 'c': case 'C': if (!mod) return; bulk.copy(); break;
+      case 'v': case 'V': if (!mod) return; paste(); break;
+      case 'Enter': if (!cur || mod) return; open(cur); break;
+      case ' ':
+        if (mod) { dispatch({ type: 'toggleFocus' }); break; }
+        if (cur?.type !== 'file') return;
+        preview(cur);
+        break;
+      case 'F2': if (!cur || mod) return; actions.rename(cur); break;
+      case 'Delete': case 'Backspace': {
+        // Acts on the selection only: none selected, nothing to delete.
+        if (selectedItems.length >= 2) { bulk.remove(); break; }
+        const one = selectedItems.length === 1 ? selectedItems[0] : null;
+        if (!one) return;
+        actions.remove(one);
+        break;
+      }
+      case 'Escape': if (sel.count === 0) return; dispatch({ type: 'clear' }); break;
       default: return;
     }
     e.preventDefault();
   }
 
+  // ⌘A / ⌘V also when nothing in the listing has focus (the body after opening a folder, an empty
+  // folder). Keys the listing handled itself (default prevented, or from inside it) are left alone,
+  // as are fields, open dialogs and menus.
+  const pageKeys = useRef({ selectAll: () => {}, paste });
+  pageKeys.current = { selectAll: () => { if (items.length) dispatch({ type: 'all' }); }, paste };
+  useEffect(() => {
+    const onDocKeyDown = (e: globalThis.KeyboardEvent) => {
+      if (e.defaultPrevented || e.altKey || e.shiftKey || !(e.metaKey || e.ctrlKey)) return;
+      const key = e.key.toLowerCase();
+      if (key !== 'a' && key !== 'v') return;
+      const target = e.target instanceof HTMLElement ? e.target : null;
+      if (target && (viewRef.current?.contains(target) || target.isContentEditable || target.closest('input, textarea, select, [role="dialog"], [role="alertdialog"], [role="menu"]'))) return;
+      if (document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')) return;
+      e.preventDefault();
+      if (key === 'a') pageKeys.current.selectAll();
+      else pageKeys.current.paste();
+    };
+    document.addEventListener('keydown', onDocKeyDown);
+    return () => document.removeEventListener('keydown', onDocKeyDown);
+  }, []);
+
   function onBackgroundClick(e: MouseEvent) {
-    if (!(e.target as HTMLElement).closest('[data-item-id], button, [role="menu"]')) setSelectedId(null);
+    if (!(e.target as HTMLElement).closest('[data-item-id], button, [role="menu"]')) dispatch({ type: 'clear' });
   }
   function onContextMenu(e: MouseEvent) {
     const el = (e.target as HTMLElement).closest<HTMLElement>('[data-item-id]');
     const item = el ? items.find((i) => i.id === el.dataset.itemId) ?? null : null;
     setMenuItem(item);
-    if (item) setSelectedId(item.id);
+    if (item) select(item);
   }
 
   // ---- topbar ---------------------------------------------------------------------------------
+  // The breadcrumbs always stay (they take drops); with two or more selected the selection bar replaces the actions.
   useTopbar(
     <>
       <div className="min-w-0 flex-1">
-        <Breadcrumbs chain={ancestors.data ?? (ancestors.isError ? [] : undefined)} />
+        <Breadcrumbs chain={ancestors.data ?? (ancestors.isError ? [] : undefined)} dropTarget={(item) => dnd.target(item)} />
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">
+      {sel.count >= 2 ? (
+        <SelectionBar count={sel.count} caps={caps} actions={bulk} onClear={() => dispatch({ type: 'clear' })} />
+      ) : <div className="flex shrink-0 items-center gap-1.5">
         {selectedItem && canShare(selectedItem) && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -362,6 +462,9 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-52">
             <DropdownMenuItem onSelect={newFolder}><FolderPlus />{t('files.newFolder')}</DropdownMenuItem>
+            <DropdownMenuItem disabled={!canPaste} onSelect={paste}>
+              <ClipboardPaste />{t('files.bulk.paste')}<DropdownMenuShortcut>{shortcut(t, 'V')}</DropdownMenuShortcut>
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             {PRIMARY_FORMATS.map((f) => {
               const Icon = { docx: FileText, xlsx: FileSpreadsheet, pptx: Presentation }[f];
@@ -395,7 +498,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
             <DropdownMenuItem onSelect={startFolderUpload}><FolderUp />{t('files.uploadFolder')}</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>}
-      </div>
+      </div>}
     </>,
   );
 
@@ -423,7 +526,19 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   } else {
     const folders = items.filter((i) => i.type === 'folder').length;
     const files = items.length - folders;
-    const viewProps = { items, label: t('files.listLabel', { name: folderName }), selectedId, onSelect: setSelectedId, onOpen: activate, actions };
+    const multi: MultiSelect = {
+      isSelected: sel.isSelected, count: sel.count, selecting: checking && sel.count > 0, total: items.length,
+      onClick: (item, m) => dispatch({ type: 'click', id: item.id, toggle: m.toggle, range: m.range }),
+      onCheck: (item, range) => { dispatch({ type: 'click', id: item.id, toggle: true, range }); setChecking(true); },
+      onCheckAll: () => {
+        if (sel.count === items.length) dispatch({ type: 'clear' });
+        else { dispatch({ type: 'all' }); setChecking(true); }
+      },
+    };
+    const viewProps = {
+      items, label: t('files.listLabel', { name: folderName }), selectedId: focusId,
+      onSelect: (id: string) => dispatch({ type: 'focus', id }), onOpen: activate, actions, multi, dnd,
+    };
     body = (
       <ContextMenu modal={false} onOpenChange={(o) => { if (!o) setMenuItem(null); }}>
         <ContextMenuTrigger asChild onContextMenu={onContextMenu}>
@@ -434,7 +549,10 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
             </p>
           </div>
         </ContextMenuTrigger>
-        <BrowserContextMenu item={menuItem} actions={actions} onNewFolder={newFolder} onUpload={startUpload} onUploadFolder={startFolderUpload} canAdd={canAdd} />
+        <BrowserContextMenu
+          item={menuItem} actions={actions} onNewFolder={newFolder} onUpload={startUpload} onUploadFolder={startFolderUpload} canAdd={canAdd}
+          bulk={{ count: sel.count, caps, actions: bulk }} paste={{ enabled: canPaste, onPaste: paste }}
+        />
       </ContextMenu>
     );
   }
@@ -443,6 +561,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   return (
     <div className="flex min-h-full flex-col">
       <h1 className="sr-only">{folderName}</h1>
+      <p className="sr-only" aria-live="polite">{sel.count > 0 ? t('files.selection.count', { count: sel.count }) : ''}</p>
       <input
         ref={fileInput}
         type="file"
@@ -480,9 +599,9 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
             entries={quickLookFiles}
             activeId={quickLook.id}
             open={quickLook.open}
-            onActiveChange={(id) => { setQuickLook({ id, open: true }); setSelectedId(id); }}
+            onActiveChange={(id) => { setQuickLook({ id, open: true }); dispatch({ type: 'only', id }); }}
             onOpenChange={(o) => { if (!o) setQuickLook((q) => (q ? { ...q, open: false } : q)); }}
-            onClosed={(id) => { setQuickLook(null); focusItem(id); }}
+            onClosed={(id) => { setQuickLook(null); focusEl(id); }}
             resolveSource={syncPreviewSource}
             onDownload={download}
             onShare={actions.share}
@@ -501,7 +620,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
             onCreate={async (name) => {
               const created = await mutations.createFolder.mutateAsync({ parentId: folderId, name });
               patchItems((list) => [...list.filter((i) => i.id !== created.id), created]);
-              setSelectedId(created.id);
+              focusItem(created.id);
               return created;
             }}
           />
@@ -521,7 +640,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
               try {
                 const created = await createOffice.mutateAsync({ parentId: folderId, name, format: d.format });
                 patchItems((list) => [...list.filter((i) => i.id !== created.id), created]);
-                setSelectedId(created.id);
+                focusItem(created.id);
                 tab?.go(created.id);
                 return created;
               } catch (err) {
@@ -551,13 +670,13 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
             open={d.open}
             onOpenChange={onDialogOpenChange}
             onClosed={restoreFocus}
-            item={d.item}
+            items={[d.item]}
             expandedIds={(ancestors.data ?? []).map((a) => a.id)}
             onMove={async (target) => {
               const next = neighborOf(d.item);
               await mutations.move.mutateAsync({ item: d.item, targetId: target.id });
               patchItems((list) => list.filter((i) => i.id !== d.item.id));
-              setSelectedId(next);
+              if (next) focusItem(next); else dispatch({ type: 'clear' });
               notify.success(t('files.toast.moved', { name: d.item.name, target: target.name }));
             }}
           />
@@ -568,13 +687,42 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
             open={d.open}
             onOpenChange={onDialogOpenChange}
             onClosed={restoreFocus}
-            item={d.item}
+            items={[d.item]}
             onDelete={async () => {
               const next = neighborOf(d.item);
               await mutations.remove.mutateAsync(d.item);
               patchItems((list) => list.filter((i) => i.id !== d.item.id));
-              setSelectedId(next);
+              if (next) focusItem(next); else dispatch({ type: 'clear' });
               notify.success(t('files.toast.deleted', { name: d.item.name }));
+            }}
+          />
+        )}
+        {d?.kind === 'deleteMany' && (
+          <DeleteDialog
+            key={d.n}
+            open={d.open}
+            onOpenChange={onDialogOpenChange}
+            onClosed={restoreFocus}
+            items={d.items}
+            onDelete={async () => {
+              await ops.start({ kind: 'delete', itemIds: d.items.map((i) => i.id) }, { throwOnError: true });
+              const gone = new Set(d.items.map((i) => i.id));
+              patchItems((list) => list.filter((i) => !gone.has(i.id))); // the refresh after the operation confirms
+              dispatch({ type: 'clear' });
+            }}
+          />
+        )}
+        {d?.kind === 'moveMany' && (
+          <MoveDialog
+            key={d.n}
+            open={d.open}
+            onOpenChange={onDialogOpenChange}
+            onClosed={restoreFocus}
+            items={d.items}
+            expandedIds={(ancestors.data ?? []).map((a) => a.id)}
+            onMove={async (target) => {
+              await ops.start({ kind: 'move', itemIds: d.items.map((i) => i.id), targetId: target.id }, { throwOnError: true });
+              dispatch({ type: 'clear' });
             }}
           />
         )}

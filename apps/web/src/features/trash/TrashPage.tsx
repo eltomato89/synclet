@@ -1,30 +1,42 @@
 import type { TrashEntryWire } from '@synclet/shared';
 import { RotateCcw, Trash2, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { useTopbar } from '@/components/app-shell/Topbar';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { SkeletonRows, StatusMessage } from '@/features/files/EmptyState';
 import { errorKey } from '@/features/files/errors';
 import { FileIcon } from '@/features/files/FileIcon';
 import { folderPath } from '@/features/files/queries';
+import { useSelection } from '@/features/files/selection';
 import { PERSONAL, useSpaceLabel } from '@/features/spaces/useSpaces';
 import { ApiError } from '@/lib/api';
 import { formatBytes, formatDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { expiresIn, parentSegments, retentionDays, useTrash, useTrashMutations } from './queries';
 
-type Confirm = { kind: 'delete'; entry: TrashEntryWire } | { kind: 'empty'; count: number };
+type Confirm = { kind: 'delete'; entry: TrashEntryWire } | { kind: 'deleteMany'; entries: TrashEntryWire[] } | { kind: 'empty'; count: number };
 
 /** i18n key for a failed trash request. */
 function trashErrorKey(err: unknown): string {
   if (err instanceof ApiError && err.code === 'conflict') return 'trash.errors.conflict';
   if (err instanceof ApiError && err.code === 'not_found') return 'trash.errors.not_found';
   return errorKey(err);
+}
+
+/** Runs `fn` for each entry in turn (never in parallel: each changes the trash and the target folder). */
+export async function runSequential<T>(entries: T[], fn: (e: T) => Promise<unknown>): Promise<{ ok: T[]; failed: T[] }> {
+  const ok: T[] = [];
+  const failed: T[] = [];
+  for (const e of entries) {
+    try { await fn(e); ok.push(e); } catch { failed.push(e); }
+  }
+  return { ok, failed };
 }
 
 export function TrashPage() {
@@ -34,8 +46,13 @@ export function TrashPage() {
   const trash = useTrash();
   const m = useTrashMutations();
   const [busy, setBusy] = useState<Set<string>>(() => new Set());
+  /** A bulk restore or delete is running: the selection bar's buttons wait for it. */
+  const [bulkRunning, setBulkRunning] = useState(false);
   const [confirm, setConfirm] = useState<(Confirm & { open: boolean }) | null>(null);
   const entries = trash.data ?? [];
+  const order = useMemo(() => entries.map((e) => e.id), [entries]);
+  const sel = useSelection(order);
+  const chosen = entries.filter((e) => sel.isSelected(e.id));
 
   useEffect(() => {
     const prev = document.title;
@@ -75,7 +92,28 @@ export function TrashPage() {
     }
   }
 
+  async function restoreMany(list: TrashEntryWire[]) {
+    setBulkRunning(true);
+    list.forEach((e) => mark(e.id, true));
+    const { ok, failed } = await runSequential(list, (e) => m.restore.mutateAsync(e)).finally(() => {
+      list.forEach((e) => mark(e.id, false));
+      setBulkRunning(false);
+    });
+    if (failed.length === 0) toast.success(t('trash.bulk.restored', { count: ok.length }), { position: 'bottom-center' });
+    else toast.error(t('trash.bulk.partialRestore', { ok: ok.length, failed: failed.length }), { position: 'bottom-center' });
+  }
+
   useTopbar(
+    sel.count >= 2 ? (
+      <>
+        <Button variant="ghost" size="icon-sm" onClick={() => sel.dispatch({ type: 'clear' })} aria-label={t('files.selection.clear')} className="text-muted-foreground"><X /></Button>
+        <span className="min-w-0 flex-1 truncate text-sm font-semibold tabular-nums">{t('files.selection.count', { count: sel.count })}</span>
+        <Button variant="ghost" size="sm" disabled={bulkRunning} onClick={() => void restoreMany(chosen)}><RotateCcw />{t('trash.bulk.restore')}</Button>
+        <Button variant="ghost" size="sm" disabled={bulkRunning} className="hover:bg-destructive/10 hover:text-destructive" onClick={() => setConfirm({ kind: 'deleteMany', entries: chosen, open: true })}>
+          <Trash2 />{t('trash.bulk.deleteForever')}
+        </Button>
+      </>
+    ) : (
     <>
       <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">{t('shell.trash')}</h1>
       {personal.length > 0 && (
@@ -88,7 +126,8 @@ export function TrashPage() {
           <Trash2 />{t('trash.empty.action')}
         </Button>
       )}
-    </>,
+    </>
+    ),
   );
 
   let body;
@@ -114,10 +153,20 @@ export function TrashPage() {
     const days = retentionDays(entries);
     body = (
       <div className="pb-16">
-        <table aria-label={t('shell.trash')} className="w-full table-fixed border-separate border-spacing-0 text-sm">
+        <table aria-label={t('shell.trash')} role="grid" aria-multiselectable="true" className="w-full table-fixed border-separate border-spacing-0 text-sm">
           <thead className="sticky top-0 z-10 bg-background text-xs font-medium text-muted-foreground">
             <tr className="[&>th]:h-9 [&>th]:border-b [&>th]:px-2 [&>th]:text-left [&>th]:font-medium">
-              <th scope="col" className="pl-3! md:pl-6!">{t('files.columns.name')}</th>
+              <th scope="col" className="w-9 pl-2! md:w-11 md:pl-4!">
+                <Checkbox
+                  tabIndex={-1}
+                  aria-label={t('files.selection.selectAll')}
+                  checked={sel.count === 0 ? false : sel.count === entries.length ? true : 'indeterminate'}
+                  onClick={(ev) => { ev.preventDefault(); sel.dispatch(sel.count === entries.length ? { type: 'clear' } : { type: 'all' }); }}
+                  onPointerDown={(ev) => ev.preventDefault()}
+                  onMouseDown={(ev) => ev.preventDefault()}
+                />
+              </th>
+              <th scope="col" className="pl-1!">{t('files.columns.name')}</th>
               <th scope="col" className="hidden w-[24%] md:table-cell">{t('trash.columns.location')}</th>
               <th scope="col" className="hidden w-32 lg:table-cell">{t('trash.columns.deleted')}</th>
               <th scope="col" className="hidden w-24 text-right! sm:table-cell">{t('files.columns.size')}</th>
@@ -136,12 +185,30 @@ export function TrashPage() {
               return (
                 <tr
                   key={e.id}
+                  aria-selected={sel.isSelected(e.id)}
+                  tabIndex={-1}
+                  onClick={(ev) => {
+                    if ((ev.target as HTMLElement).closest('button')) return;
+                    sel.dispatch({ type: 'click', id: e.id, toggle: ev.metaKey || ev.ctrlKey, range: ev.shiftKey });
+                  }}
                   className={cn(
-                    'group/row h-12 sm:h-11 [&>td]:border-b [&>td]:border-border/70 [&>td]:transition-colors [&>td]:duration-100 hover:[&>td]:bg-accent/70',
+                    'group/row h-12 outline-none select-none sm:h-11 [&>td]:border-b [&>td]:border-border/70 [&>td]:transition-colors [&>td]:duration-100',
+                    sel.isSelected(e.id) ? '[&>td]:bg-accent-soft' : 'hover:[&>td]:bg-accent/70',
                     pending && 'opacity-60',
                   )}
                 >
-                  <td className="pr-2 pl-3 md:pl-6">
+                  <td className="pl-2 md:pl-4">
+                    <Checkbox
+                      tabIndex={-1}
+                      checked={sel.isSelected(e.id)}
+                      aria-label={t('files.selection.selectItem', { name: e.name })}
+                      onClick={(ev) => { ev.preventDefault(); ev.stopPropagation(); sel.dispatch({ type: 'click', id: e.id, toggle: true, range: ev.shiftKey }); }}
+                      onPointerDown={(ev) => { ev.stopPropagation(); ev.preventDefault(); }}
+                      onMouseDown={(ev) => ev.preventDefault()}
+                      className={cn(!sel.isSelected(e.id) && sel.count === 0 && 'opacity-0 group-hover/row:opacity-100 pointer-coarse:opacity-100 focus-visible:opacity-100')}
+                    />
+                  </td>
+                  <td className="pr-2 pl-1">
                     <div className="flex min-w-0 items-center gap-3">
                       <FileIcon item={{ type: e.type, name: e.name, mime: null }} className="size-5" />
                       <div className="min-w-0">
@@ -212,7 +279,13 @@ export function TrashPage() {
   const c = confirm;
   const close = (o: boolean) => { if (!o) setConfirm((cur) => (cur ? { ...cur, open: false } : cur)); };
   return (
-    <div className="flex min-h-full flex-col">
+    <div
+      className="flex min-h-full flex-col"
+      onKeyDown={(ev) => {
+        if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === 'a') { ev.preventDefault(); sel.dispatch({ type: 'all' }); }
+        else if (ev.key === 'Escape' && sel.count > 0) { ev.preventDefault(); sel.dispatch({ type: 'clear' }); }
+      }}
+    >
       {body}
       {c?.kind === 'delete' && (
         <ConfirmDialog
@@ -227,6 +300,24 @@ export function TrashPage() {
           onConfirm={async () => {
             await m.deleteForever.mutateAsync(c.entry);
             toast.success(t('trash.toast.deleted', { name: c.entry.name }), { position: 'bottom-center' });
+          }}
+        />
+      )}
+      {c?.kind === 'deleteMany' && (
+        <ConfirmDialog
+          open={c.open}
+          onOpenChange={close}
+          title={t('trash.bulk.confirmTitle', { count: c.entries.length })}
+          body={t('trash.bulk.confirmBody')}
+          confirmLabel={t('trash.bulk.deleteForever')}
+          pendingLabel={t('trash.deleteDialog.submitting')}
+          destructive
+          errorMessage={(err) => t(trashErrorKey(err))}
+          onConfirm={async () => {
+            setBulkRunning(true);
+            const { ok, failed } = await runSequential(c.entries, (e) => m.deleteForever.mutateAsync(e)).finally(() => setBulkRunning(false));
+            if (failed.length === 0) toast.success(t('trash.bulk.deleted', { count: ok.length }), { position: 'bottom-center' });
+            else toast.error(t('trash.bulk.partialDelete', { ok: ok.length, failed: failed.length }), { position: 'bottom-center' });
           }}
         />
       )}

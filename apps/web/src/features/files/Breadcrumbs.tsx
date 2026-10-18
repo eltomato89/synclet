@@ -10,6 +10,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Skeleton } from '@/components/ui/skeleton';
 import { PERSONAL, spaceOfItem } from '@/features/spaces/useSpaces';
 import { cn } from '@/lib/utils';
+import type { DropProps } from './dnd';
 import { folderPath } from './queries';
 
 const MAX_VISIBLE = 4;
@@ -17,8 +18,9 @@ const MAX_VISIBLE = 4;
 /**
  * Folder path, root first ("My files" or the space name). With more than four segments the middle ones collapse into a menu;
  * on small screens only the current folder stays visible and every parent moves into the menu.
+ * `dropTarget` makes the visible segments take dragged items (not the ones in the menu).
  */
-export function Breadcrumbs({ chain }: { chain: SyncItem[] | undefined }) {
+export function Breadcrumbs({ chain, dropTarget }: { chain: SyncItem[] | undefined; dropTarget?(item: SyncItem): DropProps }) {
   const { t } = useTranslation();
   if (!chain) return <Skeleton className="h-4 w-40" />;
   if (chain.length === 0) return null;
@@ -69,7 +71,10 @@ export function Breadcrumbs({ chain }: { chain: SyncItem[] | undefined }) {
           }
           return (
             <Fragment key={item.id}>
-              <BreadcrumbItem className={cn('min-w-0', !last && 'max-sm:hidden')}>
+              <BreadcrumbItem
+                {...(dropTarget?.(item) ?? {})}
+                className={cn('min-w-0 rounded-sm data-[drop=over]:bg-primary/10 data-[drop=over]:ring-2 data-[drop=over]:ring-primary/40', !last && 'max-sm:hidden')}
+              >
                 {last ? (
                   <BreadcrumbPage className="truncate text-base font-semibold tracking-[-0.01em]">{label(item)}</BreadcrumbPage>
                 ) : (

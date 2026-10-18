@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
-import type { Item, VersionSource } from '@prisma/client';
+import { type Item, Prisma, type VersionSource } from '@prisma/client';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { lstat, mkdir, open, readdir, readFile, rename, rm, rmdir, unlink, utimes } from 'node:fs/promises';
@@ -18,7 +18,7 @@ import { PrismaService, TX_OPTS } from '../prisma/prisma.service';
 import { SpacesRepo } from '../spaces/spaces.repo';
 import { PreparedVersion, StaleVersionError, VersionContentReplacer, VersionsService } from '../versions/versions.service';
 import { rethrowStorageError } from '../common/storage-errors';
-import { copyNoReplace, copyTree, linkNoReplace, moveAcrossFs, moveNoReplace, replaceAtomic, statEntry } from './fs-ops';
+import { copyNoReplace, copyTree, copyTreeTracked, linkNoReplace, moveAcrossFs, moveNoReplace, replaceAtomic, statEntry } from './fs-ops';
 
 export type OnConflict = 'fail' | 'rename';
 
@@ -67,6 +67,20 @@ async function sizeOf(abs: string): Promise<bigint> {
   let total = 0n;
   for (const n of await readdir(abs)) total += await sizeOf(path.join(abs, n));
   return total;
+}
+
+/** Rows per INSERT when a copy creates its subtree (Postgres takes at most 65535 bind values). */
+const CREATE_CHUNK = 1000;
+
+/** statEntry() of every entry below `root`, keyed by the path relative to it ('' = root, '/a', '/a/b'). */
+async function statTree(root: string): Promise<Map<string, Awaited<ReturnType<typeof statEntry>>>> {
+  const out = new Map<string, Awaited<ReturnType<typeof statEntry>>>();
+  const walk = async (rel: string, dir: boolean): Promise<void> => {
+    out.set(rel, await statEntry(root + rel));
+    if (dir) for (const d of await readdir(root + rel, { withFileTypes: true })) await walk(`${rel}/${d.name}`, d.isDirectory());
+  };
+  await walk('', (await lstat(root)).isDirectory());
+  return out;
 }
 
 /**
@@ -667,7 +681,10 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
           if (isEexist(e)) throw new SyncError('name_conflict', 'exists on disk');
           throw mapMissing(e, 'item or target folder');
         }
-        const subtree = item.type === 'folder' ? [item, ...(await this.store.liveDescendants(tx, src.id, item.path))] : [item];
+        // Parents first, so a chunk never refers to a parent of a later one.
+        const subtree = item.type === 'folder'
+          ? [item, ...(await this.store.liveDescendants(tx, src.id, item.path))].sort((a, b) => a.path.length - b.path.length)
+          : [item];
         const updated = await tx.item.update({ where: { id: item.id }, data: { spaceId: dst.id, parentId: targetParent, name, nameKey: nameKey(name), path: rel } });
         if (item.type === 'folder') {
           await tx.$executeRaw`
@@ -707,6 +724,107 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
     const s = staged as { from: string; at: string } | null;
     if (s) await rm(s.at, { recursive: true, force: true }).catch((e) => this.log.error(`cannot remove moved source ${s.at}: ${String(e)}`));
     return result;
+  }
+
+  /**
+   * Copies an item (with its subtree) to `targetParent` (null = root) of `dst`, possibly another
+   * space. Like a cross-file-system move, the tree is first copied to an ignored temp entry in the
+   * target root without any lock (progress via `onProgress`, cancellable via `signal`); then a short
+   * transaction under both space locks checks that the source is unchanged since the copy started
+   * (else 409 `conflict`), resolves the name (`onConflict`: fail → `name_conflict` with the existing
+   * row, rename → "Name (2)"), publishes the copy by rename and creates rows with new ids for the
+   * whole subtree (paths, sizes, contentHash of the source; mtime/ino/dev from the copy), journaled
+   * as upserts. `beforePublish` runs once the temp tree is complete, before the publish transaction.
+   * Share links and versions are not copied. The temp tree never survives the call.
+   */
+  async copy(
+    src: IndexSpace, dst: IndexSpace, itemId: string, targetParent: string | null,
+    opts: { onConflict: OnConflict; onProgress?(bytes: number): void; signal?: AbortSignal; beforePublish?(): Promise<void> },
+  ): Promise<Item> {
+    const pre = await this.prisma.$transaction(async (tx) => {
+      const item = await this.store.getLive(tx, src.id, itemId);
+      if (!item) throw new SyncError('not_found');
+      await this.parentPath(tx, dst, targetParent); // fail fast before copying
+      return { item, snap: await this.subtreeSnapshot(tx, src, item) };
+    }, TX_OPTS);
+    const tmp = path.join(dst.rootPath, tempName(randomBytes(8).toString('hex')));
+    let published: { tmp: string; to: string } | null = null;
+    try {
+      try {
+        await copyTreeTracked(this.abs(src, pre.item.path), tmp, { onBytes: opts.onProgress, signal: opts.signal });
+      } catch (e) {
+        if ((e as Error).name === 'AbortError') throw e;
+        rethrowStorageError(mapMissing(e, 'item'));
+      }
+      if (opts.signal?.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+      // E.g. "replace": the caller trashes the existing item only now that the copy is complete.
+      await opts.beforePublish?.();
+      // Stats of the copy, taken before the locks (the same-file-system rename below keeps them).
+      const stats = await statTree(tmp);
+      return await this.prisma.$transaction(async (tx) => {
+        const locks = src.id === dst.id ? [src] : [src, dst].sort((a, b) => (a.id < b.id ? -1 : 1));
+        for (const sp of locks) await this.journal.lockSpaceForWrite(tx, sp);
+        const item = await this.store.getLive(tx, src.id, itemId);
+        if (!item) throw new SyncError('not_found');
+        if ((await this.subtreeSnapshot(tx, src, item)) !== pre.snap) {
+          throw new SyncError('conflict', 'changed while being copied, try again', item, 409);
+        }
+        const parentRel = await this.parentPath(tx, dst, targetParent);
+        const { sibs, keys } = await this.takenKeys(tx, dst, targetParent);
+        await this.assertRealDir(dst, parentRel);
+        let name = item.name;
+        let to = '';
+        for (let attempt = 0; ; attempt++) {
+          if (keys.has(nameKey(name))) {
+            if (opts.onConflict === 'fail') throw new SyncError('name_conflict', 'name already exists', sibs.find((s) => s.nameKey === nameKey(name)));
+            name = freeName(item.name, keys, item.type === 'folder');
+          }
+          to = this.abs(dst, joinRel(parentRel, name));
+          try {
+            await moveNoReplace(tmp, to); // same file system: the temp copy lives in the target root
+            published = { tmp, to };
+            break;
+          } catch (e) {
+            if (!isEexist(e) || attempt > 100) throw mapMissing(e, 'target folder');
+            if (opts.onConflict === 'fail') throw new SyncError('name_conflict', 'exists on disk');
+            keys.add(nameKey(name)); // unindexed entry on disk – try the next free name
+          }
+        }
+        const rel = joinRel(parentRel, name);
+        // Parents first, so a chunk never refers to a parent of a later one.
+        const subtree = item.type === 'folder'
+          ? [item, ...(await this.store.liveDescendants(tx, src.id, item.path))].sort((a, b) => a.path.length - b.path.length)
+          : [item];
+        // New ids up front: the new parent id of a row is the new id of its source parent.
+        const newIds = new Map(subtree.map((r) => [r.id, randomUUID()]));
+        const rows: Prisma.ItemCreateManyInput[] = [];
+        for (const r of subtree) {
+          const st = stats.get(r.path.slice(item.path.length));
+          if (!st) continue; // vanished in the source before the copy (not indexed yet): not copied
+          const root = r.id === item.id;
+          rows.push({
+            id: newIds.get(r.id)!, spaceId: dst.id, type: r.type, path: root ? rel : rel + r.path.slice(item.path.length),
+            parentId: root ? targetParent : newIds.get(r.parentId!)!,
+            name: root ? name : r.name, nameKey: root ? nameKey(name) : r.nameKey,
+            size: r.type === 'file' ? st.size : 0n, mtime: st.mtime, ino: st.ino, dev: st.dev,
+            contentHash: r.type === 'file' ? r.contentHash : null,
+          });
+        }
+        for (let i = 0; i < rows.length; i += CREATE_CHUNK) await tx.item.createMany({ data: rows.slice(i, i + CREATE_CHUNK) });
+        const top = await tx.item.findUniqueOrThrow({ where: { id: newIds.get(item.id)! } });
+        // Like announce(): only the top item can have same-key siblings, everything below is new.
+        const same = await this.store.sameKeySiblings(tx, dst.id, targetParent, [top.nameKey], new Set([top.id]));
+        await this.journal.record(tx, dst.id, [...rows.map((r) => ({ id: r.id!, type: r.type })), ...same], 'upsert');
+        return top;
+      }, { ...TX_OPTS, timeout: Math.max(TX_OPTS.timeout, stats.size * 5 + 30_000) });
+    } catch (e) {
+      // Rolled back after publishing: back to the temp name, removed below.
+      const p = published as { tmp: string; to: string } | null;
+      if (p) await moveNoReplace(p.to, p.tmp).catch((err) => this.log.error(`cannot withdraw copy ${p.to}: ${String(err)}`));
+      throw e;
+    } finally {
+      await rm(tmp, { recursive: true, force: true }).catch((e) => this.log.error(`cannot remove copy temp ${tmp}: ${String(e)}`));
+    }
   }
 
   /**
