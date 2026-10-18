@@ -320,6 +320,19 @@
     "errors": {
       "conflict": "This item is still being moved to the trash. Try again in a moment.",
       "not_found": "This item isn't in the trash anymore."
+    },
+    "bulk": {
+      "restore": "Restore",
+      "deleteForever": "Delete forever",
+      "restored_one": "{{count}} item restored",
+      "restored_other": "{{count}} items restored",
+      "deleted_one": "{{count}} item deleted forever",
+      "deleted_other": "{{count}} items deleted forever",
+      "partialRestore": "{{ok}} restored, {{failed}} failed",
+      "partialDelete": "{{ok}} deleted, {{failed}} failed",
+      "confirmTitle_one": "Delete {{count}} item forever?",
+      "confirmTitle_other": "Delete {{count}} items forever?",
+      "confirmBody": "The items and all their versions are deleted. This can’t be undone."
     }
   },
   "shares": {

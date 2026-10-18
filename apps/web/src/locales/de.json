@@ -320,6 +320,19 @@
     "errors": {
       "conflict": "Dieses Element wird noch in den Papierkorb verschoben. Versuch es gleich noch einmal.",
       "not_found": "Dieses Element ist nicht mehr im Papierkorb."
+    },
+    "bulk": {
+      "restore": "Wiederherstellen",
+      "deleteForever": "Endgültig löschen",
+      "restored_one": "{{count}} Element wiederhergestellt",
+      "restored_other": "{{count}} Elemente wiederhergestellt",
+      "deleted_one": "{{count}} Element endgültig gelöscht",
+      "deleted_other": "{{count}} Elemente endgültig gelöscht",
+      "partialRestore": "{{ok}} wiederhergestellt, {{failed}} fehlgeschlagen",
+      "partialDelete": "{{ok}} gelöscht, {{failed}} fehlgeschlagen",
+      "confirmTitle_one": "{{count}} Element endgültig löschen?",
+      "confirmTitle_other": "{{count}} Elemente endgültig löschen?",
+      "confirmBody": "Die Elemente werden mit allen Versionen gelöscht. Das lässt sich nicht rückgängig machen."
     }
   },
   "shares": {
