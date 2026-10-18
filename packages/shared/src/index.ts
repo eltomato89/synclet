@@ -242,7 +242,7 @@ export interface OperationConflict {
   name: string;
   source: OperationEntryInfo;
   existing: OperationEntryInfo & { id: string };
-  /** False when the existing item is one of this operation's sources or an ancestor of the target: "replace" is refused. */
+  /** False when the existing item is one of this operation's sources or a folder containing one of them: "replace" is refused. */
   canReplace: boolean;
 }
 
