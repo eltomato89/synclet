@@ -91,6 +91,13 @@
     "sortBy": "Nach {{column}} sortieren",
     "itemActions": "Aktionen für {{name}}",
     "listLabel": "Inhalt von {{name}}",
+    "selection": {
+      "count_one": "{{count}} ausgewählt",
+      "count_other": "{{count}} ausgewählt",
+      "selectItem": "„{{name}}“ auswählen",
+      "selectAll": "Alle auswählen",
+      "clear": "Auswahl aufheben"
+    },
     "folderCount_one": "{{count}} Ordner",
     "folderCount_other": "{{count}} Ordner",
     "fileCount_one": "{{count}} Datei",
