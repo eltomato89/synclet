@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, readdir, readFile, stat, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { isIgnored, isTempName } from '../common/names';
-import { copyNoReplace, copyThenRemove, linkNoReplace, moveAcrossFs, moveNoReplace, replaceAtomic } from './fs-ops';
+import { copyNoReplace, copyThenRemove, copyTreeTracked, linkNoReplace, moveAcrossFs, moveNoReplace, replaceAtomic } from './fs-ops';
 
 it('linkNoReplace never clobbers an existing file', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'synclet-ops-'));
@@ -95,4 +95,48 @@ it('moveAcrossFs never overwrites an existing destination on the same file syste
   await expect(moveAcrossFs(path.join(dir, 'a'), path.join(dir, 'b'))).rejects.toMatchObject({ code: 'EEXIST' });
   expect(await readFile(path.join(dir, 'b'), 'utf8')).toBe('host');
   expect(await readFile(path.join(dir, 'a'), 'utf8')).toBe('mine');
+});
+
+describe('copyTreeTracked', () => {
+  it('copies a tree with file and folder mtimes, reports bytes and skips symlinks', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'synclet-ops-'));
+    const when = new Date('2024-05-01T10:00:00.000Z');
+    await mkdir(path.join(dir, 'src', 'sub'), { recursive: true });
+    await writeFile(path.join(dir, 'src', 'a.txt'), 'aaaa');
+    await writeFile(path.join(dir, 'src', 'sub', 'b.txt'), 'bb');
+    await symlink('/etc/passwd', path.join(dir, 'src', 'link'));
+    await utimes(path.join(dir, 'src', 'sub', 'b.txt'), when, when);
+    await utimes(path.join(dir, 'src', 'sub'), when, when);
+    let bytes = 0;
+    await copyTreeTracked(path.join(dir, 'src'), path.join(dir, 'dst'), { onBytes: (n) => { bytes += n; } });
+    expect(bytes).toBe(6);
+    expect((await readdir(path.join(dir, 'dst'))).sort()).toEqual(['a.txt', 'sub']);
+    expect(await readFile(path.join(dir, 'dst', 'sub', 'b.txt'), 'utf8')).toBe('bb');
+    expect((await stat(path.join(dir, 'dst', 'sub', 'b.txt'))).mtime.toISOString()).toBe(when.toISOString());
+    expect((await stat(path.join(dir, 'dst', 'sub'))).mtime.toISOString()).toBe(when.toISOString());
+  });
+
+  it('copies a single file', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'synclet-ops-'));
+    await writeFile(path.join(dir, 'f'), 'x');
+    await copyTreeTracked(path.join(dir, 'f'), path.join(dir, 'g'));
+    expect(await readFile(path.join(dir, 'g'), 'utf8')).toBe('x');
+  });
+
+  it('refuses an existing destination', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'synclet-ops-'));
+    await mkdir(path.join(dir, 'src'));
+    await mkdir(path.join(dir, 'dst'));
+    await expect(copyTreeTracked(path.join(dir, 'src'), path.join(dir, 'dst'))).rejects.toMatchObject({ code: 'EEXIST' });
+  });
+
+  it('stops between files when aborted', async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'synclet-ops-'));
+    await mkdir(path.join(dir, 'src'));
+    for (const n of ['1', '2', '3']) await writeFile(path.join(dir, 'src', n), n);
+    const ctl = new AbortController();
+    const p = copyTreeTracked(path.join(dir, 'src'), path.join(dir, 'dst'), { signal: ctl.signal, onBytes: () => ctl.abort() });
+    await expect(p).rejects.toMatchObject({ name: 'AbortError' });
+    expect((await readdir(path.join(dir, 'dst'))).length).toBe(1);
+  });
 });

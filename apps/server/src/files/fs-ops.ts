@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { cp, link, lstat, open, rename, rm, unlink } from 'node:fs/promises';
+import { cp, link, lstat, mkdir, open, readdir, rename, rm, unlink, utimes } from 'node:fs/promises';
 import path from 'node:path';
 import { nameKey, tempName } from '../common/names';
 
@@ -146,6 +146,67 @@ export async function moveAcrossFs(src: string, dst: string, move: (src: string,
  */
 export async function copyTree(src: string, dst: string): Promise<void> {
   await cp(src, dst, { recursive: true, preserveTimestamps: true, errorOnExist: true, force: false, verbatimSymlinks: true });
+}
+
+const abortError = () => Object.assign(new Error('aborted'), { name: 'AbortError' });
+
+/** Like copyNoReplace, but reports written bytes after every chunk. */
+async function copyFileTracked(src: string, dst: string, onBytes?: (n: number) => void): Promise<void> {
+  if (!onBytes) return copyNoReplace(src, dst);
+  const sfh = await open(src, 'r');
+  try {
+    const dfh = await open(dst, 'wx', 0o666).catch((e) => Promise.reject(code(e) === 'EEXIST' ? eexist(dst) : e));
+    let ours: bigint | null = null;
+    try {
+      ours = (await dfh.stat({ bigint: true })).ino;
+      const buf = Buffer.allocUnsafe(1 << 20);
+      for (;;) {
+        const { bytesRead } = await sfh.read(buf, 0, buf.length, null);
+        if (bytesRead === 0) break;
+        for (let off = 0; off < bytesRead;) off += (await dfh.write(buf, off, bytesRead - off)).bytesWritten;
+        onBytes(bytesRead);
+      }
+      const st = await sfh.stat();
+      await dfh.utimes(st.atime, st.mtime);
+      await dfh.sync();
+      await dfh.close();
+    } catch (e) {
+      await dfh.close().catch(() => {});
+      const now = await lstatOrNull(dst).catch(() => null);
+      if (ours !== null && now && now.ino === ours) await unlink(dst).catch(() => {});
+      throw e;
+    }
+  } finally {
+    await sfh.close().catch(() => {});
+  }
+}
+
+/**
+ * Copies a file or folder tree to the new path `dst` (refuses an existing `dst`) for bulk copies:
+ * file contents and mtimes like copyNoReplace (fsynced), folder mtimes set after their content,
+ * symlinks and special files skipped (the index never follows them). `onBytes` gets the bytes
+ * written so far in chunks; `signal` stops between two files (AbortError). The caller owns `dst`
+ * and removes it on failure.
+ */
+export async function copyTreeTracked(src: string, dst: string, opts: { onBytes?(n: number): void; signal?: AbortSignal } = {}): Promise<void> {
+  const walk = async (from: string, to: string): Promise<void> => {
+    if (opts.signal?.aborted) throw abortError();
+    const st = await lstat(from);
+    if (st.isFile()) {
+      await copyFileTracked(from, to, opts.onBytes);
+      return;
+    }
+    if (!st.isDirectory()) return; // symlink, socket, device: not copied
+    try {
+      await mkdir(to, { mode: 0o777 });
+    } catch (e) {
+      if (code(e) === 'EEXIST') throw eexist(to);
+      throw e;
+    }
+    for (const name of (await readdir(from)).sort()) await walk(path.join(from, name), path.join(to, name));
+    await utimes(to, st.atime, st.mtime);
+  };
+  await walk(src, dst);
 }
 
 /** The cross-device half of `moveAcrossFs` (exported for tests): copy to an ignored temp, publish no-replace, remove `src`. */
