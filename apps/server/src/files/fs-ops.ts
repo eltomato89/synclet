@@ -151,7 +151,7 @@ export async function copyTree(src: string, dst: string): Promise<void> {
 const abortError = () => Object.assign(new Error('aborted'), { name: 'AbortError' });
 
 /** Like copyNoReplace, but reports written bytes after every chunk. */
-async function copyFileTracked(src: string, dst: string, onBytes?: (n: number) => void): Promise<void> {
+async function copyFileTracked(src: string, dst: string, buf: Buffer, onBytes?: (n: number) => void): Promise<void> {
   if (!onBytes) return copyNoReplace(src, dst);
   const sfh = await open(src, 'r');
   try {
@@ -159,7 +159,6 @@ async function copyFileTracked(src: string, dst: string, onBytes?: (n: number) =
     let ours: bigint | null = null;
     try {
       ours = (await dfh.stat({ bigint: true })).ino;
-      const buf = Buffer.allocUnsafe(1 << 20);
       for (;;) {
         const { bytesRead } = await sfh.read(buf, 0, buf.length, null);
         if (bytesRead === 0) break;
@@ -184,16 +183,23 @@ async function copyFileTracked(src: string, dst: string, onBytes?: (n: number) =
 /**
  * Copies a file or folder tree to the new path `dst` (refuses an existing `dst`) for bulk copies:
  * file contents and mtimes like copyNoReplace (fsynced), folder mtimes set after their content,
- * symlinks and special files skipped (the index never follows them). `onBytes` gets the bytes
- * written so far in chunks; `signal` stops between two files (AbortError). The caller owns `dst`
+ * symlinks and special files skipped (the index never follows them). `onBytes` gets the byte count
+ * of each chunk written (not a running total); `signal` stops between two files (AbortError).
+ * Refuses a `dst` inside `src` (EINVAL) before anything is created. The caller owns `dst`
  * and removes it on failure.
  */
 export async function copyTreeTracked(src: string, dst: string, opts: { onBytes?(n: number): void; signal?: AbortSignal } = {}): Promise<void> {
+  const from0 = path.resolve(src);
+  const to0 = path.resolve(dst);
+  if (to0 === from0 || to0.startsWith(from0 + path.sep)) {
+    throw Object.assign(new Error(`EINVAL: cannot copy ${src} into itself`), { code: 'EINVAL' });
+  }
+  const buf = Buffer.allocUnsafe(1 << 20);
   const walk = async (from: string, to: string): Promise<void> => {
     if (opts.signal?.aborted) throw abortError();
     const st = await lstat(from);
     if (st.isFile()) {
-      await copyFileTracked(from, to, opts.onBytes);
+      await copyFileTracked(from, to, buf, opts.onBytes);
       return;
     }
     if (!st.isDirectory()) return; // symlink, socket, device: not copied

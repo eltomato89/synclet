@@ -140,3 +140,12 @@ describe('copyTreeTracked', () => {
     expect((await readdir(path.join(dir, 'dst'))).length).toBe(1);
   });
 });
+
+it('refuses to copy a folder into itself', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'synclet-ops-'));
+  await mkdir(path.join(dir, 'src'));
+  await writeFile(path.join(dir, 'src', 'a'), 'a');
+  await expect(copyTreeTracked(path.join(dir, 'src'), path.join(dir, 'src', 'sub'))).rejects.toMatchObject({ code: 'EINVAL' });
+  await expect(copyTreeTracked(path.join(dir, 'src'), path.join(dir, 'src'))).rejects.toMatchObject({ code: 'EINVAL' });
+  expect(await readdir(path.join(dir, 'src'))).toEqual(['a']);
+});
