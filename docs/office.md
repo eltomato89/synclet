@@ -68,7 +68,7 @@ The remote addresses in the last column are what Caddy sees. Symptom of a wrong 
 
 It needs a second DNS name pointing at the same host. Both sites share Caddy's ports and are told apart by the `Host` header; `/documentserver` on the Synclet site stays 404.
 
-- *Caddy terminates TLS:* `SYNCLET_OFFICE_SITE_ADDRESS` is the domain; Caddy fetches a Let's Encrypt certificate for it (same prerequisites as for the main site: public DNS, ports 80/443 reachable, see [Architecture](../README.md#architecture)).
+- *Caddy terminates TLS:* `SYNCLET_OFFICE_SITE_ADDRESS` is the domain; Caddy fetches a Let's Encrypt certificate for it (same prerequisites as for the main site: public DNS, ports 80/443 reachable, see [Architecture](development.md#architecture)).
 - *Behind an outer reverse proxy that terminates TLS:* set `SYNCLET_OFFICE_SITE_ADDRESS=http://office.example.com`, route both hostnames to Caddy and forward the original `Host`. The same proxy requirements as above apply (WebSockets, long timeouts, large bodies, `SYNCLET_TRUSTED_PROXIES`).
 
 `SYNCLET_OFFICE_PUBLIC_URL` is the browser-facing `https://` URL of that site, without trailing slash. Caddy adds exactly this origin to `script-src`, `frame-src` and `connect-src` (https and wss) of the Content-Security-Policy of the Synclet site.
