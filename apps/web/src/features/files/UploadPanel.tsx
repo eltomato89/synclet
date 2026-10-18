@@ -1,6 +1,7 @@
 import { Check, ChevronDown, CircleAlert, RotateCw, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { DockPortal } from '@/components/app-shell/PanelDock';
 import { Button } from '@/components/ui/button';
 import { refreshSession } from '@/lib/api';
 import { formatBytes } from '@/lib/format';
@@ -182,36 +183,38 @@ export function UploadPanel({ queue }: { queue: UploadQueue }) {
     : failed > 0 ? t('files.uploads.failed', { count: failed }) : t('files.uploads.done', { count: done });
 
   return (
-    <section
-      aria-label={t('files.uploads.region')}
-      className="fixed right-2 bottom-2 left-2 z-30 overflow-hidden rounded-xl bg-popover text-popover-foreground shadow-lg ring-1 ring-foreground/10 animate-in fade-in-0 slide-in-from-bottom-4 duration-200 sm:right-4 sm:bottom-4 sm:left-auto sm:w-[22rem]"
-    >
-      <header className="flex h-13 items-center gap-3 pr-2 pl-4">
-        <ProgressRing value={progress} state={active ? 'active' : failed > 0 ? 'failed' : 'done'} />
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-semibold" aria-live="polite">{title}</div>
-          {!active && (
-            <div className="text-xs text-muted-foreground">
-              {failed === 0 ? t('files.uploads.finished') : t('files.uploads.done', { count: done })}
-            </div>
-          )}
-        </div>
-        <Button variant="ghost" size="icon-sm" className="text-muted-foreground aria-expanded:bg-transparent aria-expanded:text-muted-foreground hover:aria-expanded:bg-muted" onClick={() => setCollapsed((c) => !c)}
-          aria-expanded={!collapsed} aria-label={collapsed ? t('files.uploads.expand') : t('files.uploads.collapse')}>
-          <ChevronDown className={cn('transition-transform duration-150', collapsed && 'rotate-180')} />
-        </Button>
-        {!active && (
-          <Button variant="ghost" size="icon-sm" className="text-muted-foreground" onClick={() => queue.clearInactive()} aria-label={t('files.uploads.close')}>
-            <X />
+    <DockPortal>
+      <section
+        aria-label={t('files.uploads.region')}
+        className="order-2 overflow-hidden rounded-xl bg-popover text-popover-foreground shadow-lg ring-1 ring-foreground/10 animate-in fade-in-0 slide-in-from-bottom-4 duration-200"
+      >
+        <header className="flex h-13 items-center gap-3 pr-2 pl-4">
+          <ProgressRing value={progress} state={active ? 'active' : failed > 0 ? 'failed' : 'done'} />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-semibold" aria-live="polite">{title}</div>
+            {!active && (
+              <div className="text-xs text-muted-foreground">
+                {failed === 0 ? t('files.uploads.finished') : t('files.uploads.done', { count: done })}
+              </div>
+            )}
+          </div>
+          <Button variant="ghost" size="icon-sm" className="text-muted-foreground aria-expanded:bg-transparent aria-expanded:text-muted-foreground hover:aria-expanded:bg-muted" onClick={() => setCollapsed((c) => !c)}
+            aria-expanded={!collapsed} aria-label={collapsed ? t('files.uploads.expand') : t('files.uploads.collapse')}>
+            <ChevronDown className={cn('transition-transform duration-150', collapsed && 'rotate-180')} />
           </Button>
+          {!active && (
+            <Button variant="ghost" size="icon-sm" className="text-muted-foreground" onClick={() => queue.clearInactive()} aria-label={t('files.uploads.close')}>
+              <X />
+            </Button>
+          )}
+        </header>
+        {!collapsed && (
+          <ul className="max-h-[min(18rem,45dvh)] overflow-y-auto border-t py-1">
+            {groups.map((g) => <GroupRow key={`g${g.id}`} group={g} tasks={tasks.filter((x) => x.groupId === g.id)} queue={queue} />)}
+            {loose.map((task) => <TaskRow key={task.id} task={task} queue={queue} />)}
+          </ul>
         )}
-      </header>
-      {!collapsed && (
-        <ul className="max-h-[min(18rem,45dvh)] overflow-y-auto border-t py-1">
-          {groups.map((g) => <GroupRow key={`g${g.id}`} group={g} tasks={tasks.filter((x) => x.groupId === g.id)} queue={queue} />)}
-          {loose.map((task) => <TaskRow key={task.id} task={task} queue={queue} />)}
-        </ul>
-      )}
-    </section>
+      </section>
+    </DockPortal>
   );
 }
