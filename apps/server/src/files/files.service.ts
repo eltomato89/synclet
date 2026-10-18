@@ -1,5 +1,5 @@
 import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
-import type { Item, VersionSource } from '@prisma/client';
+import { type Item, Prisma, type VersionSource } from '@prisma/client';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
 import { lstat, mkdir, open, readdir, readFile, rename, rm, rmdir, unlink, utimes } from 'node:fs/promises';
@@ -67,6 +67,20 @@ async function sizeOf(abs: string): Promise<bigint> {
   let total = 0n;
   for (const n of await readdir(abs)) total += await sizeOf(path.join(abs, n));
   return total;
+}
+
+/** Rows per INSERT when a copy creates its subtree (Postgres takes at most 65535 bind values). */
+const CREATE_CHUNK = 1000;
+
+/** statEntry() of every entry below `root`, keyed by the path relative to it ('' = root, '/a', '/a/b'). */
+async function statTree(root: string): Promise<Map<string, Awaited<ReturnType<typeof statEntry>>>> {
+  const out = new Map<string, Awaited<ReturnType<typeof statEntry>>>();
+  const walk = async (rel: string, dir: boolean): Promise<void> => {
+    out.set(rel, await statEntry(root + rel));
+    if (dir) for (const d of await readdir(root + rel, { withFileTypes: true })) await walk(`${rel}/${d.name}`, d.isDirectory());
+  };
+  await walk('', (await lstat(root)).isDirectory());
+  return out;
 }
 
 /**
@@ -667,7 +681,10 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
           if (isEexist(e)) throw new SyncError('name_conflict', 'exists on disk');
           throw mapMissing(e, 'item or target folder');
         }
-        const subtree = item.type === 'folder' ? [item, ...(await this.store.liveDescendants(tx, src.id, item.path))] : [item];
+        // Parents first, so a chunk never refers to a parent of a later one.
+        const subtree = item.type === 'folder'
+          ? [item, ...(await this.store.liveDescendants(tx, src.id, item.path))].sort((a, b) => a.path.length - b.path.length)
+          : [item];
         const updated = await tx.item.update({ where: { id: item.id }, data: { spaceId: dst.id, parentId: targetParent, name, nameKey: nameKey(name), path: rel } });
         if (item.type === 'folder') {
           await tx.$executeRaw`
@@ -718,7 +735,7 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
    * row, rename → "Name (2)"), publishes the copy by rename and creates rows with new ids for the
    * whole subtree (paths, sizes, contentHash of the source; mtime/ino/dev from the copy), journaled
    * as upserts. `beforePublish` runs once the temp tree is complete, before the publish transaction.
- * Share links and versions are not copied. The temp tree never survives the call.
+   * Share links and versions are not copied. The temp tree never survives the call.
    */
   async copy(
     src: IndexSpace, dst: IndexSpace, itemId: string, targetParent: string | null,
@@ -742,6 +759,8 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
       if (opts.signal?.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' });
       // E.g. "replace": the caller trashes the existing item only now that the copy is complete.
       await opts.beforePublish?.();
+      // Stats of the copy, taken before the locks (the same-file-system rename below keeps them).
+      const stats = await statTree(tmp);
       return await this.prisma.$transaction(async (tx) => {
         const locks = src.id === dst.id ? [src] : [src, dst].sort((a, b) => (a.id < b.id ? -1 : 1));
         for (const sp of locks) await this.journal.lockSpaceForWrite(tx, sp);
@@ -772,31 +791,32 @@ export class FilesService implements OnModuleDestroy, VersionContentReplacer {
           }
         }
         const rel = joinRel(parentRel, name);
+        // Parents first, so a chunk never refers to a parent of a later one.
         const subtree = item.type === 'folder'
           ? [item, ...(await this.store.liveDescendants(tx, src.id, item.path))].sort((a, b) => a.path.length - b.path.length)
           : [item];
-        // Parents before children: the new parent id of a row is the new id of its source parent.
-        const newIds = new Map<string, string>([[item.id, randomUUID()]]);
-        const created: Item[] = [];
+        // New ids up front: the new parent id of a row is the new id of its source parent.
+        const newIds = new Map(subtree.map((r) => [r.id, randomUUID()]));
+        const rows: Prisma.ItemCreateManyInput[] = [];
         for (const r of subtree) {
-          const id = newIds.get(r.id) ?? randomUUID();
-          newIds.set(r.id, id);
-          const relPath = r.id === item.id ? rel : rel + r.path.slice(item.path.length);
-          const st = await statEntry(this.abs(dst, relPath)).catch(() => null);
+          const st = stats.get(r.path.slice(item.path.length));
           if (!st) continue; // vanished in the source before the copy (not indexed yet): not copied
-          created.push(await tx.item.create({
-            data: {
-              id, spaceId: dst.id, type: r.type, path: relPath,
-              parentId: r.id === item.id ? targetParent : newIds.get(r.parentId!)!,
-              name: r.id === item.id ? name : r.name, nameKey: r.id === item.id ? nameKey(name) : r.nameKey,
-              size: r.type === 'file' ? st.size : 0n, mtime: st.mtime, ino: st.ino, dev: st.dev,
-              contentHash: r.type === 'file' ? r.contentHash : null,
-            },
-          }));
+          const root = r.id === item.id;
+          rows.push({
+            id: newIds.get(r.id)!, spaceId: dst.id, type: r.type, path: root ? rel : rel + r.path.slice(item.path.length),
+            parentId: root ? targetParent : newIds.get(r.parentId!)!,
+            name: root ? name : r.name, nameKey: root ? nameKey(name) : r.nameKey,
+            size: r.type === 'file' ? st.size : 0n, mtime: st.mtime, ino: st.ino, dev: st.dev,
+            contentHash: r.type === 'file' ? r.contentHash : null,
+          });
         }
-        await this.announce(tx, dst, created);
-        return created[0];
-      }, TX_OPTS);
+        for (let i = 0; i < rows.length; i += CREATE_CHUNK) await tx.item.createMany({ data: rows.slice(i, i + CREATE_CHUNK) });
+        const top = await tx.item.findUniqueOrThrow({ where: { id: newIds.get(item.id)! } });
+        // Like announce(): only the top item can have same-key siblings, everything below is new.
+        const same = await this.store.sameKeySiblings(tx, dst.id, targetParent, [top.nameKey], new Set([top.id]));
+        await this.journal.record(tx, dst.id, [...rows.map((r) => ({ id: r.id!, type: r.type })), ...same], 'upsert');
+        return top;
+      }, { ...TX_OPTS, timeout: Math.max(TX_OPTS.timeout, stats.size * 5 + 30_000) });
     } catch (e) {
       // Rolled back after publishing: back to the temp name, removed below.
       const p = published as { tmp: string; to: string } | null;

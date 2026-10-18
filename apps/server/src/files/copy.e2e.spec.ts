@@ -68,6 +68,30 @@ describe('FilesService.copy', () => {
     expect(await live(home.id)).toHaveLength(4);
   });
 
+  it('copies a tree of 300 files into another space in one publish', async () => {
+    const big = await files.createFolder(home, null, 'Big');
+    for (let d = 0; d < 3; d++) await mkdir(path.join(home.rootPath, 'Big', `d${d}`, 'inner'), { recursive: true });
+    for (let i = 0; i < 300; i++) {
+      writeFileSync(path.join(home.rootPath, 'Big', `d${i % 3}`, i % 2 ? 'inner' : '', `f${i}.txt`), `file ${i}`);
+    }
+    await ctx.app.get(IndexerService).fullScan(home);
+    const source = (await live(home.id)).filter((r) => r.path.startsWith('Big'));
+    expect(source).toHaveLength(1 + 6 + 300);
+    const copy = await files.copy(home, team, big.id, null, { onConflict: 'fail' });
+    expect(copy).toMatchObject({ spaceId: team.id, path: 'Big', parentId: null, type: 'folder' });
+    const rows = await live(team.id);
+    expect(rows.map((r) => r.path)).toEqual(source.map((r) => r.path));
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    for (const r of rows) {
+      if (r.id !== copy.id) expect(byId.get(r.parentId!)?.path).toBe(path.posix.dirname(r.path));
+      const st = await stat(path.join(team.rootPath, r.path), { bigint: true });
+      expect([r.ino, r.dev, r.type === 'file' ? r.size : 0n]).toEqual([st.ino, st.dev, st.isDirectory() ? 0n : st.size]);
+    }
+    const before = rows.map((r) => [r.id, r.path, r.size, r.ino]);
+    await ctx.app.get(IndexerService).fullScan(team);
+    expect((await live(team.id)).map((r) => [r.id, r.path, r.size, r.ino])).toEqual(before);
+  });
+
   it('name conflict: fail reports the existing item, rename picks "Name (2)"', async () => {
     const { a } = await tree();
     const docs2 = await files.createFolder(home, null, 'Other');
