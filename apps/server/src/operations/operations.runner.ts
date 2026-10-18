@@ -260,7 +260,7 @@ export class OperationsRunner implements OnApplicationBootstrap, OnModuleDestroy
           ? await this.files.copy(src.space, dst.space, src.item.id, parentId, {
             onConflict: action === 'keepBoth' ? 'rename' : 'fail', onProgress: onBytes, signal,
             // Replace trashes the old item only once the copy is complete (a long copy may be cancelled).
-            ...(existing && action === 'replace' ? { beforePublish: () => this.files.remove(dst.space, existing.id, op.userId) } : {}),
+            ...(existing && action === 'replace' ? { beforePublish: () => this.trashIfUnchanged(dst.space, existing, op.userId) } : {}),
           })
           : await this.files.update(src.space, src.item.id, {
             parentId, targetSpace: dst.space,
@@ -274,6 +274,17 @@ export class OperationsRunner implements OnApplicationBootstrap, OnModuleDestroy
       }
     }
     return result('failed', { error: 'name_conflict' });
+  }
+
+  /**
+   * Trashes the item a copy replaces, but only while it is still the one decided on: live, same space,
+   * folder and name. Renamed, moved or deleted meanwhile → left alone; the publish then runs with
+   * `fail` and a name taken again sends the retry loop back to deciding.
+   */
+  private async trashIfUnchanged(space: IndexSpace, decided: Item, userId: string): Promise<void> {
+    const now = await this.prisma.item.findUnique({ where: { id: decided.id } });
+    if (!now || now.deletedAt || now.spaceId !== decided.spaceId || now.parentId !== decided.parentId || now.nameKey !== decided.nameKey) return;
+    await this.files.remove(space, decided.id, userId);
   }
 
   /** "Replace" never trashes one of the operation's own sources or a folder containing one. */
