@@ -16,7 +16,7 @@ function PlayBadge() {
   );
 }
 
-export function FileGrid({ items, label, selectedId, onSelect, onOpen, actions, multi }: ViewProps) {
+export function FileGrid({ items, label, selectedId, onSelect, onOpen, actions, multi, dnd }: ViewProps) {
   const { i18n } = useTranslation();
   const locale = i18n.language;
   const pointer = useItemPointer();
@@ -42,10 +42,15 @@ export function FileGrid({ items, label, selectedId, onSelect, onOpen, actions, 
             onPointerDown={pointer.onPointerDown}
             onClick={(e) => itemClick(item, e, pointer.isTouch(), onOpen, multi)}
             onDoubleClick={() => onOpen(item)}
+            draggable={!!dnd}
+            onDragStart={dnd ? (e) => dnd.onDragStart(item, e) : undefined}
+            onDragEnd={dnd?.onDragEnd}
+            {...(dnd && item.type === 'folder' ? dnd.target(item) : {})}
             className={cn(
               'group/card relative flex cursor-default flex-col rounded-xl border p-1.5 outline-none select-none transition-colors duration-100',
               'focus-visible:ring-3 focus-visible:ring-ring/50',
               selected ? 'border-primary/40 bg-accent-soft' : 'border-transparent hover:bg-accent/70',
+              'data-[drop=over]:border-primary data-[drop=over]:bg-primary/10',
             )}
           >
             <Thumbnail

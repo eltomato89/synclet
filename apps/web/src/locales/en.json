@@ -91,6 +91,10 @@
     "sortBy": "Sort by {{column}}",
     "itemActions": "Actions for {{name}}",
     "listLabel": "Contents of {{name}}",
+    "dnd": {
+      "count_one": "{{count}} item",
+      "count_other": "{{count}} items"
+    },
     "selection": {
       "count_one": "{{count}} selected",
       "count_other": "{{count}} selected",

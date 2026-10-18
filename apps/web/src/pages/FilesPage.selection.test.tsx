@@ -20,6 +20,8 @@ vi.mock('@/lib/auth', () => ({
 beforeAll(async () => {
   globalThis.ResizeObserver ??= class { observe() {} unobserve() {} disconnect() {} } as never;
   Element.prototype.scrollIntoView ??= () => {}; // not in jsdom
+  // Not in jsdom either: without it drag events are plain Events and lose altKey/ctrlKey.
+  globalThis.DragEvent ??= class DragEvent extends MouseEvent {} as never;
   await i18n.changeLanguage('en');
 });
 
@@ -240,4 +242,58 @@ it('right-click on a selected item offers the bulk menu', async () => {
   fireEvent.contextMenu(row('a.txt'));
   expect(await screen.findByRole('menuitem', { name: /Download \(ZIP\)/ })).toBeInTheDocument();
   expect(screen.queryByRole('menuitem', { name: /Rename/ })).toBeNull();
+});
+
+function dataTransfer() {
+  const data: Record<string, string> = {};
+  return {
+    data, types: [] as string[], effectAllowed: 'all', dropEffect: 'none',
+    setData(k: string, v: string) { data[k] = v; this.types.push(k); },
+    getData(k: string) { return data[k] ?? ''; },
+    setDragImage() {},
+  };
+}
+
+it('dragging the selection onto a folder moves it; with ⌥ it copies', async () => {
+  renderAt('/files');
+  await screen.findByText('a.txt');
+  fireEvent.click(row('a.txt'));
+  fireEvent.click(row('b.txt'), { shiftKey: true });
+  const dt = dataTransfer();
+  fireEvent.dragStart(row('a.txt'), { dataTransfer: dt });
+  expect(dt.types).toContain('application/x-synclet-items');
+  expect(fireEvent.dragOver(row('Box'), { dataTransfer: dt })).toBe(false); // preventDefault = accepted
+  fireEvent.drop(row('Box'), { dataTransfer: dt });
+  await waitFor(() => expect(posted()).toContainEqual(['/sync/v1/operations', { kind: 'move', itemIds: ['f_0', 'f_1'], targetId: 'd_9' }]));
+  fireEvent.dragStart(row('c.txt'), { dataTransfer: dt }); // not selected: drags only itself
+  fireEvent.drop(row('Box'), { dataTransfer: dt, altKey: true });
+  await waitFor(() => expect(posted()).toContainEqual(['/sync/v1/operations', { kind: 'copy', itemIds: ['f_2'], targetId: 'd_9' }]));
+});
+
+it('a dragged folder is no drop target for itself', async () => {
+  renderAt('/files');
+  await screen.findByText('Box');
+  const dt = dataTransfer();
+  fireEvent.dragStart(row('Box'), { dataTransfer: dt });
+  expect(fireEvent.dragOver(row('Box'), { dataTransfer: dt })).toBe(true); // not prevented = refused
+});
+
+it('with two selected the breadcrumb stays; dropping onto a parent segment moves there', async () => {
+  const sub = syncItem({ id: 'd_00000000-0000-4000-8000-000000000001', name: 'Projects', type: 'folder', kind: 'folder' });
+  const inner = ['x.txt', 'y.txt'].map((name, i) => syncItem({ id: `f_x${i}`, name, parentId: sub.id }));
+  folders[sub.id] = { folder: sub, items: inner };
+  renderAt(`/files/${sub.id}`);
+  await screen.findByText('x.txt');
+  fireEvent.click(row('x.txt'));
+  fireEvent.click(row('y.txt'), { shiftKey: true });
+  expect(screen.getByText('2 selected', { selector: 'span' })).toBeInTheDocument();
+  const crumb = await screen.findByRole('link', { name: 'My files' });
+  expect(screen.getByRole('navigation', { name: 'Folder path' })).toHaveTextContent('Projects');
+  const dt = dataTransfer();
+  fireEvent.dragStart(row('x.txt'), { dataTransfer: dt });
+  expect(fireEvent.dragOver(crumb, { dataTransfer: dt })).toBe(false);
+  // The current folder (last segment) refuses the drop.
+  expect(fireEvent.dragOver(screen.getByText('Projects', { selector: '[aria-current="page"]' }), { dataTransfer: dt })).toBe(true);
+  fireEvent.drop(crumb, { dataTransfer: dt });
+  await waitFor(() => expect(posted()).toContainEqual(['/sync/v1/operations', { kind: 'move', itemIds: ['f_x0', 'f_x1'], targetId: 'root' }]));
 });

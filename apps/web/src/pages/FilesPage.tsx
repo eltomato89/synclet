@@ -17,6 +17,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { Breadcrumbs } from '@/features/files/Breadcrumbs';
 import { type BulkActions, bulkCaps, downloadZip, shortcut } from '@/features/files/bulk';
 import { useClipboard } from '@/features/files/clipboard';
+import { useItemDnd } from '@/features/files/dnd';
 import { DropZone } from '@/features/files/DropZone';
 import { EmptyState, SkeletonRows, StatusMessage } from '@/features/files/EmptyState';
 import { errorKey } from '@/features/files/errors';
@@ -279,6 +280,16 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
     if (!canAdd || !c) return;
     void ops.start({ kind: 'copy', itemIds: c.itemIds, targetId: folderId });
   };
+  // Dragging onto a folder or breadcrumb segment moves; ⌥/Ctrl (or items that cannot move) copies.
+  const dnd = useItemDnd({
+    folderId,
+    selectedItems,
+    label: (count) => t('files.dnd.count', { count }),
+    onDrop: (targetId, ids, copy) => {
+      void ops.start({ kind: copy ? 'copy' : 'move', itemIds: ids, targetId });
+      if (!copy) dispatch({ type: 'clear' });
+    },
+  });
   const startUpload = () => fileInput.current?.click();
   const startFolderUpload = () => folderInput.current?.click();
   const newFolder = () => { if (canAdd) openDialog({ kind: 'newFolder' }); };
@@ -371,14 +382,15 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
   }
 
   // ---- topbar ---------------------------------------------------------------------------------
-  useTopbar(sel.count >= 2 ? (
-    <SelectionBar count={sel.count} caps={caps} actions={bulk} onClear={() => dispatch({ type: 'clear' })} />
-  ) : (
+  // The breadcrumbs always stay (they take drops); with two or more selected the selection bar replaces the actions.
+  useTopbar(
     <>
       <div className="min-w-0 flex-1">
-        <Breadcrumbs chain={ancestors.data ?? (ancestors.isError ? [] : undefined)} />
+        <Breadcrumbs chain={ancestors.data ?? (ancestors.isError ? [] : undefined)} dropTarget={(item) => dnd.target(item)} />
       </div>
-      <div className="flex shrink-0 items-center gap-1.5">
+      {sel.count >= 2 ? (
+        <SelectionBar count={sel.count} caps={caps} actions={bulk} onClear={() => dispatch({ type: 'clear' })} />
+      ) : <div className="flex shrink-0 items-center gap-1.5">
         {selectedItem && canShare(selectedItem) && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -465,9 +477,9 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
             <DropdownMenuItem onSelect={startFolderUpload}><FolderUp />{t('files.uploadFolder')}</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>}
-      </div>
-    </>
-  ));
+      </div>}
+    </>,
+  );
 
   // ---- body -----------------------------------------------------------------------------------
   const err = folderQ.error;
@@ -504,7 +516,7 @@ function FolderBrowser({ folderId, queue }: { folderId: string; queue: UploadQue
     };
     const viewProps = {
       items, label: t('files.listLabel', { name: folderName }), selectedId: focusId,
-      onSelect: (id: string) => dispatch({ type: 'focus', id }), onOpen: activate, actions, multi,
+      onSelect: (id: string) => dispatch({ type: 'focus', id }), onOpen: activate, actions, multi, dnd,
     };
     body = (
       <ContextMenu modal={false} onOpenChange={(o) => { if (!o) setMenuItem(null); }}>

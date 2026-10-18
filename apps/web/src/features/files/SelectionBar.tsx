@@ -23,16 +23,16 @@ function BarButton({ icon: Icon, label, onClick, disabled, reason, destructive }
   );
 }
 
-/** Replaces the topbar actions while two or more items are selected. */
+/** Replaces the topbar actions (next to the breadcrumbs) while two or more items are selected. */
 export function SelectionBar({ count, caps, actions, onClear }: { count: number; caps: BulkCaps; actions: BulkActions; onClear(): void }) {
   const { t } = useTranslation();
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-1.5">
+    <div className="flex shrink-0 items-center gap-1.5">
       <Button variant="ghost" size="icon-sm" onClick={onClear} aria-label={t('files.selection.clear')} className="text-muted-foreground">
         <X />
       </Button>
-      <span className="truncate text-sm font-semibold tabular-nums">{t('files.selection.count', { count })}</span>
-      <div className="ml-auto flex shrink-0 items-center gap-0.5">
+      <span className="text-sm font-semibold whitespace-nowrap tabular-nums">{t('files.selection.count', { count })}</span>
+      <div className="flex shrink-0 items-center gap-0.5">
         <BarButton icon={Download} label={t('files.bulk.download')} onClick={actions.download} />
         <BarButton icon={Copy} label={t('files.bulk.copy')} onClick={actions.copy} />
         <BarButton icon={FolderInput} label={t('files.bulk.move')} onClick={actions.move} disabled={!caps.move} reason={t('files.bulk.cannotMove')} />

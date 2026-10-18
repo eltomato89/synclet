@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { formatBytes, formatDate } from '@/lib/format';
 import { Checkbox } from '@/components/ui/checkbox';
 import { cn } from '@/lib/utils';
+import type { ItemDnd } from './dnd';
 import { type ItemActions, ItemMenuButton } from './FileActions';
 import { Thumbnail } from '@/features/preview/Thumbnail';
 import { FileIcon } from './FileIcon';
@@ -38,6 +39,8 @@ export interface ViewProps {
   actions: ItemActions;
   /** Absent (recent files): single selection. */
   multi?: MultiSelect;
+  /** Rows/cards draggable, folders take drops (file browser only). */
+  dnd?: ItemDnd;
 }
 
 /**
@@ -113,7 +116,7 @@ function SortHeader({ k, label, sort, onSort, className }: {
   );
 }
 
-export function FileList({ items, label, selectedId, onSelect, onOpen, actions, multi, sort, onSort, spaceOf }: ViewProps & {
+export function FileList({ items, label, selectedId, onSelect, onOpen, actions, multi, dnd, sort, onSort, spaceOf }: ViewProps & {
   /** Lists across spaces (recent files): the space name shown next to an item, or null for none. */
   spaceOf?(item: SyncItem): string | null;
   sort: { key: SortKey; dir: SortDir }; onSort(k: SortKey): void;
@@ -161,11 +164,16 @@ export function FileList({ items, label, selectedId, onSelect, onOpen, actions, 
               onPointerDown={pointer.onPointerDown}
               onClick={(e) => itemClick(item, e, pointer.isTouch(), onOpen, multi)}
               onDoubleClick={() => onOpen(item)}
+              draggable={!!dnd}
+              onDragStart={dnd ? (e) => dnd.onDragStart(item, e) : undefined}
+              onDragEnd={dnd?.onDragEnd}
+              {...(dnd && item.type === 'folder' ? dnd.target(item) : {})}
               className={cn(
                 'group/row h-12 cursor-default outline-none select-none sm:h-11',
                 '[&>td]:border-b [&>td]:border-border/70 [&>td]:transition-colors [&>td]:duration-100',
                 selected ? '[&>td]:bg-accent-soft' : 'hover:[&>td]:bg-accent/70',
                 'focus-visible:[&>td:first-child]:shadow-[inset_2px_0_0_var(--primary)]',
+                'data-[drop=over]:[&>td]:bg-primary/10',
               )}
             >
               {multi && (
