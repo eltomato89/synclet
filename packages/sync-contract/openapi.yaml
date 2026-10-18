@@ -1036,6 +1036,7 @@ paths:
         '400': { $ref: '#/components/responses/InvalidRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/SpaceUnavailable' }
   /sync/v1/zip/{ticket}:
     parameters:
       - { name: ticket, in: path, required: true, schema: { type: string } }
