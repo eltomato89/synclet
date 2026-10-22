@@ -13,6 +13,12 @@ import { IndexerService } from './indexer.service';
 export interface RawEvent { type: 'create' | 'update' | 'delete'; path: string }
 
 const IGNORE = ['**/.synclet-tmp-*', '**/.synclet-trash-*'];
+/**
+ * inotify on Linux, named explicitly: the default backend first probes for watchman via popen(), and
+ * without watchman installed that probe throws before its pclose(), leaving a `[sh] <defunct>` child.
+ * Elsewhere (macOS dev) the platform default applies.
+ */
+const BACKEND = process.platform === 'linux' ? { backend: 'inotify' as const } : {};
 const SUBSCRIBE_TIMEOUT_MS = 60_000;
 const SHUTDOWN_UNSUBSCRIBE_MS = 3_000;
 
@@ -152,7 +158,7 @@ export class WatcherService implements OnApplicationBootstrap, OnModuleDestroy {
   /** Subscription seam (spied on in tests). */
   protected async subscribe(dir: string, onEvents: (err: Error | null, events: RawEvent[]) => void): Promise<AsyncSubscription> {
     const watcher = await import('@parcel/watcher');
-    return watcher.subscribe(dir, onEvents, { ignore: IGNORE });
+    return watcher.subscribe(dir, onEvents, { ignore: IGNORE, ...BACKEND });
   }
 
   /** Runs a native watcher call after all queued ones (one at a time). */
