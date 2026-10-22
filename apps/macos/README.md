@@ -107,6 +107,13 @@ cp build/Synclet-<version>.dmg build/Synclet.dmg
 gh release create v<version> build/Synclet.dmg --title "Synclet <version>" --notes "…"
 ```
 
+Releases without macOS changes need no local build: the `macOS DMG` workflow
+(`.github/workflows/macos-dmg.yml`, runs `attach_release_dmg.sh`) carries the `Synclet.dmg` of the
+previous release over to every published release, as long as `apps/macos` and `apps/apple` are unchanged
+between the two tags (Markdown files are ignored). If the app changed, the workflow fails and names the
+steps above; once the DMG is attached, nothing else is needed. To retry for an existing release, run the
+workflow by hand with its tag, or run `apps/macos/attach_release_dmg.sh v<version>` locally.
+
 ### One-time setup on the build Mac
 
 1. **Developer ID Application certificate** of team `JC32M95WLZ` in the login keychain. Either:

@@ -1,0 +1,36 @@
+name: macOS DMG
+
+# Published release (tag v1.2.3): attaches Synclet.dmg (the README and website link to
+# releases/latest/download/Synclet.dmg). The notarized DMG is built on the build Mac, not in CI, so this
+# carries over the DMG of the previous release while apps/macos and apps/apple are unchanged. If the app
+# changed (or the release already has its own DMG), see apps/macos/attach_release_dmg.sh and
+# apps/macos/README.md, "Publishing a release".
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to attach Synclet.dmg to (e.g. v0.1.9)
+        required: true
+
+permissions:
+  contents: write # gh release upload
+
+concurrency:
+  group: macos-dmg-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  attach:
+    runs-on: ubuntu-24.04
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags for the diff against the previous release
+      - name: Attach Synclet.dmg
+        run: apps/macos/attach_release_dmg.sh "$TAG"
