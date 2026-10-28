@@ -59,6 +59,15 @@ simulator on exit. `BrowserFlowUITests` (iPhone layout, German) creates a folder
 opens it in QuickLook, renames, deletes, restores it from "Trash", finds it in "Search" and
 creates a share link.
 
+## App Store screenshots
+
+```sh
+bash scripts/ios-store-screenshots.sh   # → apps/ios/build/store-screenshots/{iphone,ipad}-{en,de}/
+```
+
+Six scenes (`StoreScreenshotsUITests`) with the website's sample data on a throwaway stack, on an
+iPhone 17 Pro Max (6.9", 1320 × 2868) and an iPad Pro 13-inch (2752 × 2064, landscape).
+
 ## Debug sign-in without the browser
 
 Debug builds accept a device token registered beforehand (UI tests, scripted checks):
@@ -67,7 +76,8 @@ Debug builds accept a device token registered beforehand (UI tests, scripted che
 -SyncletTestServer http://localhost:18140 -SyncletTestToken syd_…
 ```
 
-Both arguments are required. Release builds do not contain this code path.
+Both arguments are required. Release builds do not contain this code path. `-SyncletTestDisplayHost files.example.com`
+shows that host in account titles instead of the real one (App Store screenshots).
 
 ## App icon
 
