@@ -13,7 +13,7 @@ settings:
   base:
     DEVELOPMENT_TEAM: JC32M95WLZ
     CODE_SIGN_STYLE: Automatic
-    MARKETING_VERSION: "0.1.1"
+    MARKETING_VERSION: "0.1.8"
     CURRENT_PROJECT_VERSION: 1
     SWIFT_VERSION: "6.0"
     TARGETED_DEVICE_FAMILY: "1,2"
@@ -32,6 +32,9 @@ targets:
           - "**/.*.swp"
       # Shared with the Share extension (ShareTarget, upload signal, failure texts).
       - path: Shared
+      # Privacy manifest (each bundle needs its own copy).
+      - path: PrivacyInfo.xcprivacy
+        buildPhase: resources
     dependencies:
       - package: SyncletKit
       - target: SyncletFileProvider
@@ -87,6 +90,9 @@ targets:
     platform: iOS
     sources:
       - SyncletFileProvider
+      # Privacy manifest (each bundle needs its own copy).
+      - path: PrivacyInfo.xcprivacy
+        buildPhase: resources
     dependencies:
       - package: SyncletKit
     info:
@@ -118,6 +124,9 @@ targets:
     sources:
       - SyncletShare
       - Shared
+      # Privacy manifest (each bundle needs its own copy).
+      - path: PrivacyInfo.xcprivacy
+        buildPhase: resources
     dependencies:
       - package: SyncletKit
     info:

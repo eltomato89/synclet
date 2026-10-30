@@ -13,6 +13,15 @@ enum TestLogin {
         var token: String
     }
 
+    /// `-SyncletTestDisplayHost <host>`: the host shown in account titles instead of the real one
+    /// (App Store screenshots against a local server).
+    static let displayHost: String? = {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-SyncletTestDisplayHost"), index + 1 < arguments.count else { return nil }
+        let host = arguments[index + 1]
+        return host.isEmpty || host.hasPrefix("-") ? nil : host
+    }()
+
     /// The request in `arguments`, if both values are present and valid.
     static func request(from arguments: [String]) -> Request? {
         func value(after flag: String) -> String? {

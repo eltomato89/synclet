@@ -25,7 +25,12 @@ struct AccountEntry: Identifiable, Equatable, Sendable {
 
     var id: String { account.key }
     /// `<username>@<host[:port]>`.
-    var title: String { "\(account.username)@\(ServerURL.displayHost(account.serverURL))" }
+    var title: String {
+        #if DEBUG
+        if let host = TestLogin.displayHost { return "\(account.username)@\(host)" }
+        #endif
+        return "\(account.username)@\(ServerURL.displayHost(account.serverURL))"
+    }
 }
 
 /// Lifting the system's throttling of failed File Provider operations (replaceable in tests).
