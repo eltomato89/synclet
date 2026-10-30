@@ -1,27 +1,34 @@
-// App Store images of the iOS app: the screenshots of scripts/ios-store-screenshots.sh in a device
-// frame on a large folder (Synclet's promise: it stays a plain folder), with one headline and one
-// sentence per image, in English and German. The first image is the hook: `ls` of the Photos
-// folder next to the same folder in the app.
+// Store images of the iOS and Android apps: the screenshots of scripts/ios-store-screenshots.sh or
+// scripts/android-store-screenshots.sh in a device frame on a large folder, with one headline and one
+// sentence per image, in English and German. The first image is the hook: your own cloud, shown as
+// `ls` of the Photos folder at home next to the same folder in the app.
 //
-//   node scripts/store-images.ts
+//   node scripts/store-images.ts            # iOS (App Store)
+//   node scripts/store-images.ts android    # Android (Google Play)
 //
-// Reads apps/ios/build/store-screenshots/{iphone,ipad}-{en,de}/0N-*.png and writes
-// apps/ios/build/app-store/images/{iphone,ipad}-{en,de}/0N-*.png at the exact App Store sizes
-// (iPhone 6.9" 1320 × 2868, iPad 13" 2752 × 2064), opaque RGB. Needs Playwright's Chromium.
+// iOS: reads apps/ios/build/store-screenshots/{iphone,ipad}-{en,de}/0N-*.png and writes
+// apps/ios/build/app-store/images/{iphone,ipad}-{en,de}/ at the exact App Store sizes (iPhone 6.9"
+// 1320 × 2868, iPad 13" 2752 × 2064). Android: reads apps/android/build/store-screenshots/
+// {phone,tablet}-{en,de}/ and writes apps/android/build/play-store/images/{phone,tablet}-{en,de}/ in
+// 9:16 (phone, 1440 × 2560) and 16:9 (tablet, 2560 × 1440), Play's ratios for promoted screenshots.
+// Opaque RGB. Needs Playwright's Chromium.
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import sharp from 'sharp';
 import { ROOT, SITE } from './sample-stack.ts';
 
-const SHOTS = path.join(ROOT, 'apps/ios/build/store-screenshots');
-const OUT = path.join(ROOT, 'apps/ios/build/app-store/images');
+const ANDROID = process.argv[2] === 'android';
+const SHOTS = path.join(ROOT, ANDROID ? 'apps/android/build/store-screenshots' : 'apps/ios/build/store-screenshots');
+const OUT = path.join(ROOT, ANDROID ? 'apps/android/build/play-store/images' : 'apps/ios/build/app-store/images');
 const FONT = readFileSync(path.join(SITE, 'node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2')).toString('base64');
 const FONT_EXT = readFileSync(path.join(SITE, 'node_modules/@fontsource-variable/inter/files/inter-latin-ext-wght-normal.woff2')).toString('base64');
 
 type Lang = 'en' | 'de';
 // `term`: a terminal next to the device (command, then its output); `hero`: the dark first image.
-type Scene = { out: string; shot: string; hero?: boolean; term?: { command: string; output: string[] }; copy: Record<Lang, { title: string; text: string }> };
+// `android`: the text on Google Play, where it differs (no Apple device names).
+type Scene = { out: string; shot: string; hero?: boolean; term?: { command: string; output: string[] }; copy: Record<Lang, { title: string; text: string }>;
+  android?: Record<Lang, string> };
 /** What `ls -1 Photos` prints for the sample folder (GNU ls quotes names with spaces). */
 const LS = ['Canyon.jpg', 'Cliffs.jpg', 'Coast.jpg', "'Desert road.jpg'", 'Dunes.jpg', "'Fjord morning.jpg'",
   "'Forest trail.jpg'", "'Glacier hike.jpg'", 'Harbour.jpg', "'Island ferry.jpg'", 'Lighthouse.jpg', "'Lisbon sunset.jpg'"];
@@ -35,6 +42,9 @@ const SCENES: Scene[] = [
   { out: '01-own-cloud', shot: '02-photos', hero: true, term: { command: 'ls -1 Photos', output: LS }, copy: {
     en: { title: 'Your own cloud.', text: 'Your photos and files on your own server, not on someone else’s. For iPhone, iPad, Mac and the browser.' },
     de: { title: 'Deine eigene Cloud.', text: 'Fotos und Dateien auf deinem eigenen Server statt bei einem Konzern. Für iPhone, iPad, Mac und Browser.' },
+  }, android: {
+    en: 'Your photos and files on your own server, not on someone else’s. On your phone, tablet, computer and in the browser.',
+    de: 'Fotos und Dateien auf deinem eigenen Server statt bei einem Konzern. Auf Handy, Tablet, Computer und im Browser.',
   } },
   { out: '02-server', shot: '07-server', term: { command: 'docker compose up -d', output: DOCKER }, copy: {
     en: { title: 'Your server, your rules', text: 'Install the free Synclet server with Docker on a Linux machine or NAS. The app connects only to it.' },
@@ -69,10 +79,14 @@ const SLATE = '#5d6b6d';
 const FJORD = '#08808b';
 const FJORD_LIGHT = '#cfe7e9';
 
+type Kind = 'iphone' | 'ipad' | 'phone' | 'tablet';
+// width × height: the image; screenW × screenH: the screenshot (phone: Pixel 7, tablet: Pixel Tablet).
 type Device = { width: number; height: number; screenW: number; screenH: number; radius: number; bezel: number };
-const DEVICES: Record<'iphone' | 'ipad', Device> = {
+const DEVICES: Record<Kind, Device> = {
   iphone: { width: 1320, height: 2868, screenW: 1320, screenH: 2868, radius: 186, bezel: 34 },
   ipad: { width: 2752, height: 2064, screenW: 2752, screenH: 2064, radius: 60, bezel: 46 },
+  phone: { width: 1440, height: 2560, screenW: 1080, screenH: 2400, radius: 90, bezel: 30 },
+  tablet: { width: 2560, height: 1440, screenW: 2560, screenH: 1600, radius: 50, bezel: 40 },
 };
 
 /** A folder: rounded body plus the tab on the top left (w × h, tab th high). */
@@ -83,14 +97,15 @@ function folder(w: number, h: number, th: number, r: number, fill: string) {
   return `<svg class="folder" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><path d="${d}" fill="${fill}"/></svg>`;
 }
 
-function page(kind: 'iphone' | 'ipad', scene: Scene, lang: Lang, shot: string) {
+function page(kind: Kind, scene: Scene, lang: Lang, shot: string) {
   const dev = DEVICES[kind];
   const hero = !!scene.hero;
   const bg = hero ? INK : FOG;
   const fg = hero ? '#f4f8f8' : INK;
   const muted = hero ? '#a9b8ba' : SLATE;
   const folderFill = hero ? FJORD : FJORD_LIGHT;
-  const { title, text } = scene.copy[lang];
+  const { title } = scene.copy[lang];
+  const text = (ANDROID && scene.android?.[lang]) || scene.copy[lang].text;
   const img = `data:image/png;base64,${shot}`;
 
   // Layout per device: device size and position, folder behind it, text block.
@@ -109,6 +124,25 @@ function page(kind: 'iphone' | 'ipad', scene: Scene, lang: Lang, shot: string) {
       // A short output: the terminal across the top, the device below it.
       frame = { x: 230, y: 1290, w: 860 };
       term = { x: 110, y: 830, w: 1100, h: 0, size: 33 };
+    }
+  } else if (kind === 'phone') {
+    frame = { x: 250, y: 880, w: 940 };
+    fold = { x: 110, y: 750, w: 1220, h: 2200, th: 120 };
+    textCss = 'left:110px; top:150px; width:1220px; --title:112px; --text:50px;';
+    if (hero) {
+      frame = { x: 800, y: 900, w: 560 };
+      term = { x: 80, y: 760, w: 680, h: 1060, size: 33 };
+    } else if (scene.term) {
+      frame = { x: 290, y: 1220, w: 860 };
+      term = { x: 110, y: 760, w: 1220, h: 0, size: 34 };
+    }
+  } else if (kind === 'tablet') {
+    frame = { x: 960, y: 230, w: 1500 };
+    fold = { x: 860, y: 120, w: 1640, h: 1400, th: 110 };
+    textCss = 'left:130px; top:400px; width:700px; --title:96px; --text:44px;';
+    if (scene.term) {
+      textCss = 'left:130px; top:150px; width:740px; --title:96px; --text:42px;';
+      term = { x: 130, y: 640, w: 720, h: 720, size: hero ? 30 : 26 };
     }
   } else {
     frame = { x: 1060, y: 330, w: 1740 };
@@ -153,8 +187,8 @@ ${term ? `<div class="term" style="left:${term.x}px; top:${term.y}px; width:${te
 
 const browser = await chromium.launch();
 try {
-  for (const set of readdirSync(SHOTS).filter((d) => /^(iphone|ipad)-(en|de)$/.test(d)).sort()) {
-    const [kind, lang] = set.split('-') as ['iphone' | 'ipad', Lang];
+  for (const set of readdirSync(SHOTS).filter((d) => (ANDROID ? /^(phone|tablet)-(en|de)$/ : /^(iphone|ipad)-(en|de)$/).test(d)).sort()) {
+    const [kind, lang] = set.split('-') as [Kind, Lang];
     const dev = DEVICES[kind];
     const ctx = await browser.newContext({ viewport: { width: dev.width, height: dev.height }, deviceScaleFactor: 1 });
     const pageHandle = await ctx.newPage();

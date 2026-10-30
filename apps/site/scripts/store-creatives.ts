@@ -2,11 +2,14 @@
 // (your own cloud: `ls` of the Photos folder at home next to the same folder in the app) as wide
 // artwork, in English and German.
 //
-//   node scripts/store-creatives.ts
+//   node scripts/store-creatives.ts            # App Store
+//   node scripts/store-creatives.ts android    # Google Play feature graphic
 //
-// Reads the screenshots of scripts/ios-store-screenshots.sh (02-photos of iPad and iPhone) and writes
+// iOS: reads the screenshots of scripts/ios-store-screenshots.sh (02-photos of iPad and iPhone) and writes
 // apps/ios/build/app-store/creatives/<lang>/{header-21x9,search-3x2,universal-16x9}.png at Apple's
-// sizes (3840 × 1646, 3840 × 2560, 5244 × 2950), opaque RGB. Apple's exact safe areas are only in
+// sizes (3840 × 1646, 3840 × 2560, 5244 × 2950). Android: from scripts/android-store-screenshots.sh
+// (tablet and phone) apps/android/build/play-store/creatives/<lang>/feature-graphic.png (1024 × 500).
+// Opaque RGB. Apple's exact safe areas are only in
 // its design templates, so the key art stays in the middle and the edges carry only background.
 import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -14,8 +17,9 @@ import { chromium } from 'playwright';
 import sharp from 'sharp';
 import { ROOT, SITE } from './sample-stack.ts';
 
-const SHOTS = path.join(ROOT, 'apps/ios/build/store-screenshots');
-const OUT = path.join(ROOT, 'apps/ios/build/app-store/creatives');
+const ANDROID = process.argv[2] === 'android';
+const SHOTS = path.join(ROOT, ANDROID ? 'apps/android/build/store-screenshots' : 'apps/ios/build/store-screenshots');
+const OUT = path.join(ROOT, ANDROID ? 'apps/android/build/play-store/creatives' : 'apps/ios/build/app-store/creatives');
 const font = (f: string) => readFileSync(path.join(SITE, 'node_modules/@fontsource-variable/inter/files', f)).toString('base64');
 const FONT = font('inter-latin-wght-normal.woff2');
 const FONT_EXT = font('inter-latin-ext-wght-normal.woff2');
@@ -41,6 +45,16 @@ type Layout = {
   iphone?: Box;
   folder: { x: number; y: number; w: number; h: number };
 };
+// Google Play's feature graphic: small, so a short text, the tablet and the phone (no terminal).
+const PLAY_LAYOUTS: Layout[] = [
+  {
+    name: 'feature-graphic', width: 1024, height: 500,
+    text: { x: 56, y: 150, w: 400, title: 50, size: 21, align: 'left', short: true },
+    ipad: { x: 480, y: 110, w: 470 },
+    iphone: { x: 880, y: 190, w: 110 },
+    folder: { x: 450, y: 60, w: 560, h: 520 },
+  },
+];
 const LAYOUTS: Layout[] = [
   {
     name: 'header-21x9', width: 3840, height: 1646,
@@ -104,8 +118,8 @@ p { margin: 0.8em 0 0; font-size: ${t.size}px; line-height: 1.35; font-weight: 4
 .term .bar i { width: 0.6em; height: 0.6em; border-radius: 50%; background: #2f3b3d; }
 </style></head><body>
 <div class="abs" style="left:${l.folder.x}px; top:${l.folder.y}px">${folder(l.folder.w, l.folder.h, l.folder.w * 0.07, l.folder.w * 0.025, FJORD)}</div>
-${l.ipad ? device(l.ipad, ipad, 60, Math.round(l.ipad.w * 0.026)) : ''}
-${l.iphone ? device(l.iphone, iphone, 186, Math.round(l.iphone.w * 0.035)) : ''}
+${l.ipad ? device(l.ipad, ipad, ANDROID ? 50 : 60, Math.round(l.ipad.w * 0.026)) : ''}
+${l.iphone ? device(l.iphone, iphone, ANDROID ? 90 : 186, Math.round(l.iphone.w * 0.035)) : ''}
 ${l.term ? `<div class="term" style="left:${l.term.x}px; top:${l.term.y}px; width:${l.term.w}px; --mono:${l.term.size}px">
 <div class="bar"><i></i><i></i><i></i></div><div><span class="prompt">alex@home ~ $</span> ls -1 Photos</div>${LS.map((n) => `<div>${n}</div>`).join('')}</div>` : ''}
 <div class="abs text"><h1>${c.title}</h1><p>${t.short ? c.short : c.text}</p></div>
@@ -120,10 +134,10 @@ async function shot(file: string) {
 const browser = await chromium.launch();
 try {
   for (const lang of ['en', 'de'] as const) {
-    const ipad = await shot(path.join(SHOTS, `ipad-${lang}`, '02-photos.png'));
-    const iphone = await shot(path.join(SHOTS, `iphone-${lang}`, '02-photos.png'));
+    const ipad = await shot(path.join(SHOTS, `${ANDROID ? 'tablet' : 'ipad'}-${lang}`, '02-photos.png'));
+    const iphone = await shot(path.join(SHOTS, `${ANDROID ? 'phone' : 'iphone'}-${lang}`, '02-photos.png'));
     mkdirSync(path.join(OUT, lang), { recursive: true });
-    for (const l of LAYOUTS) {
+    for (const l of ANDROID ? PLAY_LAYOUTS : LAYOUTS) {
       const ctx = await browser.newContext({ viewport: { width: l.width, height: l.height }, deviceScaleFactor: 1 });
       const p = await ctx.newPage();
       await p.setContent(page(l, lang, ipad, iphone));

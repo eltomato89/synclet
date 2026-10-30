@@ -84,6 +84,15 @@ Run on a phone and a tablet before a release. Each step lists the expected resul
 4. The **first AAB must be uploaded by hand** in the Play Console (create the app there first). Later releases can use `--play`.
 5. For `--play`, create a service account with the permission "Release to testing tracks", keep its JSON outside the repository and point `SYNCLET_PLAY_CREDENTIALS` (or `playCredentials` in `keystore.properties`) at it.
 
+## Google Play screenshots
+
+`scripts/android-store-screenshots.sh` starts the website's sample stack (Docker) and takes seven screenshots per language (English, German) on a phone (AVD `SyncletPixel`) and a tablet (AVD `SyncletTablet`, created on first use) with `StoreScreenshotsTest`: grid layout, the account shown as `alex@files.example.com` (`Account.displayHostOverride`), the status bar in demo mode. Output: `apps/android/build/store-screenshots/{phone,tablet}-{en,de}/`.
+
+From those, in `apps/site`:
+
+- `pnpm store-images android`: the store images with captions, phone 1440 × 2560 (9:16) and tablet 2560 × 1440 (16:9), in `apps/android/build/play-store/images/`.
+- `pnpm store-creatives android`: the feature graphic (1024 × 500) in `apps/android/build/play-store/creatives/<lang>/`.
+
 ## Google Play data safety (copy into the Play Console)
 
 Description:

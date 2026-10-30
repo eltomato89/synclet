@@ -23,9 +23,15 @@ data class Account(
 ) {
     val origin: HttpUrl get() = serverUrl.toHttpUrl()
     val host: String get() = origin.let { if (it.port == HttpUrl.defaultPort(it.scheme)) it.host else "${it.host}:${it.port}" }
-    val title: String get() = "$username@$host"
+    val title: String get() = "$username@${displayHostOverride ?: host}"
 
     companion object {
+        /**
+         * Shown instead of the real host in [title]. Only the store screenshots set it (instrumented test in the
+         * debug build), so they show a plausible address instead of the emulator's 10.0.2.2:<port>.
+         */
+        @Volatile var displayHostOverride: String? = null
+
         fun from(origin: HttpUrl, account: SyncAccount, now: Long): Account = Account(
             key = account.organizationId,
             serverUrl = origin.toString().trimEnd('/'),
