@@ -20,38 +20,46 @@ const FONT = readFileSync(path.join(SITE, 'node_modules/@fontsource-variable/int
 const FONT_EXT = readFileSync(path.join(SITE, 'node_modules/@fontsource-variable/inter/files/inter-latin-ext-wght-normal.woff2')).toString('base64');
 
 type Lang = 'en' | 'de';
-type Scene = { out: string; shot: string; hero?: boolean; copy: Record<Lang, { title: string; text: string }> };
+// `term`: a terminal next to the device (command, then its output); `hero`: the dark first image.
+type Scene = { out: string; shot: string; hero?: boolean; term?: { command: string; output: string[] }; copy: Record<Lang, { title: string; text: string }> };
+/** What `ls -1 Photos` prints for the sample folder (GNU ls quotes names with spaces). */
+const LS = ['Canyon.jpg', 'Cliffs.jpg', 'Coast.jpg', "'Desert road.jpg'", 'Dunes.jpg', "'Fjord morning.jpg'",
+  "'Forest trail.jpg'", "'Glacier hike.jpg'", 'Harbour.jpg', "'Island ferry.jpg'", 'Lighthouse.jpg', "'Lisbon sunset.jpg'"];
+/** `docker compose up -d` of deploy/compose.yml. */
+const DOCKER = ['✔ Container synclet-postgres-1  Healthy', '✔ Container synclet-server-1    Started',
+  '✔ Container synclet-worker-1    Started', '✔ Container synclet-caddy-1     Started'];
+
 // The first image is the hook: a bare `ls` of the Photos folder next to the same folder in the app.
 const SCENES: Scene[] = [
-  { out: '01-folder', shot: '02-photos', hero: true, copy: {
+  { out: '01-folder', shot: '02-photos', hero: true, term: { command: 'ls -1 Photos', output: LS }, copy: {
     en: { title: 'It’s just a folder.', text: 'Synclet makes it a cloud drive for your iPhone, iPad, Mac and browser.' },
     de: { title: 'Es ist nur ein Ordner.', text: 'Synclet macht daraus einen Cloud-Speicher für iPhone, iPad, Mac und Browser.' },
   } },
-  { out: '02-files', shot: '01-files', copy: {
+  { out: '02-server', shot: '07-server', term: { command: 'docker compose up -d', output: DOCKER }, copy: {
+    en: { title: 'Runs on your own server', text: 'The app connects to your Synclet server. You install it with Docker on a Linux machine or NAS.' },
+    de: { title: 'Läuft auf deinem eigenen Server', text: 'Die App verbindet sich mit deinem Synclet-Server. Den installierst du per Docker auf einem Linux-Rechner oder NAS.' },
+  } },
+  { out: '03-files', shot: '01-files', copy: {
     en: { title: 'Your files stay files', text: 'No database blobs, no metadata in your folders. Stop using Synclet and nothing moves.' },
     de: { title: 'Deine Dateien bleiben Dateien', text: 'Keine Datenbank, keine Metadaten in deinen Ordnern. Hörst du auf, bleibt alles, wo es ist.' },
   } },
-  { out: '03-preview', shot: '03-preview', copy: {
+  { out: '04-preview', shot: '03-preview', copy: {
     en: { title: 'Tap to open', text: 'Photos, videos, PDFs and text files open right in the app.' },
     de: { title: 'Antippen und ansehen', text: 'Fotos, Videos, PDFs und Texte öffnen direkt in der App.' },
   } },
-  { out: '04-spaces', shot: '04-spaces', copy: {
+  { out: '05-spaces', shot: '04-spaces', copy: {
     en: { title: 'Shared with your family', text: 'Shared folders and your NAS shares, with read or write access per person.' },
     de: { title: 'Gemeinsam mit der Familie', text: 'Geteilte Ordner und deine NAS-Freigaben, mit Lese- oder Schreibrechten.' },
   } },
-  { out: '05-search', shot: '05-search', copy: {
+  { out: '06-search', shot: '05-search', copy: {
     en: { title: 'Finds what’s inside', text: 'Search looks at file names and the text in your documents.' },
     de: { title: 'Findet auch, was drinsteht', text: 'Die Suche kennt Dateinamen und den Text in deinen Dokumenten.' },
   } },
-  { out: '06-share', shot: '06-share', copy: {
+  { out: '07-share', shot: '06-share', copy: {
     en: { title: 'Share with a link', text: 'Add a password and an expiry date if you like.' },
     de: { title: 'Teilen per Link', text: 'Auf Wunsch mit Passwort und Ablaufdatum.' },
   } },
 ];
-
-/** What `ls ~/Photos` prints for the sample folder (GNU ls quotes names with spaces). */
-const LS = ['Canyon.jpg', 'Cliffs.jpg', 'Coast.jpg', "'Desert road.jpg'", 'Dunes.jpg', "'Fjord morning.jpg'",
-  "'Forest trail.jpg'", "'Glacier hike.jpg'", 'Harbour.jpg', "'Island ferry.jpg'", 'Lighthouse.jpg', "'Lisbon sunset.jpg'"];
 
 // Site tokens (apps/site/src/styles.css): Fog, Paper, Ink, Slate, Fjord.
 const FOG = '#f2f6f6';
@@ -96,14 +104,18 @@ function page(kind: 'iphone' | 'ipad', scene: Scene, lang: Lang, shot: string) {
     if (hero) {
       frame = { x: 590, y: 1060, w: 650 };
       term = { x: 80, y: 760, w: 640, h: 1080, size: 34 };
+    } else if (scene.term) {
+      // A short output: the terminal across the top, the device below it.
+      frame = { x: 230, y: 1290, w: 860 };
+      term = { x: 110, y: 830, w: 1100, h: 0, size: 33 };
     }
   } else {
     frame = { x: 1060, y: 330, w: 1740 };
     fold = { x: 940, y: 170, w: 1900, h: 2000, th: 130 };
     textCss = 'left:150px; top:560px; width:760px; --title:112px; --text:50px;';
-    if (hero) {
+    if (scene.term) {
       textCss = 'left:150px; top:200px; width:800px; --title:112px; --text:50px;';
-      term = { x: 150, y: 900, w: 780, h: 1000, size: 38 };
+      term = { x: 150, y: 900, w: 780, h: 1000, size: hero ? 38 : 30 };
     }
   }
   const s = frame.w / dev.screenW;
@@ -125,13 +137,14 @@ p { margin: 0.9em 0 0; font-size: var(--text); line-height: 1.35; font-weight: 4
 .term { position: absolute; background: #0a1112; border-radius: 28px; box-shadow: 0 0 0 2px #2b3739 inset;
   font: 400 var(--mono)/1.5 'SF Mono', Menlo, ui-monospace, monospace; color: #c8d6d8; padding: 1.6em 1.4em; box-sizing: border-box; overflow: hidden; }
 .term .prompt { color: #7fd1d8; }
+.term div { white-space: pre; }
 .term .bar { display: flex; gap: 14px; margin: -0.4em 0 1.1em; }
 .term .bar i { width: 22px; height: 22px; border-radius: 50%; background: #2f3b3d; }
 .device img { display: block; width: ${frame.w}px; height: ${screenH}px; border-radius: ${radius}px; }
 </style></head><body>
-${hero ? '' : folder(fold.w, fold.h, fold.th, 44, folderFill)}
-${term ? `<div class="term" style="left:${term.x}px; top:${term.y}px; width:${term.w}px; height:${term.h}px; --mono:${term.size}px">
-<div class="bar"><i></i><i></i><i></i></div><div><span class="prompt">~ $</span> ls -1 Photos</div>${LS.map((n) => `<div>${n}</div>`).join('')}</div>` : ''}
+${scene.term ? '' : folder(fold.w, fold.h, fold.th, 44, folderFill)}
+${term ? `<div class="term" style="left:${term.x}px; top:${term.y}px; width:${term.w}px; ${hero ? `height:${term.h}px;` : ''} --mono:${term.size}px">
+<div class="bar"><i></i><i></i><i></i></div><div><span class="prompt">~ $</span> ${scene.term!.command}</div>${scene.term!.output.map((n) => `<div>${n}</div>`).join('')}</div>` : ''}
 <div class="device"><img src="${img}" alt=""></div>
 <div class="text"><h1>${title}</h1><p>${text}</p></div>
 </body></html>`;
