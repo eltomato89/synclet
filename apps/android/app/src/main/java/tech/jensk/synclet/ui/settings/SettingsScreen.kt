@@ -40,6 +40,7 @@ import tech.jensk.synclet.core.account.ViewMode
 import tech.jensk.synclet.ui.components.formatBytes
 
 private const val PROJECT_URL = "https://github.com/eltomato89/synclet"
+private const val PRIVACY_URL = "https://eltomato89.github.io/synclet/privacy.html"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -92,6 +93,12 @@ fun SettingsScreen(graph: AppGraph, onBack: () -> Unit) {
                 supportingContent = { Text(PROJECT_URL) },
                 modifier = Modifier.selectable(selected = false, role = Role.Button) {
                     runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(PROJECT_URL))) }
+                },
+            )
+            ListItem(
+                headlineContent = { Text(stringResource(R.string.settings_privacy_policy)) },
+                modifier = Modifier.selectable(selected = false, role = Role.Button) {
+                    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(PRIVACY_URL))) }
                 },
             )
         }

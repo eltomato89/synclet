@@ -42,4 +42,5 @@
     <string name="settings_about">About</string>
     <string name="settings_version">Version %1$s</string>
     <string name="settings_project_page">Project page</string>
+    <string name="settings_privacy_policy">Privacy policy</string>
 </resources>
