@@ -29,23 +29,24 @@ const LS = ['Canyon.jpg', 'Cliffs.jpg', 'Coast.jpg', "'Desert road.jpg'", 'Dunes
 const DOCKER = ['✔ Container synclet-postgres-1  Healthy', '✔ Container synclet-server-1    Started',
   '✔ Container synclet-worker-1    Started', '✔ Container synclet-caddy-1     Started'];
 
-// The first image is the hook: a bare `ls` of the Photos folder next to the same folder in the app.
+// The first image is the hook: your own cloud, shown as the Photos folder on your own machine
+// (`ls`) next to the same folder in the app.
 const SCENES: Scene[] = [
-  { out: '01-folder', shot: '02-photos', hero: true, term: { command: 'ls -1 Photos', output: LS }, copy: {
-    en: { title: 'It’s just a folder.', text: 'Synclet makes it a cloud drive for your iPhone, iPad, Mac and browser.' },
-    de: { title: 'Es ist nur ein Ordner.', text: 'Synclet macht daraus einen Cloud-Speicher für iPhone, iPad, Mac und Browser.' },
+  { out: '01-own-cloud', shot: '02-photos', hero: true, term: { command: 'ls -1 Photos', output: LS }, copy: {
+    en: { title: 'Your own cloud.', text: 'Your photos and files on your own server, not on someone else’s. For iPhone, iPad, Mac and the browser.' },
+    de: { title: 'Deine eigene Cloud.', text: 'Fotos und Dateien auf deinem eigenen Server statt bei einem Konzern. Für iPhone, iPad, Mac und Browser.' },
   } },
   { out: '02-server', shot: '07-server', term: { command: 'docker compose up -d', output: DOCKER }, copy: {
-    en: { title: 'Runs on your own server', text: 'The app connects to your Synclet server. You install it with Docker on a Linux machine or NAS.' },
-    de: { title: 'Läuft auf deinem eigenen Server', text: 'Die App verbindet sich mit deinem Synclet-Server. Den installierst du per Docker auf einem Linux-Rechner oder NAS.' },
+    en: { title: 'Your server, your rules', text: 'Install the free Synclet server with Docker on a Linux machine or NAS. The app connects only to it.' },
+    de: { title: 'Dein Server, deine Regeln', text: 'Den kostenlosen Synclet-Server installierst du per Docker auf einem Linux-Rechner oder NAS. Die App verbindet sich nur mit ihm.' },
   } },
-  { out: '03-files', shot: '01-files', copy: {
-    en: { title: 'Your files stay files', text: 'No database blobs, no metadata in your folders. Stop using Synclet and nothing moves.' },
-    de: { title: 'Deine Dateien bleiben Dateien', text: 'Keine Datenbank, keine Metadaten in deinen Ordnern. Hörst du auf, bleibt alles, wo es ist.' },
+  { out: '03-private', shot: '03-preview', copy: {
+    en: { title: 'Your photos stay private', text: 'No tracking, no ads, no subscription. The app talks only to your server, never to us.' },
+    de: { title: 'Deine Fotos bleiben privat', text: 'Kein Tracking, keine Werbung, kein Abo. Die App spricht nur mit deinem Server, nie mit uns.' },
   } },
-  { out: '04-preview', shot: '03-preview', copy: {
-    en: { title: 'Tap to open', text: 'Photos, videos, PDFs and text files open right in the app.' },
-    de: { title: 'Antippen und ansehen', text: 'Fotos, Videos, PDFs und Texte öffnen direkt in der App.' },
+  { out: '04-no-lock-in', shot: '01-files', copy: {
+    en: { title: 'Never locked in', text: 'Your files stay plain files in plain folders. Stop using Synclet and everything stays where it is.' },
+    de: { title: 'Nichts hält dich fest', text: 'Deine Dateien bleiben normale Dateien in normalen Ordnern. Hörst du auf, bleibt alles, wo es ist.' },
   } },
   { out: '05-spaces', shot: '04-spaces', copy: {
     en: { title: 'Shared with your family', text: 'Shared folders and your NAS shares, with read or write access per person.' },
@@ -144,7 +145,7 @@ p { margin: 0.9em 0 0; font-size: var(--text); line-height: 1.35; font-weight: 4
 </style></head><body>
 ${scene.term ? '' : folder(fold.w, fold.h, fold.th, 44, folderFill)}
 ${term ? `<div class="term" style="left:${term.x}px; top:${term.y}px; width:${term.w}px; ${hero ? `height:${term.h}px;` : ''} --mono:${term.size}px">
-<div class="bar"><i></i><i></i><i></i></div><div><span class="prompt">~ $</span> ${scene.term!.command}</div>${scene.term!.output.map((n) => `<div>${n}</div>`).join('')}</div>` : ''}
+<div class="bar"><i></i><i></i><i></i></div><div><span class="prompt">alex@home ~ $</span> ${scene.term!.command}</div>${scene.term!.output.map((n) => `<div>${n}</div>`).join('')}</div>` : ''}
 <div class="device"><img src="${img}" alt=""></div>
 <div class="text"><h1>${title}</h1><p>${text}</p></div>
 </body></html>`;

@@ -1,6 +1,6 @@
 // App Store creative assets ("Header and Search Results", iOS 27): the hook of the store images
-// (`ls` of the Photos folder next to the same folder in the app) as wide artwork, in English and
-// German.
+// (your own cloud: `ls` of the Photos folder at home next to the same folder in the app) as wide
+// artwork, in English and German.
 //
 //   node scripts/store-creatives.ts
 //
@@ -22,8 +22,8 @@ const FONT_EXT = font('inter-latin-ext-wght-normal.woff2');
 
 type Lang = 'en' | 'de';
 const COPY: Record<Lang, { title: string; text: string; short: string }> = {
-  en: { title: 'It’s just a folder.', text: 'Synclet makes it a cloud drive on your own server.', short: 'Your folder on your server, as a cloud drive.' },
-  de: { title: 'Es ist nur ein Ordner.', text: 'Synclet macht daraus einen Cloud-Speicher auf deinem Server.', short: 'Dein Ordner auf deinem Server, als Cloud-Speicher.' },
+  en: { title: 'Your own cloud.', text: 'Your photos and files on your own server, not on someone else’s.', short: 'Your photos and files, on your own server.' },
+  de: { title: 'Deine eigene Cloud.', text: 'Fotos und Dateien auf deinem eigenen Server statt bei einem Konzern.', short: 'Deine Fotos und Dateien, auf deinem eigenen Server.' },
 };
 const LS = ['Canyon.jpg', 'Cliffs.jpg', 'Coast.jpg', "'Desert road.jpg'", 'Dunes.jpg', "'Fjord morning.jpg'",
   "'Forest trail.jpg'", "'Glacier hike.jpg'", 'Harbour.jpg', "'Island ferry.jpg'", 'Lighthouse.jpg'];
@@ -107,7 +107,7 @@ p { margin: 0.8em 0 0; font-size: ${t.size}px; line-height: 1.35; font-weight: 4
 ${l.ipad ? device(l.ipad, ipad, 60, Math.round(l.ipad.w * 0.026)) : ''}
 ${l.iphone ? device(l.iphone, iphone, 186, Math.round(l.iphone.w * 0.035)) : ''}
 ${l.term ? `<div class="term" style="left:${l.term.x}px; top:${l.term.y}px; width:${l.term.w}px; --mono:${l.term.size}px">
-<div class="bar"><i></i><i></i><i></i></div><div><span class="prompt">~ $</span> ls -1 Photos</div>${LS.map((n) => `<div>${n}</div>`).join('')}</div>` : ''}
+<div class="bar"><i></i><i></i><i></i></div><div><span class="prompt">alex@home ~ $</span> ls -1 Photos</div>${LS.map((n) => `<div>${n}</div>`).join('')}</div>` : ''}
 <div class="abs text"><h1>${c.title}</h1><p>${t.short ? c.short : c.text}</p></div>
 </body></html>`;
 }
