@@ -69,9 +69,8 @@ final class StoreScreenshotsUITests: XCTestCase {
         let searchField = app.searchFields.firstMatch
         require(searchField, "search field", in: app)
         searchField.tap()
-        searchField.typeText("fjord")
+        searchField.typeText("fjord\n") // return hides the keyboard
         require(app.element("search.hit.Fjord morning.jpg"), "search hits", timeout: 45, in: app)
-        if app.keyboards.firstMatch.exists { app.keyboards.buttons.element(boundBy: app.keyboards.buttons.count - 1).tap() } // return: hide the keyboard
         try shot("05-search", settle: 3)
 
         // 6. Share link for a document
@@ -90,7 +89,7 @@ final class StoreScreenshotsUITests: XCTestCase {
     private func openMyFiles(in app: XCUIApplication, pad: Bool) {
         if pad {
             let row = app.element("sidebar.files.alex")
-            require(row, "sidebar My Files", timeout: 30, in: app)
+            require(row, "sidebar My Files", timeout: 60, in: app) // a fresh simulator starts slowly
             row.tap()
             return
         }

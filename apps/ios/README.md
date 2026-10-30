@@ -63,6 +63,7 @@ creates a share link.
 
 ```sh
 bash scripts/ios-store-screenshots.sh   # → apps/ios/build/store-screenshots/{iphone,ipad}-{en,de}/
+pnpm --filter @synclet/site store-images  # → apps/ios/build/app-store/images/ (framed, with captions)
 ```
 
 Six scenes (`StoreScreenshotsUITests`) with the website's sample data on a throwaway stack, on an
