@@ -63,9 +63,11 @@ creates a share link.
 
 ```sh
 bash scripts/ios-store-screenshots.sh   # → apps/ios/build/store-screenshots/{iphone,ipad}-{en,de}/
+pnpm --filter @synclet/site store-images  # → apps/ios/build/app-store/images/ (framed, with captions)
+pnpm --filter @synclet/site store-creatives  # → apps/ios/build/app-store/creatives/ (header, search results)
 ```
 
-Six scenes (`StoreScreenshotsUITests`) with the website's sample data on a throwaway stack, on an
+Seven scenes (`StoreScreenshotsUITests`) with the website's sample data on a throwaway stack, on an
 iPhone 17 Pro Max (6.9", 1320 × 2868) and an iPad Pro 13-inch (2752 × 2064, landscape).
 
 ## Debug sign-in without the browser

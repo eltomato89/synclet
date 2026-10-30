@@ -20,8 +20,23 @@ final class StoreScreenshotsUITests: XCTestCase {
         let pad = UIDevice.current.userInterfaceIdiom == .pad
         // The iPad in landscape: sidebar and a wide grid (2752 × 2064).
         if pad { XCUIDevice.shared.orientation = .landscapeLeft }
+        // Right after the runner installed the app, the File Provider extension may not be registered
+        // yet: the test login fails (NSFileProviderErrorDomain -2001) and the app shows "Connect
+        // Synclet". Launching again a moment later signs in.
         func launch() -> XCUIApplication {
-            UITestSupport.launchApp(live, language: language, extraArguments: ["-browserLayout", "grid", "-SyncletTestDisplayHost", "files.example.com"])
+            var app = UITestSupport.launchApp(live, language: language, extraArguments: ["-browserLayout", "grid", "-SyncletTestDisplayHost", "files.example.com"])
+            for _ in 0..<3 {
+                let signedIn = app.descendants(matching: .any)
+                    .matching(NSPredicate(format: "identifier BEGINSWITH 'sidebar.' OR identifier BEGINSWITH 'spaces.' OR identifier BEGINSWITH 'browser.item.'")).firstMatch
+                let signedOut = app.buttons["root.addAccount"]
+                let deadline = Date().addingTimeInterval(30)
+                while Date() < deadline, !signedIn.exists, !signedOut.exists { _ = signedIn.waitForExistence(timeout: 1) }
+                guard signedOut.exists, !signedIn.exists else { break }
+                app.terminate()
+                Thread.sleep(forTimeInterval: 3)
+                app = UITestSupport.launchApp(live, language: language, extraArguments: ["-browserLayout", "grid", "-SyncletTestDisplayHost", "files.example.com"])
+            }
+            return app
         }
         func shot(_ name: String, settle: TimeInterval = 2.5) throws {
             Thread.sleep(forTimeInterval: settle) // thumbnails, animations
@@ -69,9 +84,8 @@ final class StoreScreenshotsUITests: XCTestCase {
         let searchField = app.searchFields.firstMatch
         require(searchField, "search field", in: app)
         searchField.tap()
-        searchField.typeText("fjord")
+        searchField.typeText("fjord\n") // return hides the keyboard
         require(app.element("search.hit.Fjord morning.jpg"), "search hits", timeout: 45, in: app)
-        if app.keyboards.firstMatch.exists { app.keyboards.buttons.element(boundBy: app.keyboards.buttons.count - 1).tap() } // return: hide the keyboard
         try shot("05-search", settle: 3)
 
         // 6. Share link for a document
@@ -82,6 +96,26 @@ final class StoreScreenshotsUITests: XCTestCase {
         contextAction("item.share", on: itinerary, in: app)
         require(app.buttons["share.submit"], "„Share Link“ sheet", timeout: 15, in: app)
         try shot("06-share", settle: 2)
+
+        // 7. Add an account: the address of your own server
+        app = launch()
+        openMyFiles(in: app, pad: pad)
+        if pad {
+            app.buttons["root.accounts"].tap()
+        } else {
+            app.tabBars.buttons.element(boundBy: 3).tap()
+            let accounts = app.element("more.accounts")
+            require(accounts, "„Accounts“ in „More“", timeout: 10, in: app)
+            accounts.tap()
+        }
+        let add = app.buttons["accounts.add"]
+        require(add, "„Add Account“", timeout: 10, in: app)
+        add.tap()
+        let server = app.textFields["login.server"]
+        require(server, "server field", timeout: 10, in: app)
+        server.tap()
+        server.typeText("files.example.com")
+        try shot("07-server", settle: 2)
     }
 
     /// „My Files“: on the iPad selected in the sidebar at launch; on the iPhone through the list of
@@ -90,7 +124,7 @@ final class StoreScreenshotsUITests: XCTestCase {
     private func openMyFiles(in app: XCUIApplication, pad: Bool) {
         if pad {
             let row = app.element("sidebar.files.alex")
-            require(row, "sidebar My Files", timeout: 30, in: app)
+            require(row, "sidebar My Files", timeout: 60, in: app) // a fresh simulator starts slowly
             row.tap()
             return
         }

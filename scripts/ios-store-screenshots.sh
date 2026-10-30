@@ -4,6 +4,7 @@
 #   2752 × 2064, landscape), in English and German, six scenes each (StoreScreenshotsUITests).
 #
 #   scripts/ios-store-screenshots.sh            # → apps/ios/build/store-screenshots/<device>-<lang>/
+#   STORE_DEVICES=ipad scripts/ios-store-screenshots.sh   # only one device (iphone, ipad)
 #
 # Starts the website's throwaway stack (apps/site/scripts/store-stack.ts: own compose project,
 # image tags and temp folders), builds the UI tests once and runs them on two private simulators
@@ -15,7 +16,11 @@ OUT=$ROOT/apps/ios/build/store-screenshots
 WORK=$(mktemp -d)
 STACK_PID=
 SIMS=()
-RUNTIME=$(xcrun simctl list runtimes -j | jq -r '[.runtimes[] | select(.platform == "iOS" and .isAvailable)] | last | .identifier')
+# runtime <device type id>: the newest available iOS runtime that supports this device type.
+runtime() {
+  xcrun simctl list runtimes -j | jq -r --arg t "$1" \
+    '[.runtimes[] | select(.platform == "iOS" and .isAvailable and any(.supportedDeviceTypes[]; .identifier == $t))] | last | .identifier // empty'
+}
 
 cleanup() {
   local rc=$?
@@ -60,18 +65,21 @@ boot() {
 
 for device in "iphone:com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro-Max" \
               "ipad:com.apple.CoreSimulator.SimDeviceType.iPad-Pro-13-inch-M5-12GB"; do
-  udid=$(xcrun simctl create "synclet-store-${device%%:*}-$$" "${device#*:}" "$RUNTIME")
+  [[ " ${STORE_DEVICES:-iphone ipad} " == *" ${device%%:*} "* ]] || continue
+  rt=$(runtime "${device#*:}")
+  [ -n "$rt" ] || { echo "FAIL: no iOS runtime supports ${device#*:}" >&2; exit 1; }
+  udid=$(xcrun simctl create "synclet-store-${device%%:*}-$$" "${device#*:}" "$rt")
   SIMS+=("$udid")
   for lang in en:en_US de:de_DE; do
     dir=$OUT/${device%%:*}-${lang%%:*}
-    rm -rf "$dir" && mkdir -p "$dir"
+    rm -rf "$dir" "$dir.xcresult" && mkdir -p "$dir"
     boot "$udid" "${lang%%:*}" "${lang#*:}"
     echo "== ${device%%:*} ${lang%%:*}"
     TEST_RUNNER_SYNCLET_UITEST_SERVER=$SERVER TEST_RUNNER_SYNCLET_UITEST_TOKEN=$TOKEN \
     TEST_RUNNER_SYNCLET_UITEST_SHOTS_DIR=$dir TEST_RUNNER_SYNCLET_UITEST_LANGUAGE=${lang%%:*} \
       xcodebuild test-without-building -scheme SyncletUITests -destination "id=$udid" -derivedDataPath "$WORK/dd" \
-        -only-testing:SyncletUITests/StoreScreenshotsUITests 2>&1 \
-        | grep -E "error:|Test Case|EXECUTE"
+        -only-testing:SyncletUITests/StoreScreenshotsUITests -resultBundlePath "$dir.xcresult" > "$dir.log" 2>&1 \
+      || { grep -E "error:|Test Case|EXECUTE" "$dir.log" >&2; echo "FAIL: see $dir.log" >&2; exit 1; }
   done
 done
 echo "== screenshots: $OUT"
