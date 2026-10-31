@@ -82,6 +82,45 @@ final class UploadCenterTests: XCTestCase {
         XCTAssertEqual(queue.all().map(\.accountKey), [second.key])
     }
 
+    private func makeCenterWithForeground(_ foreground: FakeUploadDriver) -> UploadCenter {
+        let driver = driver!
+        return UploadCenter(queue: queue, signal: signals.callback, foregroundUploader: { _ in foreground }) { _ in driver }
+    }
+
+    func testForegroundUploaderWaitsUntilTheAppIsActive() async throws {
+        let foreground = FakeUploadDriver()
+        let center = makeCenterWithForeground(foreground)
+        XCTAssertTrue(foreground.paused)
+        XCTAssertFalse(driver.paused)
+
+        center.didBecomeActive()
+        let switched = await eventually { !foreground.paused && foreground.pumps >= 1 }
+        XCTAssertTrue(switched)
+        XCTAssertEqual(driver.yields, [true], "the background session gives up only what the system has not started")
+        XCTAssertTrue(driver.paused)
+    }
+
+    func testEnteringTheBackgroundHandsEverythingToTheBackgroundSession() async throws {
+        let foreground = FakeUploadDriver()
+        let center = makeCenterWithForeground(foreground)
+        center.didBecomeActive()
+        center.didEnterBackground()
+        let switched = await eventually { foreground.yields == [false] && !self.driver.paused }
+        XCTAssertTrue(switched)
+        XCTAssertTrue(foreground.paused)
+        XCTAssertEqual(driver.yields, [true])
+    }
+
+    func testCancelReachesBothAppUploaders() async throws {
+        let foreground = FakeUploadDriver()
+        let center = makeCenterWithForeground(foreground)
+        await center.enqueue(urls: [try tempFile("a.txt", "a")], accountKey: "k1", parentId: "root", parentName: "Meine Dateien")
+        let id = try XCTUnwrap(center.entries.first?.id)
+        await center.cancel(id)
+        XCTAssertEqual(driver.cancelled, [id])
+        XCTAssertEqual(foreground.cancelled, [id])
+    }
+
     func testFailedCountAndRetry() async throws {
         let center = makeCenter()
         let entry = try queue.enqueue(source: try tempFile("x.txt", "x"), name: "x.txt", accountKey: "k1",

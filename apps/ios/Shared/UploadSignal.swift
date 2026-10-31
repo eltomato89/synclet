@@ -6,6 +6,8 @@ import SyncletKit
 enum UploadSignal {
     /// Session of the app's ``BackgroundUploader``.
     static let appSessionIdentifier = "tech.jensk.synclet.upload.app"
+    /// Owner of the uploads the app runs in its foreground session while it is active.
+    static let appForegroundIdentifier = "tech.jensk.synclet.upload.app.foreground"
     /// Session of the Share extension's ``BackgroundUploader``.
     static let shareSessionIdentifier = "tech.jensk.synclet.upload.share"
     static let notificationName = "tech.jensk.synclet.uploadsChanged"

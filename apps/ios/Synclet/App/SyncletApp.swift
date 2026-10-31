@@ -23,7 +23,9 @@ struct SyncletApp: App {
             case .active:
                 environment.didBecomeActive()
                 UploadCenter.shared.didBecomeActive()
-            case .background: environment.didEnterBackground()
+            case .background:
+                environment.didEnterBackground()
+                UploadCenter.shared.didEnterBackground()
             default: break
             }
         }

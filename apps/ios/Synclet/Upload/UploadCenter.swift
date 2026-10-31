@@ -4,6 +4,7 @@ import os
 import PhotosUI
 import SwiftUI
 import SyncletKit
+import UIKit
 
 /// What ``UploadCenter`` needs of a ``BackgroundUploader`` (replaced in tests).
 @MainActor
@@ -14,6 +15,11 @@ protocol UploadDriving: AnyObject {
     /// Gives the session up once its running tasks finished (drain-only share uploader).
     func relinquish()
     var isInvalidated: Bool { get }
+    /// Starts nothing until ``resume()``.
+    func pause()
+    func resume()
+    /// Pauses and hands running entries back to `waiting` for the other uploader.
+    func yieldRunning(onlyUnstarted: Bool) async
 }
 
 extension BackgroundUploader: UploadDriving {}
@@ -21,6 +27,13 @@ extension BackgroundUploader: UploadDriving {}
 /// The app's side of the upload queue (spec §2.6): enqueues picked files and photos, drives
 /// the app's ``BackgroundUploader`` (`tech.jensk.synclet.upload.app`) and publishes the
 /// entries for the uploads list and the badges.
+///
+/// While the app is active, uploads run in a foreground session (`foregroundUploader`, owner
+/// `tech.jensk.synclet.upload.app.foreground`): the system may hold a background session's
+/// tasks for minutes before it starts them, also while the app is open. Going to the background,
+/// the foreground uploader yields its uploads to the background session (tus continues at the
+/// server's offset); becoming active again, the background uploader yields the uploads the
+/// system has not started yet. The paused uploader starts nothing but records completions.
 ///
 /// The list is re-read on every change the uploader reports and on the Share extension's
 /// Darwin notification (``UploadSignal/notificationName``). An entry that turns `done` signals
@@ -70,6 +83,8 @@ final class UploadCenter {
 
     @ObservationIgnored let queue: UploadQueue
     @ObservationIgnored private(set) var uploader: UploadDriving!
+    /// Runs the uploads while the app is active (`nil`: the background uploader does everything).
+    @ObservationIgnored private(set) var foregroundUploader: UploadDriving?
     @ObservationIgnored private let signal: (String) async -> Void
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let makeShareUploader: ((UploadCenter) -> UploadDriving)?
@@ -83,22 +98,28 @@ final class UploadCenter {
     @ObservationIgnored private let startedAt = Date()
     @ObservationIgnored private var scheduledPump: Task<Void, Never>?
     @ObservationIgnored private var observingDarwin = false
+    @ObservationIgnored private var sessionSwitch: Task<Void, Never>?
 
     nonisolated private static let log = Logger(subsystem: "tech.jensk.synclet", category: "uploads")
 
     /// - Parameters:
     ///   - signal: called once per account when an upload finished (working set + visible folders).
-    ///   - uploader: builds the app's uploader (it reports back to the center).
+    ///   - uploader: builds the app's background uploader (it reports back to the center).
+    ///   - foregroundUploader: builds the uploader of the foreground session (see the type's documentation).
     ///   - shareUploader: builds a drain-only uploader for the Share extension's session; it reports
     ///     changes through ``shareUploaderChanged(_:)`` and its end through ``shareUploaderInvalidated()``.
     init(queue: UploadQueue, defaults: UserDefaults = .standard, signal: @escaping (String) async -> Void,
          shareUploader: ((UploadCenter) -> UploadDriving)? = nil,
+         foregroundUploader: ((UploadCenter) -> UploadDriving)? = nil,
          uploader: (UploadCenter) -> UploadDriving) {
         self.queue = queue
         self.defaults = defaults
         self.signal = signal
         makeShareUploader = shareUploader
         self.uploader = uploader(self)
+        self.foregroundUploader = foregroundUploader?(self)
+        // Until the app is active (``didBecomeActive()``) the background uploader runs everything.
+        self.foregroundUploader?.pause()
         reload()
     }
 
@@ -107,13 +128,13 @@ final class UploadCenter {
         let environment = AppEnvironment.shared
         let appGroup = environment.configuration.appGroup
         let queue = UploadQueue(appGroup: appGroup ?? "group.tech.jensk.synclet")
-        func uploaderFactory(_ identifier: String, drainOnly: Bool) -> (UploadCenter) -> UploadDriving {
+        func uploaderFactory(_ identifier: String, drainOnly: Bool, foreground: Bool = false) -> (UploadCenter) -> UploadDriving {
             { center in
                 BackgroundUploader(
                     identifier: identifier, queue: queue, appGroup: appGroup,
                     accounts: environment.accountStore, credentials: environment.credentials,
                     // No background session inside the test host.
-                    sessionConfiguration: AppEnvironment.isRunningTests ? .ephemeral : nil,
+                    sessionConfiguration: AppEnvironment.isRunningTests ? .ephemeral : foreground ? .default : nil,
                     drainOnly: drainOnly,
                     onChange: { [weak center] entry in
                         Task { @MainActor in
@@ -136,6 +157,7 @@ final class UploadCenter {
                 environment.accounts.notifyChange(key)
             },
             shareUploader: uploaderFactory(UploadSignal.shareSessionIdentifier, drainOnly: true),
+            foregroundUploader: uploaderFactory(UploadSignal.appForegroundIdentifier, drainOnly: false, foreground: true),
             uploader: uploaderFactory(UploadSignal.appSessionIdentifier, drainOnly: false))
     }
 
@@ -148,13 +170,46 @@ final class UploadCenter {
         observeShareExtension()
         bind(to: accounts)
         reload()
-        Task { await uploader.pump() }
+        Task { await pump() }
     }
 
-    /// Scene active again: catch up with what changed meanwhile.
+    /// Scene active: catch up with what changed meanwhile; uploads move to the foreground session.
     func didBecomeActive() {
         reload()
-        Task { await uploader.pump() }
+        switchSession(foreground: true)
+    }
+
+    /// Scene in the background: the foreground session's uploads move to the background session
+    /// (a background task keeps the app running until they are handed over).
+    func didEnterBackground() {
+        guard foregroundUploader != nil else { return }
+        let application = UIApplication.shared
+        let backgroundTask = application.beginBackgroundTask(withName: "Hand over uploads")
+        switchSession(foreground: false) {
+            if backgroundTask != .invalid { application.endBackgroundTask(backgroundTask) }
+        }
+    }
+
+    /// One switch after the other (quick scene changes must not leave both uploaders running).
+    private func switchSession(foreground: Bool, then done: @escaping @MainActor () -> Void = {}) {
+        let previous = sessionSwitch
+        sessionSwitch = Task {
+            await previous?.value
+            if let foregroundUploader {
+                let (from, to) = foreground ? (uploader!, foregroundUploader) : (foregroundUploader, uploader!)
+                // Leaving the foreground everything moves; entering it only what the system has not started.
+                await from.yieldRunning(onlyUnstarted: foreground)
+                to.resume()
+            }
+            await pump()
+            done()
+        }
+    }
+
+    /// Both app uploaders (the paused one only recovers after a launch, see ``BackgroundUploader/pump()``).
+    private func pump() async {
+        await uploader.pump()
+        await foregroundUploader?.pump()
     }
 
     /// Removes an account's uploads when it signs out.
@@ -212,7 +267,7 @@ final class UploadCenter {
         }.value
         report(skipped)
         reload()
-        await uploader.pump()
+        await pump()
     }
 
     /// Exports picked photos (original, or JPEG per the setting) and enqueues them.
@@ -232,7 +287,7 @@ final class UploadCenter {
                     try? FileManager.default.removeItem(at: file)
                 }.value
                 reload()
-                if index == 0 { Task { await uploader.pump() } }
+                if index == 0 { Task { await pump() } }
             } catch {
                 Self.log.error("photo export failed: \(String(describing: error), privacy: .public)")
                 skipped.append(String(localized: "Photo \(index + 1)"))
@@ -240,7 +295,7 @@ final class UploadCenter {
         }
         report(skipped)
         reload()
-        await uploader.pump()
+        await pump()
     }
 
     private func report(_ skipped: [String]) {
@@ -254,7 +309,7 @@ final class UploadCenter {
     func retry(_ id: String) {
         queue.retry(id: id)
         reload()
-        Task { await uploader.pump() }
+        Task { await pump() }
     }
 
     /// "Cancel" (running) and "Remove" (failed): stops the transfer and drops the entry.
@@ -264,6 +319,7 @@ final class UploadCenter {
             await cancelInShareSession([id])
         }
         await uploader.cancel(id: id)
+        await foregroundUploader?.cancel(id: id)
         reload()
     }
 
@@ -279,7 +335,10 @@ final class UploadCenter {
         let running = queue.all().filter { $0.accountKey == key && $0.status == .uploading }
         let shareOwned = running.filter(Self.isShareOwned).map(\.id)
         if !shareOwned.isEmpty { await cancelInShareSession(shareOwned) }
-        for entry in running { await uploader.cancel(id: entry.id) }
+        for entry in running {
+            await uploader.cancel(id: entry.id)
+            await foregroundUploader?.cancel(id: entry.id)
+        }
         queue.removeAll(accountKey: key)
         reload()
     }
@@ -313,7 +372,7 @@ final class UploadCenter {
     /// `onChange` of the drain-only share uploader: a handed-back step waits for the app's uploader.
     func shareUploaderChanged(_ entry: UploadEntry) {
         reload()
-        Task { await uploader.pump() }
+        Task { await pump() }
     }
 
     /// The share session is invalid: the next events or cancel attach anew.
@@ -370,7 +429,7 @@ final class UploadCenter {
         scheduledPump = Task { [weak self] in
             try? await Task.sleep(for: .seconds(next.timeIntervalSince(now) + 0.5))
             guard !Task.isCancelled, let self else { return }
-            await self.uploader.pump()
+            await self.pump()
         }
     }
 

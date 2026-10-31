@@ -444,6 +444,14 @@ final class FakeUploadDriver: UploadDriving {
         if holdEvents { pendingEvents.append(completion) } else { completion() }
     }
     func relinquish() { relinquished += 1 }
+    private(set) var paused = false
+    private(set) var yields: [Bool] = []
+    func pause() { paused = true }
+    func resume() { paused = false }
+    func yieldRunning(onlyUnstarted: Bool) async {
+        paused = true
+        yields.append(onlyUnstarted)
+    }
 
     /// The session delivered its events (`urlSessionDidFinishEvents`).
     func finishEvents() {

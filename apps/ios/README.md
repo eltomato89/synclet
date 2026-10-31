@@ -59,6 +59,15 @@ simulator on exit. `BrowserFlowUITests` (iPhone layout, German) creates a folder
 opens it in QuickLook, renames, deletes, restores it from "Trash", finds it in "Search" and
 creates a share link.
 
+`DeviceUploadUITests` uploads on a connected iPhone with the account already signed in there (the
+debug build replaces the installed app; its data stays): a random file of the given size (DEBUG hook
+`-SyncletTestUploadSize <bytes>`) goes into "My Files" and must appear there within 3 minutes.
+
+```sh
+cd apps/ios && TEST_RUNNER_SYNCLET_DEVICE_UPLOAD_SIZE=40000000 xcodebuild test -scheme SyncletUITests \
+  -destination 'id=<UDID>' -only-testing:SyncletUITests/DeviceUploadUITests -allowProvisioningUpdates
+```
+
 ## App Store screenshots
 
 ```sh
