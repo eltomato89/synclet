@@ -305,6 +305,60 @@ final class BackgroundUploaderTests: XCTestCase {
         XCTAssertEqual(HoldingURLProtocol.count, 3)
     }
 
+    func testPausedUploaderStartsNothingUntilResumed() async throws {
+        MockURLProtocol.reset { _ in .json(201, Fixtures.itemJSON(id: "f_1")) }
+        let entry = try enqueueSmall()
+        uploader.pause()
+        await uploader.pump()
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(status(entry.id), .waiting)
+        XCTAssertTrue(MockURLProtocol.requests.isEmpty)
+
+        uploader.resume()
+        await uploader.pump()
+        await waitUntil("done") { status(entry.id) == .done }
+    }
+
+    /// The app's own entry of an earlier launch goes back to `waiting` even while paused.
+    func testPausedUploaderStillRecoversAfterLaunch() async throws {
+        MockURLProtocol.reset { _ in .json(201, Fixtures.itemJSON(id: "f_1")) }
+        let entry = try enqueueSmall()
+        markUploading(entry.id, owner: "tech.jensk.synclet.upload.test", leaseUntil: clock.now.addingTimeInterval(3600))
+        uploader.pause()
+        await uploader.pump()
+        XCTAssertEqual(status(entry.id), .waiting)
+        XCTAssertTrue(MockURLProtocol.requests.isEmpty)
+    }
+
+    /// The foreground uploader yields its running upload (the app goes to the background);
+    /// the other uploader takes it over, and the cancelled task changes nothing afterwards.
+    func testYieldRunningHandsEntryToAnotherUploader() async throws {
+        useHoldingProtocol()
+        let entry = try enqueueSmall()
+        await uploader.pump()
+        await waitUntil("request sent") { HoldingURLProtocol.count == 1 }
+        XCTAssertEqual(queue.entry(id: entry.id)?.owner, "tech.jensk.synclet.upload.test")
+
+        await uploader.yieldRunning(onlyUnstarted: false)
+        let yielded = try XCTUnwrap(queue.entry(id: entry.id))
+        XCTAssertEqual(yielded.status, .waiting)
+        XCTAssertNil(yielded.owner)
+        XCTAssertNil(yielded.leaseUntil)
+        XCTAssertEqual(yielded.attempts, 0, "no attempt counted")
+        await uploader.pump()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(status(entry.id), .waiting, "paused after yielding")
+
+        MockURLProtocol.reset { _ in .json(201, Fixtures.itemJSON(id: "f_1")) }
+        let other = makeUploader(MockURLProtocol.self, identifier: "tech.jensk.synclet.upload.app")
+        defer { other.invalidate() }
+        await other.pump()
+        await waitUntil("done by the other uploader") { status(entry.id) == .done }
+        HoldingURLProtocol.releaseAll()
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(status(entry.id), .done)
+    }
+
     func testBackoffSequence() {
         XCTAssertEqual((0..<10).map { BackgroundUploader.backoff(retriesBefore: $0) },
                        [2, 4, 8, 16, 32, 64, 128, 256, 300, 300])

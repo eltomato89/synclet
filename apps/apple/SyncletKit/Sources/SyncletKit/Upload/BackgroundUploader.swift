@@ -26,6 +26,11 @@ import Synchronization
 ///   session's completions and records final results, but starts nothing – a step that needs
 ///   a next request goes back to `waiting` for the app's own uploader. ``relinquish()`` then
 ///   gives the session back (only one process may use a background session at a time).
+/// - ``pause()`` / ``resume()``: a paused uploader starts nothing (it still recovers after a
+///   launch and records completions). ``yieldRunning(onlyUnstarted:)`` also hands entries it
+///   runs back to `waiting` for another uploader of the same process: the iOS app uploads
+///   through a foreground session while it is active (a background session's tasks may wait
+///   minutes before the system starts them) and through its background session otherwise.
 public final class BackgroundUploader: NSObject, Sendable {
     /// In-flight entries per process.
     public static let maxConcurrent = 2
@@ -72,6 +77,8 @@ public final class BackgroundUploader: NSObject, Sendable {
         var recovered = false
         /// Records completions only, starts nothing (see the type's documentation).
         var drainOnly = false
+        /// Starts nothing (``pause()``).
+        var paused = false
         var invalidated = false
         var backgroundCompletion: (@Sendable () -> Void)?
         /// `urlSessionDidFinishEvents` fired before a completion handler was handed over.
@@ -172,6 +179,7 @@ public final class BackgroundUploader: NSObject, Sendable {
         // Draining another process' session: starting work there is the owner's (or the app uploader's) job.
         guard !state.withLock({ $0.drainOnly || $0.invalidated }) else { return }
         await recoverIfNeeded()
+        guard !state.withLock({ $0.paused }) else { return }
         let candidates = queue.runnable()
         let picked: [UploadEntry] = state.withLock { s in
             var picked: [UploadEntry] = []
@@ -182,6 +190,41 @@ public final class BackgroundUploader: NSObject, Sendable {
             return picked
         }
         for entry in picked { begin(entry) }
+    }
+
+    /// From now on ``pump()`` starts nothing; running tasks go on and their completions are recorded.
+    public func pause() {
+        state.withLock { $0.paused = true }
+    }
+
+    /// ``pump()`` starts entries again (the caller pumps).
+    public func resume() {
+        state.withLock { $0.paused = false }
+    }
+
+    /// Pauses, then hands the entries this uploader runs back to `waiting` (tus URL and offset
+    /// kept, no attempt counted) and cancels their tasks, so another uploader takes them over.
+    /// `onlyUnstarted`: only entries whose task has not sent a byte yet. A completion that
+    /// arrives anyway is recorded only when it published the file (see ``isOwned(_:)``).
+    public func yieldRunning(onlyUnstarted: Bool) async {
+        pause()
+        let identifier = identifier
+        for task in await session.allTasks where task.state == .running || task.state == .suspended {
+            guard let tag = TaskTag(task.taskDescription), !onlyUnstarted || task.countOfBytesSent == 0 else { continue }
+            var changed = false
+            let updated = queue.update(id: tag.entryId) { e in
+                guard e.status == .uploading, e.owner == identifier else { return }
+                e.status = .waiting
+                e.nextAttemptAt = nil
+                e.owner = nil
+                e.leaseUntil = nil
+                changed = true
+            }
+            guard changed else { continue }
+            task.cancel()
+            Log.upload.info("upload handed to another uploader")
+            if let updated { onChange(updated) }
+        }
     }
 
     /// Cancels the in-flight task (if any) and removes the entry (and its copy).
