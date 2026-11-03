@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Synclet.Sync.Linux\Synclet.Sync.Linux.csproj" />
+    <ProjectReference Include="..\..\spike\Synclet.FuseSpike\Synclet.FuseSpike.csproj" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />
