@@ -255,8 +255,10 @@ public sealed class MemoryTree : IFuseFileSystem
                 // Save pattern (write temp, rename over the original). The kernel moves the source inode to
                 // the target name, so the source node takes over the original's server identity: the server
                 // sees one new version of the same item.
+                // GIO renames before closing the temp file: then the upload happens on release, not here.
+                var stillWriting = _handles.Values.Any(h => h.Node == node && h.Wrote);
                 node.ServerId = target.ServerId;
-                node.Version = IsTemporary(newName) ? 0 : target.Version + 1;
+                node.Version = IsTemporary(newName) ? 0 : target.Version + (stillWriting ? 0 : 1);
                 node.MTime = DateTimeOffset.UtcNow;
                 Detach(target);
             }

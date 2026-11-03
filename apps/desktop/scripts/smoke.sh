@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Smoke test against a running Synclet.FuseSpike: smoke.sh <mountpoint>. Exits 1 if any check fails.
 set -uo pipefail
-cd "$1"
+cd "$1" || exit 1
 id=$$
 failed=0
 
@@ -16,6 +16,8 @@ nfd=$(printf 'Gru\xcc\x88\xc3\x9fe-%s.txt' "$id")
 nfc=$(printf 'Gr\xc3\xbc\xc3\x9fe-%s.txt' "$id")
 export M id nfd nfc
 
+check "is a synclet FUSE mount"   '[ "$(awk -v m="$PWD" "\$2 == m { print \$3 }" /proc/mounts)" = fuse.synclet ]'
+[ "$failed" -eq 0 ] || { echo "smoke FAILED (not a synclet mount, nothing else checked)"; exit 1; }
 check "spaces listed"             '[ "$(ls -1)" = "$(printf "Meine Dateien\nTeam Foto")" ]'
 check "read file"                 '[ "$(cat "$M/hallo.txt")" = "Hallo Synclet" ]'
 check "write and read back"       'printf abc > "$M/smoke-$id.txt"; [ "$(cat "$M/smoke-$id.txt")" = abc ]'

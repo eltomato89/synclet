@@ -106,6 +106,19 @@ public sealed class MemoryTreeTests
     }
 
     [Fact]
+    public async Task Gio_save_renames_before_close_and_still_counts_one_version()
+    {
+        // g_file_replace: create temp, write, rename over the original, then close.
+        var dir = await Path("/Meine Dateien");
+        var (temp, fh) = await _tree.Create(dir.Ino, ".goutputstream-OCQ4X3");
+        await _tree.Write(temp.Ino, fh, 0, "neu\n"u8.ToArray());
+        await _tree.Rename(dir.Ino, ".goutputstream-OCQ4X3", dir.Ino, "hallo.txt");
+        await _tree.Release(temp.Ino, fh);
+        Assert.Equal(2, _tree.Version("/Meine Dateien/hallo.txt"));
+        Assert.Equal("neu\n", await ReadAll((await Path("/Meine Dateien/hallo.txt")).Ino));
+    }
+
+    [Fact]
     public async Task Temporary_files_never_get_versions()
     {
         var dir = await Path("/Meine Dateien");

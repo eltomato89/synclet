@@ -59,6 +59,7 @@ internal sealed unsafe class FuseDispatcher(IFuseFileSystem fs, FuseOptions opti
         long? size = (toSet & SetAttrSize) != 0 ? stat.Size : null;
         DateTimeOffset? mtime = (toSet & SetAttrMtimeNow) != 0 ? DateTimeOffset.UtcNow
             : (toSet & SetAttrMtime) != 0 ? FromUnix(stat.MTimeSec, stat.MTimeNsec) : null;
+        Trace($"setattr ino={ino} to_set=0x{toSet:x} size={size}");
         Reply(req, () => d.Fs.SetAttr(ino, size, mtime), a => d.ReplyAttr(req, a));
     });
 
@@ -73,6 +74,7 @@ internal sealed unsafe class FuseDispatcher(IFuseFileSystem fs, FuseOptions opti
     private static void OnUnlink(nint req, ulong parent, byte* name) => Guard(req, d =>
     {
         var n = Name(name);
+        Trace($"unlink parent={parent} {n}");
         ReplyDone(req, () => d.Fs.Unlink(parent, n));
     });
 
@@ -92,6 +94,7 @@ internal sealed unsafe class FuseDispatcher(IFuseFileSystem fs, FuseOptions opti
             return;
         }
         var (from, to) = (Name(name), Name(newName));
+        Trace($"rename {parent}/{from} -> {newParent}/{to}");
         ReplyDone(req, () => d.Fs.Rename(parent, from, newParent, to));
     });
 
@@ -101,6 +104,7 @@ internal sealed unsafe class FuseDispatcher(IFuseFileSystem fs, FuseOptions opti
         var info = *fi;
         var write = (info.Flags & OAccMode) != 0;
         var truncate = (info.Flags & OTrunc) != 0;
+        Trace($"open ino={ino} flags=0x{info.Flags:x}");
         Reply(req, () => d.Fs.Open(ino, write, truncate), fh => ReplyOpen(req, info, fh));
     });
 
@@ -119,6 +123,7 @@ internal sealed unsafe class FuseDispatcher(IFuseFileSystem fs, FuseOptions opti
     {
         var fh = fi->Fh;
         var data = new ReadOnlySpan<byte>(buf, (int)size).ToArray();
+        Trace($"write ino={ino} off={off} len={size}");
         Reply(req, () => d.Fs.Write(ino, fh, off, data), n => LibFuse.fuse_reply_write(req, (nuint)n));
     });
 
@@ -126,6 +131,7 @@ internal sealed unsafe class FuseDispatcher(IFuseFileSystem fs, FuseOptions opti
     private static void OnRelease(nint req, ulong ino, FuseFileInfo* fi) => Guard(req, d =>
     {
         var fh = fi->Fh;
+        Trace($"release ino={ino}");
         ReplyDone(req, () => d.Fs.Release(ino, fh));
     });
 
@@ -152,6 +158,7 @@ internal sealed unsafe class FuseDispatcher(IFuseFileSystem fs, FuseOptions opti
     private static void OnCreate(nint req, ulong parent, byte* name, uint mode, FuseFileInfo* fi) => Guard(req, d =>
     {
         var n = Name(name);
+        Trace($"create parent={parent} {n} flags=0x{fi->Flags:x}");
         var info = *fi;
         Reply(req, () => d.Fs.Create(parent, n), r => d.ReplyCreate(req, r.Attr, info, r.Fh));
     });
@@ -226,6 +233,14 @@ internal sealed unsafe class FuseDispatcher(IFuseFileSystem fs, FuseOptions opti
 
     private static DateTimeOffset FromUnix(long sec, long nsec) =>
         DateTimeOffset.UnixEpoch.AddTicks(sec * TimeSpan.TicksPerSecond + nsec / 100);
+
+    /// <summary>SYNCLET_FUSE_TRACE=1 logs mutating operations to stderr (diagnosing editor save sequences).</summary>
+    private static readonly bool Tracing = Environment.GetEnvironmentVariable("SYNCLET_FUSE_TRACE") == "1";
+
+    private static void Trace(string message)
+    {
+        if (Tracing) Console.Error.WriteLine($"trace {message}");
+    }
 
     private static string Name(byte* name) =>
         Marshal.PtrToStringUTF8((nint)name)!.Normalize(NormalizationForm.FormC);

@@ -96,6 +96,18 @@ public sealed class MountTests(MountFixture fixture) : IClassFixture<MountFixtur
     }
 
     [Fact]
+    public async Task Gio_save_order_counts_one_version()
+    {
+        Ok("printf alt > 'Meine Dateien/gio.txt'");
+        var serverId = await Spike.Send("id", "/Meine Dateien/gio.txt");
+        // Same order as g_file_replace (GNOME Text Editor): rename over the original while the temp is still open.
+        Ok("cd 'Meine Dateien' && exec 3> .goutputstream-OCQ4X3 && printf neu >&3 && mv -f .goutputstream-OCQ4X3 gio.txt && exec 3>&-");
+        Assert.Equal("neu", Ok("cat 'Meine Dateien/gio.txt'").Out);
+        Assert.Equal(serverId, await Spike.Send("id", "/Meine Dateien/gio.txt"));
+        Assert.Equal("version 2", await Spike.Send("version", "/Meine Dateien/gio.txt"));
+    }
+
+    [Fact]
     public async Task Gedit_pattern_via_shell()
     {
         Ok("printf alt > 'Meine Dateien/g.txt'");
