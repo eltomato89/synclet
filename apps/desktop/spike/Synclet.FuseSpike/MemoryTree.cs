@@ -15,6 +15,8 @@ public sealed class MemoryTree : IFuseFileSystem
     private sealed class Node(ulong ino, Node? parent, string name, bool isDir, bool readOnly)
     {
         public ulong Ino { get; } = ino;
+        /// <summary>Identity on the server; survives the save pattern although the inode changes.</summary>
+        public ulong ServerId { get; set; } = ino;
         public Node? Parent { get; set; } = parent;
         public string Name { get; set; } = name;
         public bool IsDir { get; } = isDir;
@@ -87,6 +89,15 @@ public sealed class MemoryTree : IFuseFileSystem
             var (parent, name) = ResolveParent(path);
             var node = Child(parent, name);
             return IsTemporary(node.Name) ? 0 : node.Version;
+        }
+    }
+
+    public ulong ServerId(string path)
+    {
+        lock (_lock)
+        {
+            var (parent, name) = ResolveParent(path);
+            return Child(parent, name).ServerId;
         }
     }
 
@@ -241,13 +252,13 @@ public sealed class MemoryTree : IFuseFileSystem
             }
             else
             {
-                // Save pattern (write temp, rename over the original): the original keeps its identity
-                // and gets the new content as one new version.
-                target.Data = node.Data;
-                target.MTime = DateTimeOffset.UtcNow;
-                if (!IsTemporary(target.Name)) target.Version++;
-                Detach(node);
-                return 0;
+                // Save pattern (write temp, rename over the original). The kernel moves the source inode to
+                // the target name, so the source node takes over the original's server identity: the server
+                // sees one new version of the same item.
+                node.ServerId = target.ServerId;
+                node.Version = IsTemporary(newName) ? 0 : target.Version + 1;
+                node.MTime = DateTimeOffset.UtcNow;
+                Detach(target);
             }
         }
         from.Children.Remove(name);

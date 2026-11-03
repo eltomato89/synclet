@@ -89,15 +89,17 @@ public sealed class MemoryTreeTests
     }
 
     [Fact]
-    public async Task Gedit_save_pattern_keeps_inode_and_bumps_version_once()
+    public async Task Gedit_save_pattern_keeps_server_id_and_bumps_version_once()
     {
         var dir = await Path("/Meine Dateien");
-        var before = await Path("/Meine Dateien/hallo.txt");
-        await CreateWithText(dir.Ino, ".goutputstream-AB12", "neuer Inhalt");
+        var serverId = _tree.ServerId("/Meine Dateien/hallo.txt");
+        var tempIno = await CreateWithText(dir.Ino, ".goutputstream-AB12", "neuer Inhalt");
         await _tree.Rename(dir.Ino, ".goutputstream-AB12", dir.Ino, "hallo.txt");
 
+        // The kernel moves the source inode to the target name, so the inode is the temp file's one.
         var after = await Path("/Meine Dateien/hallo.txt");
-        Assert.Equal(before.Ino, after.Ino);
+        Assert.Equal(tempIno, after.Ino);
+        Assert.Equal(serverId, _tree.ServerId("/Meine Dateien/hallo.txt"));
         Assert.Equal("neuer Inhalt", await ReadAll(after.Ino));
         Assert.Equal(2, _tree.Version("/Meine Dateien/hallo.txt"));
         Assert.Equal(Fuse.Errno.ENOENT, await Errno(() => _tree.Lookup(dir.Ino, ".goutputstream-AB12")));
