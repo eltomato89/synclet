@@ -20,6 +20,7 @@ You need Docker; no local .NET is required. Everything runs in `mcr.microsoft.co
 ```bash
 apps/desktop/scripts/linux.sh dotnet test                                  # native architecture
 SYNCLET_PLATFORM=linux/amd64 apps/desktop/scripts/linux.sh dotnet test     # x64 under emulation
+SYNCLET_DISTRO=debian13 apps/desktop/scripts/linux.sh dotnet test          # Debian 13, libfuse 3.17
 ```
 
 Tests use Microsoft.Testing.Platform (`global.json`), so filters look like `dotnet test --filter-class '*MountTests'`.
