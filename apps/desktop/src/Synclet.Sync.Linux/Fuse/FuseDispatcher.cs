@@ -16,10 +16,13 @@ internal sealed unsafe class FuseDispatcher(IFuseFileSystem fs, FuseOptions opti
     private const int OAccMode = 3, OTrunc = 0x200;
     private const int SetAttrSize = 1 << 3, SetAttrMtime = 1 << 5, SetAttrMtimeNow = 1 << 8;
 
+    private int _inFlight;
     private readonly uint _uid = LibFuse.getuid();
     private readonly uint _gid = LibFuse.getgid();
 
     public IFuseFileSystem Fs { get; } = fs;
+
+    public int InFlight => Volatile.Read(ref _inFlight);
 
     public static void Fill(FuseLowlevelOps* ops)
     {
@@ -45,12 +48,12 @@ internal sealed unsafe class FuseDispatcher(IFuseFileSystem fs, FuseOptions opti
     private static void OnLookup(nint req, ulong parent, byte* name) => Guard(req, d =>
     {
         var n = Name(name);
-        Reply(req, () => d.Fs.Lookup(parent, n), a => d.ReplyEntry(req, a));
+        d.Reply(req, () => d.Fs.Lookup(parent, n), a => d.ReplyEntry(req, a));
     });
 
     [UnmanagedCallersOnly]
     private static void OnGetattr(nint req, ulong ino, FuseFileInfo* fi) => Guard(req, d =>
-        Reply(req, () => d.Fs.GetAttr(ino), a => d.ReplyAttr(req, a)));
+        d.Reply(req, () => d.Fs.GetAttr(ino), a => d.ReplyAttr(req, a)));
 
     [UnmanagedCallersOnly]
     private static void OnSetattr(nint req, ulong ino, byte* attr, int toSet, FuseFileInfo* fi) => Guard(req, d =>
@@ -60,14 +63,14 @@ internal sealed unsafe class FuseDispatcher(IFuseFileSystem fs, FuseOptions opti
         DateTimeOffset? mtime = (toSet & SetAttrMtimeNow) != 0 ? DateTimeOffset.UtcNow
             : (toSet & SetAttrMtime) != 0 ? FromUnix(stat.MTimeSec, stat.MTimeNsec) : null;
         Trace($"setattr ino={ino} to_set=0x{toSet:x} size={size}");
-        Reply(req, () => d.Fs.SetAttr(ino, size, mtime), a => d.ReplyAttr(req, a));
+        d.Reply(req, () => d.Fs.SetAttr(ino, size, mtime), a => d.ReplyAttr(req, a));
     });
 
     [UnmanagedCallersOnly]
     private static void OnMkdir(nint req, ulong parent, byte* name, uint mode) => Guard(req, d =>
     {
         var n = Name(name);
-        Reply(req, () => d.Fs.MkDir(parent, n), a => d.ReplyEntry(req, a));
+        d.Reply(req, () => d.Fs.MkDir(parent, n), a => d.ReplyEntry(req, a));
     });
 
     [UnmanagedCallersOnly]
@@ -75,14 +78,14 @@ internal sealed unsafe class FuseDispatcher(IFuseFileSystem fs, FuseOptions opti
     {
         var n = Name(name);
         Trace($"unlink parent={parent} {n}");
-        ReplyDone(req, () => d.Fs.Unlink(parent, n));
+        d.ReplyDone(req, () => d.Fs.Unlink(parent, n));
     });
 
     [UnmanagedCallersOnly]
     private static void OnRmdir(nint req, ulong parent, byte* name) => Guard(req, d =>
     {
         var n = Name(name);
-        ReplyDone(req, () => d.Fs.RmDir(parent, n));
+        d.ReplyDone(req, () => d.Fs.RmDir(parent, n));
     });
 
     [UnmanagedCallersOnly]
@@ -95,24 +98,24 @@ internal sealed unsafe class FuseDispatcher(IFuseFileSystem fs, FuseOptions opti
         }
         var (from, to) = (Name(name), Name(newName));
         Trace($"rename {parent}/{from} -> {newParent}/{to}");
-        ReplyDone(req, () => d.Fs.Rename(parent, from, newParent, to));
+        d.ReplyDone(req, () => d.Fs.Rename(parent, from, newParent, to));
     });
 
     [UnmanagedCallersOnly]
     private static void OnOpen(nint req, ulong ino, FuseFileInfo* fi) => Guard(req, d =>
     {
-        var info = *fi;
-        var write = (info.Flags & OAccMode) != 0;
-        var truncate = (info.Flags & OTrunc) != 0;
-        Trace($"open ino={ino} flags=0x{info.Flags:x}");
-        Reply(req, () => d.Fs.Open(ino, write, truncate), fh => ReplyOpen(req, info, fh));
+        var flags = fi->Flags;
+        var write = (flags & OAccMode) != 0;
+        var truncate = (flags & OTrunc) != 0;
+        Trace($"open ino={ino} flags=0x{flags:x}");
+        d.Reply(req, () => d.Fs.Open(ino, write, truncate), fh => ReplyOpen(req, flags, fh));
     });
 
     [UnmanagedCallersOnly]
     private static void OnRead(nint req, ulong ino, nuint size, long off, FuseFileInfo* fi) => Guard(req, d =>
     {
         var fh = fi->Fh;
-        Reply(req, () => d.Fs.Read(ino, fh, off, (int)size), data =>
+        d.Reply(req, () => d.Fs.Read(ino, fh, off, (int)size), data =>
         {
             fixed (byte* p = data.Span) LibFuse.fuse_reply_buf(req, p, (nuint)data.Length);
         });
@@ -124,7 +127,7 @@ internal sealed unsafe class FuseDispatcher(IFuseFileSystem fs, FuseOptions opti
         var fh = fi->Fh;
         var data = new ReadOnlySpan<byte>(buf, (int)size).ToArray();
         Trace($"write ino={ino} off={off} len={size}");
-        Reply(req, () => d.Fs.Write(ino, fh, off, data), n => LibFuse.fuse_reply_write(req, (nuint)n));
+        d.Reply(req, () => d.Fs.Write(ino, fh, off, data), n => LibFuse.fuse_reply_write(req, (nuint)n));
     });
 
     [UnmanagedCallersOnly]
@@ -132,16 +135,16 @@ internal sealed unsafe class FuseDispatcher(IFuseFileSystem fs, FuseOptions opti
     {
         var fh = fi->Fh;
         Trace($"release ino={ino}");
-        ReplyDone(req, () => d.Fs.Release(ino, fh));
+        d.ReplyDone(req, () => d.Fs.Release(ino, fh));
     });
 
     [UnmanagedCallersOnly]
     private static void OnReaddir(nint req, ulong ino, nuint size, long off, FuseFileInfo* fi) => Guard(req, d =>
-        Reply(req, () => d.Fs.ReadDir(ino), entries => d.ReplyDir(req, ino, entries, (int)size, off)));
+        d.Reply(req, () => d.Fs.ReadDir(ino), entries => d.ReplyDir(req, ino, entries, (int)size, off)));
 
     [UnmanagedCallersOnly]
     private static void OnStatfs(nint req, ulong ino) => Guard(req, d =>
-        Reply(req, () => d.Fs.StatFs(), stats =>
+        d.Reply(req, () => d.Fs.StatFs(), stats =>
         {
             const ulong block = 4096;
             var vfs = new StatVfs
@@ -159,8 +162,8 @@ internal sealed unsafe class FuseDispatcher(IFuseFileSystem fs, FuseOptions opti
     {
         var n = Name(name);
         Trace($"create parent={parent} {n} flags=0x{fi->Flags:x}");
-        var info = *fi;
-        Reply(req, () => d.Fs.Create(parent, n), r => d.ReplyCreate(req, r.Attr, info, r.Fh));
+        var flags = fi->Flags;
+        d.Reply(req, () => d.Fs.Create(parent, n), r => d.ReplyCreate(req, r.Attr, flags, r.Fh));
     });
 
     // ---- replies ---------------------------------------------------------------------------------------------
@@ -179,15 +182,15 @@ internal sealed unsafe class FuseDispatcher(IFuseFileSystem fs, FuseOptions opti
         LibFuse.fuse_reply_attr(req, s, options.AttrTimeout.TotalSeconds);
     }
 
-    private static void ReplyOpen(nint req, FuseFileInfo info, ulong fh)
+    private static void ReplyOpen(nint req, int flags, ulong fh)
     {
-        info.Fh = fh;
+        var info = new FuseFileInfo { Flags = flags, Fh = fh };
         LibFuse.fuse_reply_open(req, &info);
     }
 
-    private void ReplyCreate(nint req, NodeAttr a, FuseFileInfo info, ulong fh)
+    private void ReplyCreate(nint req, NodeAttr a, int flags, ulong fh)
     {
-        info.Fh = fh;
+        var info = new FuseFileInfo { Flags = flags, Fh = fh };
         var e = stackalloc byte[EntryParamWriter.Size];
         EntryParamWriter.Write(e, a.Ino, 0, ToStat(a), options.AttrTimeout.TotalSeconds, options.EntryTimeout.TotalSeconds);
         LibFuse.fuse_reply_create(req, e, &info);
@@ -258,18 +261,37 @@ internal sealed unsafe class FuseDispatcher(IFuseFileSystem fs, FuseOptions opti
         }
     }
 
-    private static void Reply<T>(nint req, Func<Task<T>> start, Action<T> onSuccess)
+    /// <summary>Starts the call; a reply that cannot be sent synchronously counts as in flight until sent.</summary>
+    private void Reply<T>(nint req, Func<Task<T>> start, Action<T> onSuccess)
     {
         var task = start();
-        if (task.IsCompleted) Complete(req, task, onSuccess);
-        else task.ContinueWith(t => Complete(req, t, onSuccess), TaskScheduler.Default);
+        if (task.IsCompleted)
+        {
+            Complete(req, task, onSuccess);
+            return;
+        }
+        Interlocked.Increment(ref _inFlight);
+        task.ContinueWith(t =>
+        {
+            try { Complete(req, t, onSuccess); }
+            finally { Interlocked.Decrement(ref _inFlight); }
+        }, TaskScheduler.Default);
     }
 
-    private static void ReplyDone(nint req, Func<Task> start)
+    private void ReplyDone(nint req, Func<Task> start)
     {
         var task = start();
-        if (task.IsCompleted) CompleteDone(req, task);
-        else task.ContinueWith(t => CompleteDone(req, t), TaskScheduler.Default);
+        if (task.IsCompleted)
+        {
+            CompleteDone(req, task);
+            return;
+        }
+        Interlocked.Increment(ref _inFlight);
+        task.ContinueWith(t =>
+        {
+            try { CompleteDone(req, t); }
+            finally { Interlocked.Decrement(ref _inFlight); }
+        }, TaskScheduler.Default);
     }
 
     private static void CompleteDone(nint req, Task task)

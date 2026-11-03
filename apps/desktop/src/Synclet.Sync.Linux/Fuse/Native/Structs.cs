@@ -2,7 +2,10 @@ using System.Runtime.InteropServices;
 
 namespace Synclet.Sync.Linux.Fuse.Native;
 
-/// <summary><c>struct fuse_file_info</c> (libfuse 3.x, 40 bytes on 64-bit).</summary>
+/// <summary>
+/// <c>struct fuse_file_info</c>: 40 bytes up to libfuse 3.16, 64 bytes from 3.17. Never copy one from libfuse (it may
+/// be the short form); read the fields you need and reply with a fresh, zeroed instance.
+/// </summary>
 [StructLayout(LayoutKind.Sequential)]
 public struct FuseFileInfo
 {
@@ -13,6 +16,11 @@ public struct FuseFileInfo
     public ulong Fh;
     public ulong LockOwner;
     public uint PollEvents;
+    // libfuse 3.17+: the struct grew to 64 bytes. Older versions read only the first 40.
+    public int BackingId;
+    public ulong CompatFlags;
+    public ulong Reserved0;
+    public ulong Reserved1;
 
     public bool DirectIo { readonly get => (Bits & 0x2) != 0; set => Bits = value ? Bits | 0x2 : Bits & ~0x2u; }
     public bool KeepCache { readonly get => (Bits & 0x4) != 0; set => Bits = value ? Bits | 0x4 : Bits & ~0x4u; }

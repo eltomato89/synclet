@@ -18,8 +18,7 @@ var readDelay = TimeSpan.FromMilliseconds(delayIndex >= 0 ? int.Parse(args[delay
 
 var tree = new MemoryTree(readDelay);
 using var session = FuseSession.Mount(mountPoint, tree, new FuseOptions(TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60)));
-var loop = new Thread(session.Run) { Name = "fuse-loop" };
-loop.Start();
+session.Start();
 
 using var sigterm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, Stop);
 using var sigint = PosixSignalRegistration.Create(PosixSignal.SIGINT, Stop);
@@ -63,7 +62,7 @@ var commands = new Thread(() =>
 commands.Start();
 
 Console.WriteLine("ready");
-loop.Join();
+session.WaitForExit(Timeout.InfiniteTimeSpan);
 Console.Error.WriteLine("synclet-fuse: unmounted");
 return 0;
 

@@ -27,7 +27,14 @@ public sealed unsafe class StructLayoutTests
         Check("entry.attr_timeout", EntryParamWriter.AttrTimeoutOffset);
         Check("entry.entry_timeout", EntryParamWriter.EntryTimeoutOffset);
 
-        Check("sizeof_file_info", sizeof(FuseFileInfo));
+        // libfuse 3.17 grew fuse_file_info from 40 to 64 bytes; ours must cover the largest supported layout.
+        if (c["sizeof_file_info"] > sizeof(FuseFileInfo))
+            mismatches.Add($"sizeof_file_info: C {c["sizeof_file_info"]} > C# {sizeof(FuseFileInfo)}");
+        if (c.ContainsKey("fi.backing_id"))
+        {
+            Check("fi.backing_id", Marshal.OffsetOf<FuseFileInfo>("BackingId"));
+            Check("fi.compat_flags", Marshal.OffsetOf<FuseFileInfo>("CompatFlags"));
+        }
         Check("fi.flags", Marshal.OffsetOf<FuseFileInfo>(nameof(FuseFileInfo.Flags)));
         Check("fi.fh", Marshal.OffsetOf<FuseFileInfo>(nameof(FuseFileInfo.Fh)));
 

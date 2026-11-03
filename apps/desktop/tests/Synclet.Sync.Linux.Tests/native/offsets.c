@@ -33,6 +33,10 @@ int main(void) {
     P("sizeof_file_info", sizeof(struct fuse_file_info));
     P("fi.flags", offsetof(struct fuse_file_info, flags));
     P("fi.fh", offsetof(struct fuse_file_info, fh));
+#if FUSE_MINOR_VERSION >= 17
+    P("fi.backing_id", offsetof(struct fuse_file_info, backing_id));
+    P("fi.compat_flags", offsetof(struct fuse_file_info, compat_flags));
+#endif
 
     P("sizeof_ops", offsetof(struct fuse_lowlevel_ops, lseek) + sizeof(void *));
     OPS(init); OPS(lookup); OPS(getattr); OPS(setattr); OPS(mkdir); OPS(unlink); OPS(rmdir);
