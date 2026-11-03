@@ -1,0 +1,6 @@
+# Build and test image for the Synclet desktop clients on Linux (FUSE needs /dev/fuse, see linux.sh).
+FROM mcr.microsoft.com/dotnet/sdk:10.0
+RUN apt-get update -qq \
+ && apt-get install -y -qq --no-install-recommends fuse3 libfuse3-dev gcc libc6-dev pkg-config procps psmisc \
+ && rm -rf /var/lib/apt/lists/*
+ENV DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
