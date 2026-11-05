@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/spike/">
+    <Project Path="spike/Synclet.FuseSpike/Synclet.FuseSpike.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/Synclet.Sync.Linux/Synclet.Sync.Linux.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Synclet.Sync.Linux.Tests/Synclet.Sync.Linux.Tests.csproj" />
+  </Folder>
+</Solution>

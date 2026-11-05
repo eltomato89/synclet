@@ -1,0 +1,17 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Version>0.0.1</Version>
+    <Company>Synclet</Company>
+  </PropertyGroup>
+  <!-- linux.sh sets SYNCLET_ARTIFACTS for foreign-architecture runs so their builds do not share bin/obj. -->
+  <PropertyGroup Condition="'$(SYNCLET_ARTIFACTS)' != ''">
+    <UseArtifactsOutput>true</UseArtifactsOutput>
+    <ArtifactsPath>$(SYNCLET_ARTIFACTS)</ArtifactsPath>
+  </PropertyGroup>
+</Project>
