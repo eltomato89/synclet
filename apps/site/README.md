@@ -14,8 +14,7 @@ SITE_BASE=/ pnpm site:build   # other base path (custom domain, preview at the r
 
 `src/config.ts`:
 
-- `TESTFLIGHT_URL`: public TestFlight link of the iPhone/iPad beta. Empty shows a
-  "TestFlight beta coming soon" badge instead of a button.
+- `APP_STORE_URL`: App Store listing of the iPhone/iPad app (`https://apps.apple.com/us/app/synclet/id6823623120`).
 - `MAC_DMG_URL`: `https://github.com/eltomato89/synclet/releases/latest/download/Synclet.dmg`
   (needs a release asset named exactly `Synclet.dmg`, see below).
 - `ANDROID_APK_URL`: `https://github.com/eltomato89/synclet/releases/latest/download/Synclet.apk`
