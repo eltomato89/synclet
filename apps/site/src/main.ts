@@ -1,6 +1,6 @@
 import '@fontsource-variable/inter';
 import './styles.css';
-import { ANDROID_APK_URL, MAC_DMG_URL, PLAY_URL, TESTFLIGHT_URL } from './config';
+import { ANDROID_APK_URL, APP_STORE_URL, MAC_DMG_URL, PLAY_URL } from './config';
 import phoneDarkMp4 from './assets/hero/phone-dark.mp4';
 import phoneDarkWebm from './assets/hero/phone-dark.webm';
 import phoneDarkPoster from './assets/hero/phone-dark.webp';
@@ -17,6 +17,7 @@ import webLightPoster from './assets/hero/web-light.webp';
 // Download links come from config.ts so the HTML never has to change for a new link.
 for (const a of document.querySelectorAll<HTMLAnchorElement>('[data-link="mac-dmg"]')) a.href = MAC_DMG_URL;
 for (const a of document.querySelectorAll<HTMLAnchorElement>('[data-link="android-apk"]')) a.href = ANDROID_APK_URL;
+for (const a of document.querySelectorAll<HTMLAnchorElement>('[data-link="app-store"]')) a.href = APP_STORE_URL;
 
 const play = document.querySelector<HTMLElement>('[data-play]');
 if (play && PLAY_URL) {
@@ -27,18 +28,6 @@ if (play && PLAY_URL) {
   play.replaceChildren(link);
 }
 // Otherwise the static "Google Play testing coming soon" badge stays.
-
-const ios = document.querySelector<HTMLElement>('[data-ios-download]');
-if (ios) {
-  if (TESTFLIGHT_URL) {
-    const link = document.createElement('a');
-    link.href = TESTFLIGHT_URL;
-    link.className = 'btn btn-primary';
-    link.textContent = 'Join the TestFlight beta';
-    ios.replaceChildren(link);
-  }
-  // Otherwise the static "TestFlight beta coming soon" badge stays.
-}
 
 // Hero: the web app and the iPhone app as short muted loops (scripts/hero-motion.ts), in the
 // visitor's color scheme; with reduced motion only the still frame (poster) shows.

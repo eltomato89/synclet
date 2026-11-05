@@ -4,7 +4,7 @@
 
 [![Website](https://img.shields.io/badge/website-eltomato89.github.io%2Fsynclet-0f7c8a)](https://eltomato89.github.io/synclet/)
 [![Download for macOS](https://img.shields.io/badge/download-macOS%20(.dmg)-0f7c8a)](https://github.com/eltomato89/synclet/releases/latest/download/Synclet.dmg)
-[![iPhone & iPad beta on TestFlight](https://img.shields.io/badge/iPhone%20%26%20iPad-TestFlight%20beta-0f7c8a)](https://testflight.apple.com/join/NA3Aphqe)
+[![Download on the App Store](https://img.shields.io/badge/iPhone%20%26%20iPad-App%20Store-0f7c8a)](https://apps.apple.com/us/app/synclet/id6823623120)
 [![Download for Android](https://img.shields.io/badge/download-Android%20(.apk)-0f7c8a)](https://github.com/eltomato89/synclet/releases/latest/download/Synclet.apk)
 [![Install](https://img.shields.io/badge/install-docker%20compose-0f7c8a)](#get-started)
 [![License: MIT](https://img.shields.io/badge/license-MIT-lightgrey)](LICENSE)
@@ -26,7 +26,7 @@ Synclet turns a folder on your server into a cloud drive you can use from the br
 ## What you get
 
 - **Web app:** upload, browse and search, including the text inside your documents. Previews for photos (HEIC too), videos, PDFs and text. Select many files at once to move, copy or download them as a ZIP.
-- **Apps** for Mac, iPhone & iPad and Android.
+- **Apps** for Mac, [iPhone & iPad](https://apps.apple.com/us/app/synclet/id6823623120) and Android.
 - **Share links** with an optional password and expiry date.
 - **Trash** for 30 days, and optional file versions.
 - **Optional:** edit Office documents in the browser (Euro-Office) and sign in with your identity provider (OIDC or forward-auth).
