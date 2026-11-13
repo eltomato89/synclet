@@ -1,0 +1,1 @@
+Kleine Verbesserungen: Dateigrößen werden korrekt gerundet, beim Umbenennen von Ordnern wird der ganze Name markiert, der Dialog „Neuer Ordner“ startet ohne Fehlermeldung und die Ordnerauswahl bleibt beim Drehen erhalten.

@@ -1,0 +1,1 @@
+Small improvements: file sizes round correctly, renaming a folder selects its whole name, the New folder dialog opens without an error, and the folder picker keeps its place when you rotate the screen.
