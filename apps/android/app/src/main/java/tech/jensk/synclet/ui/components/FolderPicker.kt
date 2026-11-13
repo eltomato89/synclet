@@ -20,7 +20,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.LocalContext
@@ -139,7 +139,8 @@ fun FolderPickerDialog(
     api: SyncApi, layout: SpaceLayout, personalName: String, title: String, confirmLabel: String,
     excludeIds: Set<String> = emptySet(), onPick: (folderId: String, folderName: String) -> Unit, onDismiss: () -> Unit,
 ) {
-    val nonce = remember { java.util.UUID.randomUUID().toString() }
+    // Saveable, so the picker keeps its folder when the screen rotates; a new dialog gets a fresh one.
+    val nonce = rememberSaveable { java.util.UUID.randomUUID().toString() }
     val vm: FolderPickerViewModel = viewModel(key = "picker-$nonce") {
         FolderPickerViewModel(api, layout, personalName, excludeIds)
     }
