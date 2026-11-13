@@ -4,7 +4,9 @@
 #   apps/android/build_release.sh 0.1.6                    # build + verify only
 #   apps/android/build_release.sh 0.1.6 --github v0.1.6    # also attach Synclet.apk to that GitHub release
 #   apps/android/build_release.sh 0.1.6 --play             # also upload the AAB to the internal test track
+#   apps/android/build_release.sh 0.1.6 --play --track alpha   # ... or to another track (alpha = closed testing)
 #
+# Release notes for Play: app/src/main/play/release-notes/<locale>/default.txt (update them for every upload).
 # Signing: keystore.properties next to this script (see keystore.properties.example) or SYNCLET_KEYSTORE_FILE,
 # SYNCLET_KEYSTORE_PASSWORD, SYNCLET_KEY_ALIAS, SYNCLET_KEY_PASSWORD. Play: SYNCLET_PLAY_CREDENTIALS or
 # playCredentials in keystore.properties (service account JSON outside the repo). The very first AAB must be
@@ -14,13 +16,14 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 VERSION=${1:-}
-[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || { echo "usage: $0 <version> [--github <tag>] [--play]" >&2; exit 2; }
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]] || { echo "usage: $0 <version> [--github <tag>] [--play [--track <track>]]" >&2; exit 2; }
 shift
-GITHUB_TAG=""; PLAY=0
+GITHUB_TAG=""; PLAY=0; TRACK=internal
 while [ $# -gt 0 ]; do
   case "$1" in
     --github) GITHUB_TAG=${2:?--github needs a tag}; shift 2 ;;
     --play) PLAY=1; shift ;;
+    --track) TRACK=${2:?--track needs a track name}; shift 2 ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
 done
@@ -79,6 +82,6 @@ if [ -n "$GITHUB_TAG" ]; then
   echo "== attached Synclet.apk to $GITHUB_TAG"
 fi
 if [ "$PLAY" = 1 ]; then
-  ./gradlew --no-configuration-cache "${PROPS[@]}" :app:publishReleaseBundle
-  echo "== uploaded to the internal test track"
+  ./gradlew --no-configuration-cache "${PROPS[@]}" :app:publishReleaseBundle --track "$TRACK"
+  echo "== uploaded to the Play track $TRACK"
 fi
