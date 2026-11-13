@@ -299,6 +299,7 @@ private fun FolderContent(
                 initial = (target as? NameTarget.Rename)?.item?.name.orEmpty(),
                 confirmLabel = stringResource(if (target is NameTarget.Rename) R.string.browser_rename else R.string.browser_create),
                 error = dialogError, busy = dialogBusy,
+                isFolder = target !is NameTarget.Rename || target.item.isFolder,
                 onConfirm = { name ->
                     dialogBusy = true
                     dialogError = null

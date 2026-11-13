@@ -13,6 +13,12 @@ class FormattingTest {
         assertEquals("5.0 MB", formatBytes(5L shl 20, Locale.US))
     }
 
+    @Test fun bytesJustBelowAUnitRoundUpToTheNextUnit() {
+        assertEquals("1.0 MB", formatBytes(1048575, Locale.US))
+        assertEquals("1023.9 KB", formatBytes(1048473, Locale.US))
+        assertEquals("1.0 GB", formatBytes((1L shl 30) - 1, Locale.US))
+    }
+
     @Test fun date() {
         val text = formatDate("2026-10-16T08:00:00.000Z", Locale.GERMANY, ZoneId.of("Europe/Berlin"))
         assertTrue(text, text.contains("16.10.2026"))
