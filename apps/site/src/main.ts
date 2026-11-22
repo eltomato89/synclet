@@ -18,16 +18,7 @@ import webLightPoster from './assets/hero/web-light.webp';
 for (const a of document.querySelectorAll<HTMLAnchorElement>('[data-link="mac-dmg"]')) a.href = MAC_DMG_URL;
 for (const a of document.querySelectorAll<HTMLAnchorElement>('[data-link="android-apk"]')) a.href = ANDROID_APK_URL;
 for (const a of document.querySelectorAll<HTMLAnchorElement>('[data-link="app-store"]')) a.href = APP_STORE_URL;
-
-const play = document.querySelector<HTMLElement>('[data-play]');
-if (play && PLAY_URL) {
-  const link = document.createElement('a');
-  link.href = PLAY_URL;
-  link.className = 'btn btn-secondary w-full';
-  link.textContent = 'Get it on Google Play';
-  play.replaceChildren(link);
-}
-// Otherwise the static "Google Play testing coming soon" badge stays.
+for (const a of document.querySelectorAll<HTMLAnchorElement>('[data-link="google-play"]')) a.href = PLAY_URL;
 
 // Hero: the web app and the iPhone app as short muted loops (scripts/hero-motion.ts), in the
 // visitor's color scheme; with reduced motion only the still frame (poster) shows.
