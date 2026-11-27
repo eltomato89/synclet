@@ -13,5 +13,5 @@ export const REPO_URL = 'https://github.com/eltomato89/synclet';
 /** Stable download link of the Android app: the asset `Synclet.apk` of the latest GitHub release. */
 export const ANDROID_APK_URL = 'https://github.com/eltomato89/synclet/releases/latest/download/Synclet.apk';
 
-/** Google Play listing (internal/open testing). Empty = no Play button. */
-export const PLAY_URL = '';
+/** Google Play listing of the Android app. */
+export const PLAY_URL = 'https://play.google.com/store/apps/details?id=tech.jensk.synclet';

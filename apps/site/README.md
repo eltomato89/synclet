@@ -19,8 +19,7 @@ SITE_BASE=/ pnpm site:build   # other base path (custom domain, preview at the r
   (needs a release asset named exactly `Synclet.dmg`, see below).
 - `ANDROID_APK_URL`: `https://github.com/eltomato89/synclet/releases/latest/download/Synclet.apk`
   (needs a release asset named exactly `Synclet.apk`, attached by `apps/android/build_release.sh --github <tag>`).
-- `PLAY_URL`: Google Play listing (internal/open testing). Empty shows a
-  "Google Play testing coming soon" badge instead of a button.
+- `PLAY_URL`: Google Play listing of the Android app (`https://play.google.com/store/apps/details?id=tech.jensk.synclet`).
 
 ## Deployment
 
